@@ -145,15 +145,30 @@ export async function POST(request: NextRequest) {
             }
           }
         } else if (type === 'job_card_folding') {
-          const { job_card_id, meters_out } = aiData;
-          if (job_card_id && meters_out !== undefined) {
+          const { job_card_id, meters_out, lot_id } = aiData;
+          let resolvedJobCardId = job_card_id;
+          
+          if (!resolvedJobCardId && lot_id) {
+            const jcLookup = await query(
+              `SELECT id FROM job_cards 
+               WHERE lot_id = $1 AND status IN ('open', 'in-process') 
+               ORDER BY ts_created DESC LIMIT 1`,
+              [lot_id]
+            );
+            if (jcLookup.rowCount !== null && jcLookup.rowCount > 0) {
+              resolvedJobCardId = jcLookup.rows[0].id;
+              console.log(`[Capture API] Fallback resolved Job Card ID ${resolvedJobCardId} for Lot ${lot_id}`);
+            }
+          }
+
+          if (resolvedJobCardId && meters_out !== undefined) {
             // Update job card
             const updateRes = await query(
               `UPDATE job_cards 
                SET meters_out = $1, status = 'closed', ts_closed = NOW()
                WHERE id = $2 
                RETURNING *`,
-              [meters_out, job_card_id]
+              [meters_out, resolvedJobCardId]
             );
             
             if (updateRes.rowCount !== null && updateRes.rowCount > 0) {
@@ -178,7 +193,7 @@ export async function POST(request: NextRequest) {
               );
               autoCommitted = true;
             } else {
-              commitError = `Job card ID ${job_card_id} not found. Leaving in review queue.`;
+              commitError = `Job card ID ${resolvedJobCardId} not found. Leaving in review queue.`;
             }
           }
         }

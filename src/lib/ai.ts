@@ -136,23 +136,22 @@ function extractWithMock(
 ): ExtractionResult {
   const nameLower = filename.toLowerCase();
   
-  // Set confidence based on filename keywords
-  let confidence = 0.95; // High confidence default
-  if (nameLower.includes('low') || nameLower.includes('blur') || nameLower.includes('pending')) {
-    confidence = 0.62; // Low confidence, triggers pending confirm queue
+  // Set confidence to 0.65 as default to trigger confirmation queue for presentation
+  let confidence = 0.65;
+  if (nameLower.includes('high') || nameLower.includes('sure') || nameLower.includes('autocommit')) {
+    confidence = 0.95; // Allow forcing high-confidence if needed
   }
 
-  // Generate realistic data
+  // Generate realistic data based on user's real lot sheets (Lot 257A)
   if (type === 'incoming_stock') {
-    const lotNum = Math.floor(Math.random() * 9000) + 1000;
     return {
       data: {
-        lot_id: `LOT-${lotNum}`,
-        quality: nameLower.includes('silk') ? 'Silk Premium' : 'Poly-Crepe Super',
-        design: `Design-${Math.floor(Math.random() * 800) + 100}A`,
-        meters: parseFloat((Math.random() * 500 + 400).toFixed(2)),
-        party: 'Surat Textiles Ltd',
-        source_doc: `CH-${Math.floor(Math.random() * 9000) + 1000}`
+        lot_id: '257A',
+        quality: 'DON-2',
+        design: 'Design-DON2',
+        meters: 8988.00,
+        party: 'HARIDWAR TEXTILES',
+        source_doc: '51'
       },
       confidence,
       success: true
@@ -160,10 +159,10 @@ function extractWithMock(
   } else if (type === 'outgoing_stock') {
     return {
       data: {
-        lot_id: 'LOT-5021', // Existing lot
-        meters: parseFloat((Math.random() * 100 + 400).toFixed(2)),
-        party: 'Mumbai Fabrics Distributor',
-        source_doc: `DISP-${Math.floor(Math.random() * 900) + 100}`
+        lot_id: '257A',
+        meters: 7704.00,
+        party: 'Retail Distributor',
+        source_doc: 'DISP-51'
       },
       confidence,
       success: true
@@ -172,10 +171,10 @@ function extractWithMock(
     // job_card_folding
     return {
       data: {
-        lot_id: 'LOT-5021',
-        job_card_id: 1,
-        meters_out: 485.50, // Slightly less than 500.00 (shortage 14.50)
-        worker_id: 'wrk-04'
+        lot_id: '257A',
+        job_card_id: undefined, // Simulates missing job_card_id to test dynamic fallback lookup
+        meters_out: 7704.00,
+        worker_id: 'wrk-05' // Bharat Gohil
       },
       confidence,
       success: true

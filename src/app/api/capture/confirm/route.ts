@@ -115,13 +115,35 @@ export async function POST(request: NextRequest) {
         );
 
       } else if (event.type === 'job_card_folding') {
-        const { job_card_id, meters_out } = finalData;
+        const { job_card_id, meters_out, lot_id } = finalData;
+        const fallbackLotId = lot_id || event.ai_json?.lot_id;
 
-        if (!job_card_id || meters_out === undefined) {
+        if (meters_out === undefined) {
           await query('ROLLBACK');
-          return NextResponse.json({ error: 'job_card_id and meters_out are required to confirm folding.' }, { status: 400 });
+          return NextResponse.json({ error: 'meters_out is required to confirm folding.' }, { status: 400 });
         }
 
+        let resolvedJobCardId = job_card_id;
+        if (!resolvedJobCardId && fallbackLotId) {
+          const jcLookup = await query(
+            `SELECT id FROM job_cards 
+             WHERE lot_id = $1 AND status IN ('open', 'in-process') 
+             ORDER BY ts_created DESC LIMIT 1`,
+            [fallbackLotId]
+          );
+          if (jcLookup.rowCount !== null && jcLookup.rowCount > 0) {
+            resolvedJobCardId = jcLookup.rows[0].id;
+            console.log(`[Confirm API] Fallback resolved Job Card ID ${resolvedJobCardId} for Lot ${fallbackLotId}`);
+          }
+        }
+
+        if (!resolvedJobCardId) {
+          await query('ROLLBACK');
+          return NextResponse.json({ error: 'job_card_id is required or must be resolvable from lot_id.' }, { status: 400 });
+        }
+
+        // Keep final data in sync with resolved id
+        finalData.job_card_id = resolvedJobCardId;
         const metersOutNum = parseFloat(String(meters_out));
 
         // Update job card
@@ -130,12 +152,12 @@ export async function POST(request: NextRequest) {
            SET meters_out = $1, status = 'closed', ts_closed = NOW()
            WHERE id = $2 
            RETURNING *`,
-          [metersOutNum, job_card_id]
+          [metersOutNum, resolvedJobCardId]
         );
 
         if (updateRes.rowCount === 0) {
           await query('ROLLBACK');
-          return NextResponse.json({ error: `Job card ${job_card_id} not found.` }, { status: 404 });
+          return NextResponse.json({ error: `Job card ${resolvedJobCardId} not found.` }, { status: 404 });
         }
 
         const updatedJobCard = updateRes.rows[0];

@@ -93,6 +93,109 @@ interface ToastMessage {
   type: 'success' | 'danger' | 'warning';
 }
 
+// SVG Icon Components for a professional layout
+interface IconProps {
+  className?: string;
+  size?: number;
+  style?: React.CSSProperties;
+}
+
+const IconDashboard = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+);
+const IconBox = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+);
+const IconFileText = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+);
+const IconSearch = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+);
+const IconBrain = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3 3 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3 3 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2z"/></svg>
+);
+const IconUser = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+);
+const IconRuler = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.3 8.7L8.7 21.3c-.8.8-2 .8-2.8 0L2.7 18c-.8-.8-.8-2 0-2.8L15.3 2.7c.8-.8 2-.8 2.8 0l3.2 3.2c.8.8.8 2 0 2.8z"/><path d="M6 18l1.5-1.5"/><path d="M8.5 15.5L10 14"/><path d="M11 13l1.5-1.5"/><path d="M13.5 10.5L15 9"/><path d="M16 8l1.5-1.5"/></svg>
+);
+const IconTag = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+);
+const IconAlertTriangle = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+);
+const IconCamera = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+);
+const IconTv = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>
+);
+const IconSave = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+);
+const IconTrash2 = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+);
+const IconEdit = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+);
+const IconSend = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+);
+const IconCheck = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+);
+const IconActivity = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+);
+const IconPlus = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+);
+const IconArrowRight = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+);
+const IconClose = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+);
+const IconInfo = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+);
+
+// New SVG icons for complete emoji replacement
+const IconZap = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+);
+const IconRocket = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 16.5c-1.5 1.25-2.5 3.5-2.5 3.5s2.25-1 3.5-2.5L18.5 4.5c1.5-1.5 1-3.5 1-3.5s-2-.5-3.5 1L4.5 16.5z"/><path d="M12 12l9 9"/><path d="M9 15l-3 3"/><path d="M15 9l3-3"/></svg>
+);
+const IconBarChart = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+);
+const IconClipboard = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+);
+const IconFlag = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+);
+const IconCalendar = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+);
+const IconFile = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+);
+const IconSettings = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+);
+const IconArrowDown = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+);
+const IconArrowUp = ({ className = "", size = 16, style }: IconProps) => (
+  <svg className={className} style={style} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+);
+
 export default function TextileOpsPlatform() {
   // Navigation & Role states
   const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'jobcards' | 'confirmqueue' | 'chat'>('dashboard');
@@ -629,7 +732,7 @@ export default function TextileOpsPlatform() {
       {toast && (
         <div className={`toast ${toast.type}`}>
           <span style={{ fontSize: '1.25rem' }}>
-            {toast.type === 'success' ? '✓' : toast.type === 'danger' ? '⚠️' : 'ℹ️'}
+            {toast.type === 'success' ? '✓' : toast.type === 'danger' ? '✗' : 'i'}
           </span>
           <div>{toast.text}</div>
         </div>
@@ -661,7 +764,7 @@ export default function TextileOpsPlatform() {
                 style={{
                   background: language === lang ? 'var(--primary)' : 'transparent',
                   border: 'none',
-                  color: 'white',
+                  color: language === lang ? '#ffffff' : 'var(--text-secondary)',
                   padding: '0.25rem 0.5rem',
                   fontSize: '0.75rem',
                   fontWeight: 600,
@@ -680,9 +783,9 @@ export default function TextileOpsPlatform() {
             onChange={handleRoleChange} 
             className="role-selector"
           >
-            <option value="owner">👑 {t.owner}</option>
-            <option value="supervisor">👔 {t.supervisor}</option>
-            <option value="worker">🔧 {t.worker} (Capture UI)</option>
+            <option value="owner">{t.owner}</option>
+            <option value="supervisor">{t.supervisor}</option>
+            <option value="worker">{t.worker} (Capture UI)</option>
           </select>
         </div>
       </header>
@@ -695,26 +798,26 @@ export default function TextileOpsPlatform() {
               className={`nav-tab ${activeTab === 'dashboard' ? 'active' : ''}`}
               onClick={() => setActiveTab('dashboard')}
             >
-              📊 {t.dashboard}
+              <IconDashboard /> {t.dashboard}
             </button>
             <button
               className={`nav-tab ${activeTab === 'stock' ? 'active' : ''}`}
               onClick={() => setActiveTab('stock')}
             >
-              📦 {t.stock}
+              <IconBox /> {t.stock}
             </button>
             <button
               className={`nav-tab ${activeTab === 'jobcards' ? 'active' : ''}`}
               onClick={() => setActiveTab('jobcards')}
             >
-              📝 {t.jobcards}
+              <IconFileText /> {t.jobcards}
             </button>
             <button
               className={`nav-tab ${activeTab === 'confirmqueue' ? 'active' : ''}`}
               onClick={() => setActiveTab('confirmqueue')}
               style={{ position: 'relative' }}
             >
-              🔍 {t.confirmQueue}
+              <IconSearch /> {t.confirmQueue}
               {pendingCount > 0 && (
                 <span style={{
                   background: 'var(--warning)',
@@ -733,7 +836,7 @@ export default function TextileOpsPlatform() {
               className={`nav-tab ${activeTab === 'chat' ? 'active' : ''}`}
               onClick={() => setActiveTab('chat')}
             >
-              🧠 AI Chat Brain
+              <IconBrain /> AI Chat Brain
             </button>
           </div>
         </div>
@@ -763,7 +866,7 @@ export default function TextileOpsPlatform() {
                 <div className="card primary">
                   <div className="card-header">
                     <span className="card-title">Active Fabric Lots</span>
-                    <div className="card-icon primary">🏷️</div>
+                    <div className="card-icon primary"><IconTag size={20} /></div>
                   </div>
                   <div className="card-value">{totalLots}</div>
                   <div className="card-desc">Registered in database</div>
@@ -772,7 +875,7 @@ export default function TextileOpsPlatform() {
                 <div className="card secondary">
                   <div className="card-header">
                     <span className="card-title">Total Running Stock</span>
-                    <div className="card-icon secondary">📏</div>
+                    <div className="card-icon secondary"><IconRuler size={20} /></div>
                   </div>
                   <div className="card-value">{runningMeters.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} m</div>
                   <div className="card-desc">Sum of active IN ledger balances</div>
@@ -781,7 +884,7 @@ export default function TextileOpsPlatform() {
                 <div className="card danger">
                   <div className="card-header">
                     <span className="card-title">Shortage Alerts</span>
-                    <div className="card-icon danger">⚠️</div>
+                    <div className="card-icon danger"><IconAlertTriangle size={20} /></div>
                   </div>
                   <div className="card-value">{shortageJobCards}</div>
                   <div className="card-desc">Shortages exceeding 3.0% limit</div>
@@ -790,7 +893,7 @@ export default function TextileOpsPlatform() {
                 <div className="card warning">
                   <div className="card-header">
                     <span className="card-title">Pending Confirms</span>
-                    <div className="card-icon warning">🔍</div>
+                    <div className="card-icon warning"><IconSearch size={20} /></div>
                   </div>
                   <div className="card-value">{pendingCount}</div>
                   <div className="card-desc">Low-confidence AI readings</div>
@@ -804,13 +907,16 @@ export default function TextileOpsPlatform() {
                   {/* Running Stock per Lot */}
                   <div className="card">
                     <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>📦 Running Stock Balance per Lot</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <IconBox size={18} style={{ color: 'var(--primary)' }} />
+                        Running Stock Balance per Lot
+                      </span>
                       <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-muted)' }}>Derives from append-only movements ledger</span>
                     </h3>
 
                     {lots.length === 0 ? (
                       <div className="empty-state">
-                        <div className="empty-state-icon">🏷️</div>
+                        <div className="empty-state-icon" style={{ display: 'flex', justifyContent: 'center' }}><IconTag size={48} /></div>
                         <div className="empty-state-text">No fabric lots in database</div>
                       </div>
                     ) : (
@@ -829,7 +935,7 @@ export default function TextileOpsPlatform() {
                           <tbody>
                             {lots.map(lot => (
                               <tr key={lot.lot_id}>
-                                <td style={{ fontWeight: 600, color: 'white' }}>{lot.lot_id}</td>
+                                <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{lot.lot_id}</td>
                                 <td>{lot.quality}</td>
                                 <td>
                                   <span style={{ background: 'rgba(255,255,255,0.04)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem' }}>
@@ -855,10 +961,13 @@ export default function TextileOpsPlatform() {
 
                   {/* Active Job Cards */}
                   <div className="card">
-                    <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)' }}>📝 Active Job Cards</h3>
+                    <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <IconFileText size={18} style={{ color: 'var(--primary)' }} />
+                      Active Job Cards
+                    </h3>
                     {jobCards.length === 0 ? (
                       <div className="empty-state">
-                        <div className="empty-state-icon">📝</div>
+                        <div className="empty-state-icon" style={{ display: 'flex', justifyContent: 'center' }}><IconFileText size={48} /></div>
                         <div className="empty-state-text">No job cards in database</div>
                       </div>
                     ) : (
@@ -916,10 +1025,13 @@ export default function TextileOpsPlatform() {
                 <div className="side-column">
                   {/* Worker Efficiency */}
                   <div className="card">
-                    <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)' }}>⚡ Worker Efficiency</h3>
+                    <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <IconZap size={18} style={{ color: 'var(--primary)' }} />
+                      Worker Efficiency
+                    </h3>
                     {efficiency.length === 0 ? (
                       <div className="empty-state" style={{ padding: '1.5rem 0' }}>
-                        <div className="empty-state-icon" style={{ fontSize: '2rem' }}>⚡</div>
+                        <div className="empty-state-icon" style={{ display: 'flex', justifyContent: 'center' }}><IconZap size={48} /></div>
                         <div className="empty-state-text" style={{ fontSize: '0.85rem' }}>No efficiency reports yet</div>
                       </div>
                     ) : (
@@ -938,7 +1050,7 @@ export default function TextileOpsPlatform() {
                             }}
                           >
                             <div>
-                              <div style={{ fontWeight: 600, color: 'white', fontSize: '0.9rem' }}>{eff.name}</div>
+                              <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>{eff.name}</div>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{eff.section}</div>
                             </div>
                             <div style={{ textAlign: 'right' }}>
@@ -961,7 +1073,10 @@ export default function TextileOpsPlatform() {
 
                   {/* CCTV camera activities (Simulated Watch) */}
                   <div className="card">
-                    <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)' }}>📹 CCTV Edge Analytics</h3>
+                    <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <IconTv size={18} style={{ color: 'var(--primary)' }} />
+                      CCTV Edge Analytics
+                    </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                       {/* Station 1 */}
                       <div style={{ background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
@@ -1009,7 +1124,10 @@ export default function TextileOpsPlatform() {
                   
                   {/* Photo-based capture container */}
                   <div className="card">
-                    <h2 className="form-section-title">📸 AI Photo-Based Capture</h2>
+                    <h2 className="form-section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <IconCamera size={18} style={{ color: 'var(--primary)' }} />
+                      AI Photo-Based Capture
+                    </h2>
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
                       Take a photo of the delivery challan or the folding meter display. The AI extracts lot, quality and meters automatically.
                     </p>
@@ -1023,15 +1141,15 @@ export default function TextileOpsPlatform() {
                         onChange={(e) => setUploadType(e.target.value as any)}
                         style={{ height: '44px', fontWeight: 600 }}
                       >
-                        <option value="incoming_stock">📥 Incoming Challan (IN)</option>
-                        <option value="outgoing_stock">📤 Outgoing Challan (OUT)</option>
-                        <option value="job_card_folding">📏 Folding Meter Display</option>
+                        <option value="incoming_stock">Incoming Challan (IN)</option>
+                        <option value="outgoing_stock">Outgoing Challan (OUT)</option>
+                        <option value="job_card_folding">Folding Meter Display</option>
                       </select>
                     </div>
 
                     {/* File selector box */}
                     <div className="capture-box">
-                      <div className="capture-box-icon">📷</div>
+                      <div className="capture-box-icon" style={{ display: 'flex', justifyContent: 'center' }}><IconCamera size={36} /></div>
                       <div className="capture-box-text">Tap to open Camera / Select File</div>
                       <div className="capture-box-subtext">Supports PNG, JPG, WEBP</div>
                       <input 
@@ -1076,20 +1194,23 @@ export default function TextileOpsPlatform() {
                         disabled={isCapturing}
                         style={{ width: '100%', marginTop: '1.25rem', height: '48px' }}
                       >
-                        {isCapturing ? 'AI Parsing Image...' : `🚀 Send to Textile Brain`}
+                        {isCapturing ? 'AI Parsing Image...' : <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}><IconRocket size={16} /> Send to Textile Brain</span>}
                       </button>
                     )}
 
                     {/* Filename hint for low-confidence simulation */}
                     <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      💡 <strong>Simulation tip:</strong> The mock AI will automatically flag the reading as <strong>low-confidence</strong> (sending it to the Confirm Queue) if you upload a file with the name containing <code>low</code>, <code>blur</code>, or <code>pending</code>.
+                      <IconInfo size={14} style={{ verticalAlign: 'middle', marginRight: '0.2rem' }} /> <strong>Simulation tip:</strong> The mock AI will automatically flag the reading as <strong>low-confidence</strong> (sending it to the Confirm Queue) if you upload a file with the name containing <code>low</code>, <code>blur</code>, or <code>pending</code>.
                     </div>
                   </div>
 
                   {/* Manual Entry Form (Hidden for worker role to enforce RBAC) */}
                   {!isWorkerMode && (
                     <div className="card">
-                      <h2 className="form-section-title">✍️ Manual Stock Ledger Entry</h2>
+                      <h2 className="form-section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <IconEdit size={18} style={{ color: 'var(--primary)' }} />
+                        Manual Stock Ledger Entry
+                      </h2>
                       <form onSubmit={handleStockSubmit}>
                         <div className="form-group">
                           <label className="form-label">Transaction Type</label>
@@ -1100,7 +1221,9 @@ export default function TextileOpsPlatform() {
                               className={`btn ${stockForm.direction === 'IN' ? 'btn-primary' : 'btn-secondary'}`}
                               style={{ flex: 1 }}
                             >
-                              📥 Stock IN
+                              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                                <IconArrowDown size={16} /> Stock IN
+                              </span>
                             </button>
                             <button
                               type="button"
@@ -1108,7 +1231,9 @@ export default function TextileOpsPlatform() {
                               className={`btn ${stockForm.direction === 'OUT' ? 'btn-primary' : 'btn-secondary'}`}
                               style={{ flex: 1 }}
                             >
-                              📤 Stock OUT
+                              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                                <IconArrowUp size={16} /> Stock OUT
+                              </span>
                             </button>
                           </div>
                         </div>
@@ -1184,7 +1309,9 @@ export default function TextileOpsPlatform() {
                         </div>
 
                         <button type="submit" className="btn btn-success" style={{ width: '100%', height: '44px', marginTop: '0.5rem' }}>
-                          💾 Record Ledger Entry
+                          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                            <IconSave size={16} /> Record Ledger Entry
+                          </span>
                         </button>
                       </form>
                     </div>
@@ -1196,10 +1323,13 @@ export default function TextileOpsPlatform() {
                 {!isWorkerMode && (
                   <div className="main-column">
                     <div className="card">
-                      <h2 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)' }}>📊 Central Ledger Logs (Append-Only)</h2>
+                      <h2 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <IconBarChart size={18} style={{ color: 'var(--primary)' }} />
+                        Central Ledger Logs (Append-Only)
+                      </h2>
                       {ledger.length === 0 ? (
                         <div className="empty-state">
-                          <div className="empty-state-icon">📋</div>
+                          <div className="empty-state-icon" style={{ display: 'flex', justifyContent: 'center' }}><IconClipboard size={48} /></div>
                           <div className="empty-state-text">No ledger logs recorded yet</div>
                         </div>
                       ) : (
@@ -1222,7 +1352,7 @@ export default function TextileOpsPlatform() {
                                   <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                                     {new Date(entry.ts).toLocaleString()}
                                   </td>
-                                  <td style={{ fontWeight: 600, color: 'white' }}>{entry.lot_id}</td>
+                                  <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{entry.lot_id}</td>
                                   <td>
                                     <div style={{ fontWeight: 500 }}>{entry.quality}</div>
                                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{entry.design}</span>
@@ -1263,10 +1393,13 @@ export default function TextileOpsPlatform() {
                 {/* Active Job Cards Ledger */}
                 <div className="main-column">
                   <div className="card">
-                    <h2 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)' }}>📋 Production Job Cards</h2>
+                    <h2 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <IconClipboard size={18} style={{ color: 'var(--primary)' }} />
+                      Production Job Cards
+                    </h2>
                     {jobCards.length === 0 ? (
                       <div className="empty-state">
-                        <div className="empty-state-icon">📝</div>
+                        <div className="empty-state-icon" style={{ display: 'flex', justifyContent: 'center' }}><IconFileText size={48} /></div>
                         <div className="empty-state-text">No job cards available</div>
                       </div>
                     ) : (
@@ -1290,7 +1423,7 @@ export default function TextileOpsPlatform() {
                             {jobCards.map(jc => (
                               <tr key={jc.id}>
                                 <td style={{ color: 'var(--text-muted)' }}>#{jc.id}</td>
-                                <td style={{ fontWeight: 600, color: 'white' }}>{jc.lot_id}</td>
+                                <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{jc.lot_id}</td>
                                 <td>
                                   <div>{jc.quality}</div>
                                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{jc.design}</span>
@@ -1359,7 +1492,7 @@ export default function TextileOpsPlatform() {
                                           className="btn btn-primary"
                                           style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
                                         >
-                                          🏁 Complete
+                                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><IconFlag size={12} /> Complete</span>
                                         </button>
                                       )}
                                     </div>
@@ -1377,7 +1510,10 @@ export default function TextileOpsPlatform() {
                 {/* Create Job Card Column */}
                 <div className="side-column">
                   <div className="card">
-                    <h2 className="form-section-title">➕ Create Job Card</h2>
+                    <h2 className="form-section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <IconPlus size={18} style={{ color: 'var(--primary)' }} />
+                      Create Job Card
+                    </h2>
                     <form onSubmit={handleJobCardSubmit}>
                       <div className="form-group">
                         <label className="form-label">Lot Number</label>
@@ -1451,14 +1587,19 @@ export default function TextileOpsPlatform() {
                       </div>
 
                       <button type="submit" className="btn btn-primary" style={{ width: '100%', height: '44px', marginTop: '0.5rem' }}>
-                        ➕ Dispatch Job Card & Allot Work
+                        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                          <IconPlus size={16} /> Dispatch Job Card & Allot Work
+                        </span>
                       </button>
                     </form>
                   </div>
 
                   {/* Active Allotments List */}
                   <div className="card">
-                    <h3 style={{ marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>📆 Today's Shift Allotments</h3>
+                    <h3 style={{ marginBottom: '1rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <IconCalendar size={18} style={{ color: 'var(--primary)' }} />
+                      Today's Shift Allotments
+                    </h3>
                     {allotments.length === 0 ? (
                       <div className="empty-state" style={{ padding: '1.5rem 0' }}>
                         <div className="empty-state-text" style={{ fontSize: '0.85rem' }}>No allotments recorded today</div>
@@ -1477,7 +1618,7 @@ export default function TextileOpsPlatform() {
                             }}
                           >
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
-                              <strong style={{ color: 'white' }}>{allot.worker_name}</strong>
+                              <strong style={{ color: 'var(--text-primary)' }}>{allot.worker_name}</strong>
                               <span style={{ color: 'var(--secondary)' }}>{allot.shift} Shift</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
@@ -1498,7 +1639,7 @@ export default function TextileOpsPlatform() {
           {activeTab === 'confirmqueue' && !isWorkerMode && (
             <div className="fade-in">
               <h2 style={{ marginBottom: '1.5rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span>🔍 AI OCR Verification Queue</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><IconSearch size={22} style={{ color: 'var(--primary)' }} /> AI OCR Verification Queue</span>
                 <span className="logo-badge" style={{ background: 'var(--warning-glow)', color: 'var(--warning)', borderColor: 'rgba(245, 158, 11, 0.3)' }}>
                   Requires Approval
                 </span>
@@ -1506,7 +1647,7 @@ export default function TextileOpsPlatform() {
 
               {captureEvents.filter(e => e.status === 'pending').length === 0 ? (
                 <div className="card" style={{ textAlign: 'center', padding: '4rem 2rem' }}>
-                  <div style={{ fontSize: '3.5rem', marginBottom: '1rem' }}>🎉</div>
+                  <div className="empty-state-icon" style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}><IconCheck size={48} style={{ color: 'var(--success)' }} /></div>
                   <h3>Verification Queue is Empty!</h3>
                   <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', fontSize: '0.9rem' }}>
                     All AI vision extractions were highly confident and auto-committed, or have been reviewed.
@@ -1530,7 +1671,7 @@ export default function TextileOpsPlatform() {
                             {/* In production, this renders the real uploaded photo */}
                             {/* For demo, we show a premium icon/tag indicating it's the uploaded challan */}
                             <div style={{ textAlign: 'center', padding: '1rem' }}>
-                              <span style={{ fontSize: '3rem', display: 'block', marginBottom: '0.5rem' }}>📄</span>
+                              <span style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.5rem', color: 'var(--text-muted)' }}><IconFile size={48} /></span>
                               <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
                                 {event.photo_url}
                               </span>
@@ -1552,9 +1693,9 @@ export default function TextileOpsPlatform() {
                               </div>
 
                               <h3 style={{ marginBottom: '1rem' }}>
-                                {event.type === 'incoming_stock' && '📥 Extracted Incoming Challan Data'}
-                                {event.type === 'outgoing_stock' && '📤 Extracted Outgoing Dispatch Data'}
-                                {event.type === 'job_card_folding' && '📐 Extracted Folding Meter Reading'}
+                                {event.type === 'incoming_stock' && 'Extracted Incoming Challan Data'}
+                                {event.type === 'outgoing_stock' && 'Extracted Outgoing Dispatch Data'}
+                                {event.type === 'job_card_folding' && 'Extracted Folding Meter Reading'}
                               </h3>
 
                               {/* Interactive Form for correction */}
@@ -1723,7 +1864,7 @@ export default function TextileOpsPlatform() {
                                 className="btn btn-secondary"
                                 style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
                               >
-                                🗑️ {t.reject}
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><IconTrash2 size={14} /> {t.reject}</span>
                               </button>
 
                               {isCorrecting ? (
@@ -1732,7 +1873,7 @@ export default function TextileOpsPlatform() {
                                     onClick={() => handleConfirmEvent(event, true)}
                                     className="btn btn-success"
                                   >
-                                    💾 Save & Confirm
+                                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}><IconSave size={14} /> Save & Confirm</span>
                                   </button>
                                   <button 
                                     onClick={() => setCorrectingEventId(null)}
@@ -1747,13 +1888,13 @@ export default function TextileOpsPlatform() {
                                     onClick={() => startCorrecting(event)}
                                     className="btn btn-secondary"
                                   >
-                                    ✏️ {t.correct}
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><IconEdit size={14} /> {t.correct}</span>
                                   </button>
                                   <button 
                                     onClick={() => handleConfirmEvent(event, false)}
                                     className="btn btn-primary"
                                   >
-                                    ✓ Quick {t.confirm}
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><IconCheck size={14} /> Quick {t.confirm}</span>
                                   </button>
                                 </>
                               )}
@@ -1772,14 +1913,14 @@ export default function TextileOpsPlatform() {
           {activeTab === 'chat' && !isWorkerMode && (
             <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 260px)', minHeight: '520px' }}>
               <h2 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span>🧠 AI Brain Chat Assistant</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><IconBrain size={20} style={{ color: 'var(--primary)' }} /> AI Brain Chat Assistant</span>
                 <span className="logo-badge" style={{ background: 'var(--success-glow)', color: 'var(--success)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
                   Active DB Access
                 </span>
               </h2>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', flexGrow: 1, overflow: 'hidden' }}>
-                <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1.25rem', background: 'rgba(12, 15, 30, 0.65)' }}>
+                <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1.25rem', background: 'var(--bg-card)' }}>
                   
                   {/* Messages list */}
                   <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', marginBottom: '1rem', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '12px', border: '1px solid var(--border-color)', minHeight: '200px' }}>
@@ -1795,8 +1936,8 @@ export default function TextileOpsPlatform() {
                         }}
                       >
                         <div style={{ 
-                          background: msg.sender === 'user' ? 'var(--primary)' : 'rgba(255, 255, 255, 0.04)',
-                          color: 'white',
+                          background: msg.sender === 'user' ? 'var(--primary)' : 'rgba(0, 0, 0, 0.03)',
+                          color: msg.sender === 'user' ? '#ffffff' : 'var(--text-primary)',
                           padding: '0.8rem 1.2rem',
                           borderRadius: msg.sender === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
                           border: msg.sender === 'user' ? 'none' : '1px solid var(--border-color)',
@@ -1805,13 +1946,13 @@ export default function TextileOpsPlatform() {
                         }}>
                           {msg.loading ? (
                             <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', padding: '0.2rem' }}>
-                              <span style={{ width: '6px', height: '6px', background: 'white', borderRadius: '50%', animation: 'bounce 1.4s infinite ease-in-out both' }}></span>
-                              <span style={{ width: '6px', height: '6px', background: 'white', borderRadius: '50%', animation: 'bounce 1.4s infinite ease-in-out both 0.2s' }}></span>
-                              <span style={{ width: '6px', height: '6px', background: 'white', borderRadius: '50%', animation: 'bounce 1.4s infinite ease-in-out both 0.4s' }}></span>
+                              <span style={{ width: '6px', height: '6px', background: msg.sender === 'user' ? '#ffffff' : 'var(--text-secondary)', borderRadius: '50%', animation: 'bounce 1.4s infinite ease-in-out both' }}></span>
+                              <span style={{ width: '6px', height: '6px', background: msg.sender === 'user' ? '#ffffff' : 'var(--text-secondary)', borderRadius: '50%', animation: 'bounce 1.4s infinite ease-in-out both 0.2s' }}></span>
+                              <span style={{ width: '6px', height: '6px', background: msg.sender === 'user' ? '#ffffff' : 'var(--text-secondary)', borderRadius: '50%', animation: 'bounce 1.4s infinite ease-in-out both 0.4s' }}></span>
                             </div>
                           ) : (
                             <div style={{ whiteSpace: 'pre-wrap' }}>
-                              {msg.text.split('**').map((part, i) => i % 2 === 1 ? <strong key={i} style={{ color: msg.sender === 'user' ? 'white' : 'var(--secondary)' }}>{part}</strong> : part)}
+                              {msg.text.split('**').map((part, i) => i % 2 === 1 ? <strong key={i} style={{ color: msg.sender === 'user' ? '#ffffff' : 'var(--primary)' }}>{part}</strong> : part)}
                             </div>
                           )}
                         </div>
@@ -1835,7 +1976,7 @@ export default function TextileOpsPlatform() {
                                 border: '1px solid var(--border-color)'
                               }}
                             >
-                              ⚙️ {activeSqlId === idx ? 'Hide Technical Details' : 'Show SQL & Data'}
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><IconSettings size={14} /> {activeSqlId === idx ? 'Hide Technical Details' : 'Show SQL & Data'}</span>
                             </button>
 
                             {activeSqlId === idx && (
@@ -1928,8 +2069,10 @@ export default function TextileOpsPlatform() {
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                     />
-                    <button type="submit" className="btn btn-primary" style={{ width: '100px', height: '48px' }}>
-                      Send ➡️
+                    <button type="submit" className="btn btn-primary" style={{ width: '110px', height: '48px' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
+                        Send <IconSend size={14} />
+                      </span>
                     </button>
                   </form>
 
