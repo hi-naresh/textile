@@ -93,6 +93,16 @@ interface ToastMessage {
   type: 'success' | 'danger' | 'warning';
 }
 
+interface CctvActivity {
+  id: number;
+  worker_id: string;
+  name: string;
+  station: string;
+  active_pct: number;
+  idle_min: number;
+  ts: string;
+}
+
 // SVG Icon Components for a professional layout
 interface IconProps {
   className?: string;
@@ -210,6 +220,7 @@ export default function TextileOpsPlatform() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [efficiency, setEfficiency] = useState<EfficiencyRecord[]>([]);
   const [captureEvents, setCaptureEvents] = useState<CaptureEvent[]>([]);
+  const [cctv, setCctv] = useState<CctvActivity[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [dbStatus, setDbStatus] = useState<{ status: string; dbTime?: string } | null>(null);
 
@@ -296,6 +307,7 @@ export default function TextileOpsPlatform() {
       const workersData = await workersRes.json();
       setWorkers(workersData.workers || []);
       setEfficiency(workersData.efficiency || []);
+      setCctv(workersData.cctv || []);
 
       // Fetch capture events
       const captureRes = await fetch('/api/capture');
@@ -1077,37 +1089,47 @@ export default function TextileOpsPlatform() {
                       <IconTv size={18} style={{ color: 'var(--primary)' }} />
                       CCTV Edge Analytics
                     </h3>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      {/* Station 1 */}
-                      <div style={{ background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                          <span style={{ fontWeight: 600 }}>Station A (Folding)</span>
-                          <span style={{ color: 'var(--danger)', fontWeight: 600 }}>45.0% Active</span>
-                        </div>
-                        <div style={{ height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div style={{ width: '45%', height: '100%', background: 'var(--danger)' }} />
-                        </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Worker: Bharat Gohil</span>
-                          <span>Idle: 180 min</span>
-                        </div>
+                    {cctv.length === 0 ? (
+                      <div className="empty-state" style={{ padding: '1.5rem 0' }}>
+                        <div className="empty-state-icon" style={{ display: 'flex', justifyContent: 'center' }}><IconTv size={48} /></div>
+                        <div className="empty-state-text" style={{ fontSize: '0.85rem' }}>No CCTV tracking records</div>
                       </div>
-
-                      {/* Station 2 */}
-                      <div style={{ background: 'rgba(255,255,255,0.01)', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                          <span style={{ fontWeight: 600 }}>Station B (Weaving)</span>
-                          <span style={{ color: 'var(--success)', fontWeight: 600 }}>82.5% Active</span>
-                        </div>
-                        <div style={{ height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div style={{ width: '82.5%', height: '100%', background: 'var(--success)' }} />
-                        </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Worker: Arvind Makwana</span>
-                          <span>Idle: 45 min</span>
-                        </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        {cctv.map(activity => (
+                          <div 
+                            key={activity.id} 
+                            style={{ 
+                              background: 'rgba(255,255,255,0.01)', 
+                              padding: '0.75rem 1rem', 
+                              borderRadius: '10px', 
+                              border: '1px solid var(--border-color)' 
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.4rem' }}>
+                              <span style={{ fontWeight: 600 }}>{activity.station}</span>
+                              <span style={{ 
+                                color: activity.active_pct < 50 ? 'var(--danger)' : 'var(--success)', 
+                                fontWeight: 600 
+                              }}>
+                                {activity.active_pct.toFixed(1)}% Active
+                              </span>
+                            </div>
+                            <div style={{ height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                              <div style={{ 
+                                width: `${activity.active_pct}%`, 
+                                height: '100%', 
+                                background: activity.active_pct < 50 ? 'var(--danger)' : 'var(--success)' 
+                              }} />
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Worker: {activity.name}</span>
+                              <span>Idle: {activity.idle_min.toFixed(0)} min</span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>

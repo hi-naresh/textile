@@ -167,9 +167,9 @@ function mockSummarize(question: string, sql: string, rows: any[]): string {
 }
 
 /**
- * Call Anthropic Claude API for Text-to-SQL translation
+ * Call Google Gemini API for Text-to-SQL translation
  */
-async function translateWithClaude(question: string, apiKey: string): Promise<string> {
+async function translateWithGemini(question: string, apiKey: string): Promise<string> {
   const schemaPrompt = `You are a safe Text-to-SQL translator for a textile mill database in Surat.
 Your task is to take a natural language question in English, Hindi, or Gujarati and translate it into a safe, valid PostgreSQL query.
 
@@ -193,41 +193,40 @@ Rules:
 5. For shortage pct on a job card, compute: (shortage / meters_in * 100).
 `;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 500,
-      messages: [
+      contents: [
         {
-          role: 'user',
-          content: [
-            { type: 'text', text: schemaPrompt },
-            { type: 'text', text: `Translate this question to a SQL query: "${question}"` }
+          parts: [
+            { text: schemaPrompt },
+            { text: `Translate this question to a SQL query: "${question}"` }
           ]
         }
-      ]
+      ],
+      generationConfig: {
+        temperature: 0.1,
+      }
     })
   });
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Claude SQL API error: ${response.status} - ${errText}`);
+    throw new Error(`Gemini SQL API error: ${response.status} - ${errText}`);
   }
 
   const resJson = await response.json();
-  return (resJson.content?.[0]?.text || '').trim();
+  const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return text.trim();
 }
 
 /**
- * Generate a friendly response for the SQL rows using Claude
+ * Generate a friendly response for the SQL rows using Gemini
  */
-async function summarizeWithClaude(question: string, sql: string, rows: any[], apiKey: string): Promise<string> {
+async function summarizeWithGemini(question: string, sql: string, rows: any[], apiKey: string): Promise<string> {
   const prompt = `You are the AI Brain of a textile mill in Surat. The owner has asked a question: "${question}".
 We executed the following SQL query against our central database:
 \`\`\`sql
@@ -245,32 +244,33 @@ Please write a helpful, concise response answering the owner's question based on
 - If no rows were returned, politely explain that no matching records were found in the database.
 `;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 800,
-      messages: [
+      contents: [
         {
-          role: 'user',
-          content: [{ type: 'text', text: prompt }]
+          parts: [
+            { text: prompt }
+          ]
         }
-      ]
+      ],
+      generationConfig: {
+        temperature: 0.2,
+      }
     })
   });
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Claude Summarize API error: ${response.status} - ${errText}`);
+    throw new Error(`Gemini Summarize API error: ${response.status} - ${errText}`);
   }
 
   const resJson = await response.json();
-  return (resJson.content?.[0]?.text || '').trim();
+  const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return text.trim();
 }
 
 export async function POST(request: NextRequest) {
@@ -283,7 +283,7 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = user_id || 'usr-owner';
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     let sql = '';
     let explanation = '';
@@ -292,21 +292,21 @@ export async function POST(request: NextRequest) {
     let answer = '';
 
     if (apiKey) {
-      console.log(`[AI Chat] Translating question using Claude: "${question}"`);
+      console.log(`[AI Chat] Translating question using Gemini: "${question}"`);
       try {
-        const rawSql = await translateWithClaude(question, apiKey);
+        const rawSql = await translateWithGemini(question, apiKey);
         // Clean SQL of any wrappers
         sql = rawSql.trim().replace(/^```sql\s*/i, '').replace(/```$/, '').trim();
-        explanation = 'Translated dynamically by Claude 3.5 Sonnet.';
+        explanation = 'Translated dynamically by Gemini 1.5 Flash.';
       } catch (err) {
-        console.error('[AI Chat] Claude translation failed, falling back to pattern matcher:', err);
+        console.error('[AI Chat] Gemini translation failed, falling back to pattern matcher:', err);
         const mockTrans = await translateMock(question);
         sql = mockTrans.sql;
         explanation = mockTrans.explanation;
         params = mockTrans.params;
       }
     } else {
-      console.log(`[AI Chat] No API key. Translating using pattern matcher: "${question}"`);
+      console.log(`[AI Chat] No Gemini API key. Translating using pattern matcher: "${question}"`);
       const mockTrans = await translateMock(question);
       sql = mockTrans.sql;
       explanation = mockTrans.explanation;
@@ -343,9 +343,9 @@ export async function POST(request: NextRequest) {
     // Generate plain-language summary
     if (apiKey) {
       try {
-        answer = await summarizeWithClaude(question, sql, rows, apiKey);
+        answer = await summarizeWithGemini(question, sql, rows, apiKey);
       } catch (err) {
-        console.error('[AI Chat] Claude summarization failed, falling back to mock:', err);
+        console.error('[AI Chat] Gemini summarization failed, falling back to mock:', err);
         answer = mockSummarize(question, sql, rows);
       }
     } else {

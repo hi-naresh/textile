@@ -37,9 +37,9 @@ function fileToBase64(filePath: string): { data: string; mediaType: string } {
 }
 
 /**
- * Call Anthropic Claude API for vision extraction
+ * Call Google Gemini API for vision extraction
  */
-async function extractWithClaude(
+async function extractWithGemini(
   base64Data: string,
   mediaType: string,
   type: 'incoming_stock' | 'outgoing_stock' | 'job_card_folding',
@@ -63,48 +63,42 @@ Rules:
 `;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1000,
-        messages: [
+        contents: [
           {
-            role: 'user',
-            content: [
+            parts: [
+              { text: systemPrompt },
               {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: mediaType,
-                  data: base64Data,
-                },
-              },
-              {
-                type: 'text',
-                text: systemPrompt,
-              },
-            ],
-          },
+                inlineData: {
+                  mimeType: mediaType,
+                  data: base64Data
+                }
+              }
+            ]
+          }
         ],
-      }),
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1
+        }
+      })
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Claude API error: ${response.status} - ${errText}`);
+      throw new Error(`Gemini Vision API error: ${response.status} - ${errText}`);
     }
 
     const resJson = await response.json();
-    const content = resJson.content?.[0]?.text || '';
+    const content = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
     // Parse response
-    const cleaned = content.trim().replace(/^```json\s*/, '').replace(/```$/, '');
+    const cleaned = content.trim().replace(/^```json\s*/i, '').replace(/```$/, '');
     const data = JSON.parse(cleaned);
     
     const confidence = typeof data.confidence === 'number' ? data.confidence : 0.85;
@@ -117,7 +111,7 @@ Rules:
       rawResponse: content
     };
   } catch (error) {
-    console.error('Error in Claude Vision Extraction:', error);
+    console.error('Error in Gemini Vision Extraction:', error);
     return {
       data: {},
       confidence: 0,
@@ -189,20 +183,20 @@ export async function extractDataFromPhoto(
   filePath: string,
   type: 'incoming_stock' | 'outgoing_stock' | 'job_card_folding'
 ): Promise<ExtractionResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   const filename = path.basename(filePath);
 
   if (apiKey) {
-    console.log(`[AI Extraction] Connecting to Claude API for ${filename}...`);
+    console.log(`[AI Extraction] Connecting to Gemini API for ${filename}...`);
     try {
       const { data, mediaType } = fileToBase64(filePath);
-      return await extractWithClaude(data, mediaType, type, apiKey);
+      return await extractWithGemini(data, mediaType, type, apiKey);
     } catch (e) {
-      console.error('[AI Extraction] Claude extraction failed, falling back to mock.', e);
+      console.error('[AI Extraction] Gemini extraction failed, falling back to mock.', e);
       return extractWithMock(filename, type);
     }
   } else {
-    console.log(`[AI Extraction] No Anthropic API key found. Using mock OCR for ${filename}.`);
+    console.log(`[AI Extraction] No Gemini API key found. Using mock OCR for ${filename}.`);
     // Simulate slight delay to feel real
     await new Promise(resolve => setTimeout(resolve, 800));
     return extractWithMock(filename, type);
