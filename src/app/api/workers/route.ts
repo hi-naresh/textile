@@ -8,7 +8,7 @@ export async function GET() {
     
     // 2. Fetch daily efficiency for the last 7 days
     const efficiencyRes = await query(`
-      SELECT ed.*, w.name, w.section
+      SELECT ed.*, to_char(ed.date, 'YYYY-MM-DD') as date_str, w.name, w.section
       FROM efficiency_daily ed
       JOIN workers w ON ed.worker_id = w.id
       ORDER BY ed.date DESC, ed.efficiency_pct ASC

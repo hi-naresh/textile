@@ -1,0 +1,98 @@
+AI-First Operations Platform
+Textile Wholesale & Manufacturing — Surat
+High-Level System Design
+For client review. Each section can be amended before implementation begins.
+Prepared for: Mill / Wholesale Owner    Status: Draft v1 for sign-off    Date: June 2026
+1. What We Are Building, in One Picture
+We are building an AI-first operations system for the mill. The key idea is simple: staff stop typing data into forms. They take a photo, or they ask a question. The AI reads the photo, understands it, and updates the records itself. At the end of each day it writes the report on its own, and the owner can simply chat with it to ask anything about the business.
+Underneath the AI there is still a secure database that stores every meter, every job card, and every transaction as the single source of truth. The AI is the brain that reads, writes, reasons, and reports on top of that database. Cameras on the floor watch how work is progressing and feed the same brain.
+The platform has three input channels (camera/photo, CCTV, and chat), one central brain and database, and one simple screen for the owner and supervisors to review and confirm.
+The three things you asked for, and how each is solved
+Your problem
+How it works today (manual)
+How the new system solves it
+Stock inventory — incoming & outgoing
+Manual register / repeated typing of meters and lots
+Photograph the challan or lot tag; AI reads meters, quality and lot, and updates stock in & out automatically
+Job card — meter update & folding shortage
+Manual meter counting and entry at folding
+Photograph meters at folding; AI records meters-out and auto-calculates shortage vs meters-in
+Worker efficiency monitor
+Hard to see who is slow; judged by eye
+Cameras + job-card output measure work allotted vs work done per worker and flag low efficiency
+ 
+2. The Four Building Blocks
+The system is made of four parts. Each works on its own but they all share the same database and brain. You can think of them as four staff members who never sleep.
+A. The Eyes — Photo-Based Data Capture
+What it does: Replaces manual meter and stock entry. A worker opens the app on a phone or tablet, points at a challan, a lot tag, or a meter reading, and takes a photo.
+What the AI reads from the photo:
+Incoming stock: lot number, quality/design, and meters received
+Outgoing stock: dispatch meters, party/destination, and lot
+Job card folding: meters folded out, against the meters that went in — and the shortage is calculated automatically
+Why it is solid-proof: Whenever the AI is not fully confident about a reading (faded label, handwriting, blur), it does not guess. It shows the number to the operator for a one-tap confirm. Clear printed numbers and digital displays are read automatically; only doubtful cases need a human glance. This is how we keep the records trustworthy.
+B. The Brain — Reports & Chat Assistant
+What it does: This is the AI assistant the owner talks to. It knows the entire history of the firm and answers in plain language.
+Two main jobs:
+Automatic daily report — at the end of each day the brain writes the report itself: total meters in and out, shortages by job card, stock balance, and worker efficiency. No one assembles it manually.
+Chat with your business — the owner types or speaks a question and gets an answer, for example: “how much shortage in red poly this week?”, “which lots are stuck in processing?”, “who was the slowest folder yesterday?”
+Important design note: the brain answers by reading the real database, not from memory. Every answer is backed by actual records, so figures are accurate and can be trusted for decisions.
+C. The Watch — Camera-Based Worker Monitoring
+What it does: Cameras on the floor observe each workstation. The system measures how much work was allotted to a worker versus how much was actually completed, and flags workers who are consistently idle or slow.
+How we make the flag fair and accurate: standing still is not always idle — a worker may be inspecting fabric. So the camera signal is combined with the real output from job cards (meters completed). Judging activity together with actual output is what makes the efficiency flag reliable rather than a guess from posture alone.
+Note for discussion: continuous worker monitoring should be agreed as a coaching and planning tool, with clear rules on what is flagged and to whom. This protects morale and keeps the system accepted on the floor.
+D. The Desk — Owner & Supervisor Screen
+What it does: A simple screen (works on computer, tablet and phone) where the owner and supervisors:
+See live stock, job cards, shortages and efficiency at a glance
+Confirm the few photo readings the AI was unsure about
+Read the automatic daily report and open the chat assistant
+See flagged workers and take action
+Who sees what: the owner sees everything; supervisors see their section; workers only capture photos. Access is controlled by role.
+3. How Information Flows Through the System
+A single piece of fabric moves through the system like this:
+Arrival — lot arrives, worker photographs the challan/tag. AI reads it and records stock IN.
+Production / job card — lot is allotted to a worker for a process. The job card records meters in and the worker assigned.
+Folding — worker photographs folded meters. AI records meters OUT and computes shortage automatically.
+Monitoring — through the day, cameras + job-card output track each worker’s allotted-vs-done efficiency.
+Dispatch — outgoing photo records stock OUT to the party.
+End of day — the brain writes the daily report and is ready to answer any question by chat.
+Every step writes to one shared database, so stock, shortages, and efficiency always agree with each other. There is no double entry anywhere.
+4. Suggested Build Order (Phased)
+Everything does not need to be built at once. We suggest delivering value early, then layering on the harder pieces once clean data exists.
+Phase
+What is delivered
+Why this order
+Phase 1
+Database + photo capture for stock in/out and job-card folding + the daily report
+Removes manual entry immediately and starts building accurate history
+Phase 2
+The chat brain — ask anything, full firm history, plain-language answers
+Becomes powerful once Phase 1 has real data to answer from
+Phase 3
+Camera-based worker efficiency monitoring
+Hardest and most sensitive; works best validated against Phase 1 output data
+Later
+Extra AI: wastage alerts, demand/stock forecasting, more capture points
+Natural extensions once the core is trusted and stable
+ 
+5. Decisions We Need From You
+These choices shape the build. Please mark your preference against each.
+Who takes photos — workers themselves, or only supervisors? (Affects accuracy and how many devices are needed.)
+Daily volume — roughly how many capture events per day in total (incoming + job cards + outgoing)? (Affects running cost.)
+Cameras — how many workstations/cameras for monitoring, and is an on-site computer for the cameras acceptable, or must everything be on cloud? (Biggest single cost driver.)
+Languages — are challans/tags printed, or handwritten in Gujarati/Hindi? (Affects how much human confirm is needed.)
+Worker monitoring policy — is the efficiency flag for coaching, for planning, or tied to pay? (Should be agreed before building.)
+6. Scope at a Glance
+The system WILL
+The system will NOT (in first version)
+Read meters, lots and challans from photos
+Replace your accounting/billing software
+Track stock in/out and job-card shortage automatically
+Control machines directly
+Write the daily report by itself
+Make pay decisions on its own
+Answer business questions by chat using real records
+Work without occasional human confirm on unclear photos
+Flag idle / slow workers using camera + output
+Judge workers on camera posture alone
+ 
+Next step: review this document, mark any changes, and answer the five decisions in Section 5. We will then prepare the detailed technical design and timeline.

@@ -54,7 +54,7 @@ async function main() {
 
     // Seed Users
     const seedUsers = [
-      ['usr-owner', 'Naresh Kumar', 'owner', 'en', true],
+      ['usr-owner', 'Mukesh', 'owner', 'en', true],
       ['usr-sup1', 'Sanjay Patel', 'supervisor', 'hi', true],
       ['usr-sup2', 'Kishore Gajiwala', 'supervisor', 'gu', true],
       ['usr-worker', 'Ramesh Floor', 'worker', 'hi', true]

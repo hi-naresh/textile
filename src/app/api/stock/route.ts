@@ -30,6 +30,17 @@ export async function GET() {
     `;
     const ledgerRes = await query(ledgerQuery);
 
+    // 3. Daily IN/OUT totals for the last 7 days (for the stock-flow chart)
+    const flowRes = await query(`
+      SELECT to_char(d::date, 'YYYY-MM-DD') as day,
+        COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters END), 0) as in_m,
+        COALESCE(SUM(CASE WHEN sm.direction = 'OUT' THEN sm.meters END), 0) as out_m
+      FROM generate_series(CURRENT_DATE - 6, CURRENT_DATE, interval '1 day') d
+      LEFT JOIN stock_movements sm ON sm.ts::date = d::date
+      GROUP BY d
+      ORDER BY d
+    `);
+
     return NextResponse.json({
       lots: balanceRes.rows.map(row => ({
         ...row,
@@ -38,6 +49,11 @@ export async function GET() {
       ledger: ledgerRes.rows.map(row => ({
         ...row,
         meters: parseFloat(row.meters)
+      })),
+      flow: flowRes.rows.map(row => ({
+        day: row.day,
+        in_m: parseFloat(row.in_m),
+        out_m: parseFloat(row.out_m)
       }))
     });
   } catch (error) {

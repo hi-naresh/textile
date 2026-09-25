@@ -27,7 +27,8 @@ export async function GET() {
     const jobCardsRes = await query(jobCardsQuery);
 
     const allotmentsQuery = `
-      SELECT a.*, w.name as worker_name, jc.process, jc.lot_id
+      SELECT a.*, to_char(a.date, 'YYYY-MM-DD') as date_str, (a.date = CURRENT_DATE) as is_today,
+             w.name as worker_name, jc.process, jc.lot_id
       FROM allotments a
       JOIN workers w ON a.worker_id = w.id
       JOIN job_cards jc ON a.job_card_id = jc.id

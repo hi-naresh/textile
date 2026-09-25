@@ -1,0 +1,430 @@
+Software Requirements Specification
+AI-First Operations Platform
+Textile Wholesale & Manufacturing — Surat
+Prepared in accordance with IEEE Std 830 structure
+Document version: 1.0 (Draft for sign-off)
+Date: June 2026
+Status: For client & engineering review
+Related documents: High-Level Design v1; Technical Design & Costing v1
+Table of Contents
+1. Introduction	3
+2. Overall Description	4
+3. External Interface Requirements	6
+4. Functional Requirements	7
+   4.1 Stock Inventory — Incoming & Outgoing	7
+   4.2 Job Cards & Folding Shortage	7
+   4.3 AI Capture & Confirmation	7
+   4.4 The Brain — Reports & Chat	8
+   4.5 Worker Efficiency & CCTV Monitoring	8
+   4.6 Access Control & Administration	9
+5. Non-Functional Requirements	10
+6. Data Requirements	11
+7. Traceability & Acceptance	12
+1. Introduction
+1.1 Purpose
+This Software Requirements Specification (SRS) defines the functional and non-functional requirements for an AI-first operations platform for a textile wholesaler and manufacturer in Surat. It is intended for the client (owner/stakeholders), the engineering team building the system, and any future maintainers. It is the authoritative reference against which the system will be designed, built, and accepted.
+1.2 Scope
+The system replaces manual data entry with AI-based capture and provides automated reporting, a conversational query interface, and camera-based worker-efficiency monitoring. It covers three operational problems: stock inventory (incoming/outgoing), job-card meter updates with folding-shortage calculation, and worker efficiency (allotted vs done, with flagging).
+In scope: photo-based capture of meters/lots/challans; a Postgres system of record; an AI brain for daily reports and natural-language queries over firm history; CCTV-based activity monitoring fused with job-card output; web and mobile (PWA) interfaces with role-based access.
+Out of scope (v1): accounting/billing/GST software replacement; direct machine/PLC control; automated payroll actions; e-commerce or customer-facing portals.
+1.3 Definitions, Acronyms, Abbreviations
+Term
+Meaning
+Lot
+A batch of fabric tracked as a unit through the firm
+Challan
+Delivery/dispatch note accompanying goods movement
+Job card
+Record of a production stage: meters in, meters out, worker, shortage
+Folding shortage
+Meters_in minus meters_out at the folding stage
+Capture event
+A single photo submitted for AI reading
+The Brain
+AI agent providing auto-reports and chat over the database
+Confidence gate
+Threshold below which an AI reading needs human confirm
+PWA
+Progressive Web App (installable, mobile-friendly web app)
+Edge box
+On-site GPU device running CCTV analytics locally
+RBAC
+Role-Based Access Control
+1.4 References
+IEEE Std 830-1998, Recommended Practice for Software Requirements Specifications.
+Project High-Level Design document, v1 (June 2026).
+Project Technical Design & Costing document, v1 (June 2026).
+1.5 Overview
+Section 2 gives the overall product perspective, users, and constraints. Section 3 specifies external interfaces. Section 4 details functional requirements by module. Section 5 covers non-functional requirements. Section 6 lists data requirements. Section 7 provides the requirements traceability matrix and acceptance criteria.
+2. Overall Description
+2.1 Product Perspective
+The platform is a new, self-contained system. Three input channels (worker photo capture, CCTV streams, and admin chat) feed a single backend and Postgres database that acts as the system of record. AI services for vision, the reasoning brain, and video analytics run as independent modules behind the backend. A web/PWA presentation layer serves owner, supervisors, and workers according to role.
+2.2 Product Functions (summary)
+Capture incoming and outgoing stock by photographing challans/lot tags; AI extracts lot, quality, and meters.
+Capture job-card folding meters; AI records meters-out and computes shortage automatically.
+Hold low-confidence readings for one-tap human confirmation before committing.
+Generate an automated end-of-day report without manual assembly.
+Answer natural-language questions over the full firm history via a chat assistant.
+Monitor worker activity via CCTV, fuse it with job-card output, and flag low efficiency.
+Enforce role-based access for owner, supervisor, and worker.
+2.3 User Classes and Characteristics
+User class
+Characteristics
+Primary activities
+Owner / Admin
+Low technical skill; decision-maker
+View dashboards & reports; chat queries; review flags
+Supervisor
+Moderate; floor-level
+Confirm low-confidence reads; manage allotments; view section
+Worker / Operator
+Low; high volume of use
+Capture photos at stock/job-card stages
+System Admin (IT)
+Technical
+User management, configuration, maintenance
+2.4 Operating Environment
+Capture clients: modern mobile/tablet browsers (PWA), Android-first.
+Admin/supervisor: desktop and tablet browsers.
+Backend: Linux container host; Node.js/TypeScript; Postgres (Supabase).
+CCTV analytics: on-site edge GPU device (recommended) on the factory LAN.
+Connectivity: intermittent internet tolerated; capture queues locally and syncs.
+2.5 Design and Implementation Constraints
+Database is the single source of truth; AI must never assert figures not backed by a query.
+Chat queries run under a read-only database role; no AI-initiated writes.
+Vision provider must be abstracted so a hybrid OCR path can be added without rework.
+Worker video should remain on-premises where feasible (privacy/labour considerations).
+UI text and capture flows must accommodate English, Hindi, and Gujarati numerals.
+2.6 Assumptions and Dependencies
+Scale: ~18 cameras and ~300–500 capture events/day (medium).
+Cloud multimodal LLM (Claude) availability for vision and the brain.
+Adequate camera placement and lighting at each workstation.
+Client agrees a worker-monitoring policy (coaching vs punitive) before go-live.
+3. External Interface Requirements
+3.1 User Interfaces
+Worker capture (PWA): camera-first screen, large capture button, instant preview of AI reading, one-tap confirm/correct, offline queue indicator.
+Supervisor console: pending-confirmation queue, allotment management, section dashboards, flags.
+Owner dashboard: live stock/shortage/efficiency tiles, daily report viewer, chat panel.
+Accessibility/locale: multilingual labels; high-contrast, touch-friendly controls for floor use.
+3.2 Hardware Interfaces
+Mobile/tablet cameras for capture.
+IP/CCTV cameras (RTSP) feeding the edge analytics device.
+Edge GPU device interfacing with the backend over the LAN/API.
+3.3 Software Interfaces
+Interface
+Type
+Purpose
+Claude API
+HTTPS / REST
+Vision extraction, report writing, chat reasoning
+Supabase/Postgres
+SQL / client lib
+System of record, auth, storage, pgvector
+Object storage
+S3-compatible
+Photos and short CCTV clips
+Message/queue
+Redis
+Capture jobs, async processing
+Notification
+WhatsApp/email API
+Daily report and flag delivery (optional)
+3.4 Communications Interfaces
+HTTPS/TLS for all client–backend and backend–API traffic.
+WebSocket for live dashboard updates and chat streaming.
+RTSP within the LAN for camera-to-edge streaming; no raw video leaves the premises in the edge configuration.
+4. Functional Requirements
+Each requirement has a unique ID (FR-x.y) and a priority: M (must-have, v1), S (should-have), C (could-have/later). Priorities feed the phased delivery plan.
+4.1 Stock Inventory — Incoming & Outgoing
+ID
+Requirement
+Pri
+Phase
+FR-1.1
+The worker shall capture incoming stock by photographing a challan or lot tag.
+M
+1
+FR-1.2
+The system shall extract lot number, quality/design, and meters received from the photo.
+M
+1
+FR-1.3
+The worker shall capture outgoing stock with dispatch meters, party, and lot.
+M
+1
+FR-1.4
+The system shall record each movement as an IN/OUT ledger entry linked to its source photo.
+M
+1
+FR-1.5
+The system shall maintain a running stock balance per lot and per quality, derived from the ledger.
+M
+1
+FR-1.6
+The system shall prevent an outgoing entry that exceeds available balance, or flag it for review.
+S
+1
+ 
+4.2 Job Cards & Folding Shortage
+ID
+Requirement
+Pri
+Phase
+FR-2.1
+A supervisor shall create a job card linking a lot, process stage, and assigned worker, with meters-in.
+M
+1
+FR-2.2
+The worker shall capture folded meters-out by photograph at the folding stage.
+M
+1
+FR-2.3
+The system shall compute folding shortage as meters_in − meters_out automatically.
+M
+1
+FR-2.4
+The system shall flag a job card whose shortage exceeds a configurable threshold.
+S
+1
+FR-2.5
+The system shall track job-card status (open / in-process / folded / closed).
+M
+1
+ 
+4.3 AI Capture & Confirmation
+ID
+Requirement
+Pri
+Phase
+FR-3.1
+The system shall attach a confidence score to every AI reading.
+M
+1
+FR-3.2
+Readings at or above the confidence threshold shall commit automatically to the ledger/job card.
+M
+1
+FR-3.3
+Readings below the threshold shall be held in a pending queue for one-tap confirm or correction.
+M
+1
+FR-3.4
+The system shall pre-filter blurry/irrelevant photos before sending them for full extraction.
+S
+1
+FR-3.5
+The system shall retain the original photo, the extracted data, and the confirm action for audit.
+M
+1
+FR-3.6
+The capture client shall queue submissions offline and sync when connectivity returns.
+S
+1
+FR-3.7
+The vision provider shall be replaceable (e.g., hybrid OCR) via configuration without code rework.
+S
+2
+ 
+4.4 The Brain — Reports & Chat
+ID
+Requirement
+Pri
+Phase
+FR-4.1
+The system shall generate an end-of-day report (meters in/out, shortages, stock balance, efficiency) automatically.
+M
+1
+FR-4.2
+The report shall be viewable on the dashboard and optionally pushed via WhatsApp/email.
+S
+1
+FR-4.3
+The owner shall ask questions in natural language (English/Hindi/Gujarati) via chat.
+M
+2
+FR-4.4
+The brain shall answer using read-only queries against the database, never fabricated figures.
+M
+2
+FR-4.5
+The brain shall display the underlying numbers/records supporting each answer.
+S
+2
+FR-4.6
+The system shall log every question, the query executed, and the answer for audit.
+M
+2
+FR-4.7
+The brain shall answer historical/contextual questions using retrieval over past records.
+C
+2
+ 
+4.5 Worker Efficiency & CCTV Monitoring
+ID
+Requirement
+Pri
+Phase
+FR-5.1
+The system shall record work allotted per worker per shift/day.
+M
+1
+FR-5.2
+The system shall compute efficiency as work done (meters) vs allotted, per worker per day.
+M
+1
+FR-5.3
+The system shall flag workers below a configurable efficiency threshold.
+M
+1
+FR-5.4
+CCTV analytics shall estimate active vs idle time per worker per station.
+S
+3
+FR-5.5
+The system shall fuse camera activity with job-card output and flag only when both indicate low performance.
+M
+3
+FR-5.6
+Flags shall be presented as coaching/planning signals, not automated pay actions.
+M
+3
+FR-5.7
+CCTV processing shall run on-site (edge) in the recommended configuration.
+S
+3
+ 
+4.6 Access Control & Administration
+ID
+Requirement
+Pri
+Phase
+FR-6.1
+The system shall enforce RBAC: owner (all), supervisor (section), worker (capture only).
+M
+1
+FR-6.2
+An IT admin shall manage users, roles, and configurable thresholds.
+M
+1
+FR-6.3
+The system shall record an audit trail of edits, confirms, and admin actions.
+M
+1
+5. Non-Functional Requirements
+5.1 Performance
+ID
+Requirement
+Target
+NFR-P1
+AI reading returned after capture (high-confidence path)
+≤ 5 s typical
+NFR-P2
+Dashboard query / tile load
+≤ 2 s
+NFR-P3
+Chat answer latency
+≤ 8 s typical
+NFR-P4
+Sustained capture throughput
+≥ 500/day, burst 60/hr
+NFR-P5
+CCTV analytics processing
+near real-time, 18 streams
+5.2 Reliability & Availability
+NFR-R1: Application availability target 99% during working hours.
+NFR-R2: No capture data loss; offline submissions queued and synced (supports FR-3.6).
+NFR-R3: Edge CCTV continues functioning during internet outages.
+NFR-R4: Automated daily backups of the database with point-in-time recovery.
+5.3 Security & Privacy
+NFR-S1: TLS for all traffic; encryption at rest for database and stored media.
+NFR-S2: RBAC enforced server-side; least-privilege roles (supports FR-6.1).
+NFR-S3: Chat/brain uses a read-only DB role; no AI-initiated writes (supports FR-4.4).
+NFR-S4: Worker video retained on-premises where feasible; configurable retention period.
+NFR-S5: Full audit logging of confirms, edits, admin actions, and chat queries.
+5.4 Usability
+NFR-U1: A worker can complete a capture in ≤ 3 taps.
+NFR-U2: Multilingual UI (English/Hindi/Gujarati); icon-led for low-literacy users.
+NFR-U3: Touch-friendly, high-contrast UI suitable for factory-floor conditions.
+5.5 Maintainability & Portability
+NFR-M1: AI services modular and independently deployable.
+NFR-M2: Vision provider abstracted behind one interface (supports FR-3.7).
+NFR-M3: PWA runs on any modern browser; no app-store dependency.
+5.6 Scalability
+NFR-Sc1: Capture volume scalable to ~2× (≈800/day) without architectural change.
+NFR-Sc2: Additional cameras addable by adding/upgrading edge capacity.
+6. Data Requirements
+6.1 Core Entities
+The database is the single source of truth. Stock, shortage, and efficiency are all derived from one movement ledger, so the figures can never disagree.
+Entity
+Key attributes
+Supports
+lots
+lot_id, quality, design, grade, status
+FR-1.x, FR-2.x
+stock_movements
+id, lot_id, direction, meters, party, source_doc, ts
+FR-1.4, FR-1.5
+job_cards
+id, lot_id, process, worker_id, meters_in, meters_out, shortage, status
+FR-2.x
+workers
+id, name, section, role
+FR-5.x
+allotments
+id, worker_id, job_card_id, meters_allotted, shift, date
+FR-5.1, FR-5.2
+capture_events
+id, photo_url, type, ai_json, confidence, status, confirmed_by
+FR-3.x
+efficiency_daily
+worker_id, date, allotted, done, efficiency_pct, flagged
+FR-5.2, FR-5.3
+cctv_activity
+worker_id, station, active_pct, idle_min, ts
+FR-5.4, FR-5.5
+chat_audit
+id, user_id, question, sql_run, answer, ts
+FR-4.6
+users
+id, name, role, locale, active
+FR-6.x
+6.2 Retention & Integrity
+Ledger and job-card records are append-only with audited corrections (no silent overwrite).
+Photos retained for a configurable period; CCTV clips lifecycle-expired to control storage.
+Referential integrity enforced between lots, movements, job cards, and allotments.
+7. Traceability & Acceptance
+7.1 Problem-to-Requirement Traceability
+Client problem
+Requirements
+Phase
+Stock inventory (in/out)
+FR-1.1 … FR-1.6, FR-3.x
+1
+Job card meter update + shortage
+FR-2.1 … FR-2.5, FR-3.x
+1
+Worker efficiency monitor + flag
+FR-5.1 … FR-5.7
+1 & 3
+AI brain (reports + chat)
+FR-4.1 … FR-4.7
+1 & 2
+Access & audit
+FR-6.1 … FR-6.3
+1
+7.2 Acceptance Criteria (representative)
+AC-1: Given a clear printed challan, capture extracts lot, quality, and meters correctly and commits without manual typing (FR-1.1–1.2).
+AC-2: Given a low-confidence reading, the system holds it for confirm rather than committing wrong data (FR-3.1–3.3).
+AC-3: At folding, shortage equals meters_in minus meters_out with no manual calculation (FR-2.3).
+AC-4: At day end, a report is produced automatically with no human assembly (FR-4.1).
+AC-5: A plain-language question returns an answer backed by a real query and shows the numbers (FR-4.3–4.5).
+AC-6: A worker is flagged only when both low activity and low output coincide (FR-5.5).
+AC-7: A worker cannot access another section’s data; a supervisor cannot perform admin actions (FR-6.1).
+7.3 Open Items to Confirm Before Build
+Confidence threshold value(s) and who clears the pending queue.
+Efficiency and shortage flag thresholds.
+Edge vs cloud for CCTV (edge recommended) and camera count.
+Worker-monitoring policy and data-retention periods.
+Report delivery channel (dashboard only vs WhatsApp/email).
+ 
+End of Software Requirements Specification v1.0.
