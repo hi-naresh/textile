@@ -219,6 +219,9 @@ export function Ask({ ctx }: { ctx: Ctx }) {
   return (
     <div className="page fade ask-page">
       <PageHead title={`Ask ${firm().name}`} sub={role === 'owner' ? 'Plain-language questions over the live database. Every query is logged.' : 'Meters and job cards for your sections. Every query is logged.'} />
+      {d.status && d.status.ai.state !== 'connected' && (
+        <div className="alert warn" role="status">Basic mode: the AI is not connected, so only common questions (stock, lots, job cards, workers) can be answered.</div>
+      )}
       <section className="card chat">
         <div className="chat-thread">
           {d.messages.map((m, i) => (

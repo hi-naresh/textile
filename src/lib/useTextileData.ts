@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, LedgerEntry, Lot, Toast, ToastTone, Worker } from './types';
+import type { SystemStatus, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, LedgerEntry, Lot, Toast, ToastTone, Worker } from './types';
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
 import { DEFAULT_CONFIG, type FirmConfig } from './config';
 
@@ -74,6 +74,24 @@ export function useTextileData() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [flow, setFlow] = useState<FlowDay[]>([]);
   const [config, setConfigState] = useState<FirmConfig>(DEFAULT_CONFIG);
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+
+  // AI / photo storage health, for in-app warnings. Re-checked every 10 minutes.
+  const checkStatus = useCallback(async (force = false) => {
+    try {
+      const s = await getJson<SystemStatus>(`/api/status${force ? '?recheck=1' : ''}`);
+      setStatus(s);
+      return s;
+    } catch {
+      return null;
+    }
+  }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    checkStatus();
+    const id = setInterval(() => checkStatus(), 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [checkStatus]);
   const [names, setNames] = useState<KnownNames>({ mills: [], weavers: [], parties: [] });
   const [jobCards, setJobCards] = useState<JobCard[]>([]);
   const [allotments, setAllotments] = useState<Allotment[]>([]);
@@ -188,7 +206,7 @@ export function useTextileData() {
       fd.append('type', type);
       const res = await fetch('/api/capture', { method: 'POST', body: fd });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Photo reading failed.');
+      if (!res.ok) { checkStatus(); throw new Error(data?.error || 'Photo reading failed.'); }
       const pct = Math.round((data.event?.confidence ?? 0) * 100);
       if (data.autoCommitted) showToast(`Read with ${pct}% confidence · saved to ledger`, 'success');
       else showToast(`Read with ${pct}% confidence · sent to supervisor for review`, 'warning');
@@ -250,7 +268,7 @@ export function useTextileData() {
   };
 
   return {
-    config, settingsApi,
+    config, settingsApi, status, checkStatus,
     lots, ledger, flow, names, jobCards, allotments, workers, efficiency, cctv, captures,
     loading, dbOk, lastSync, toast, showToast, refresh,
     addStock, moveLot, lotHistory, createJobCard, closeJobCard, confirmCapture, rejectCapture, uploadCapture,

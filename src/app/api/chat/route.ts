@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { geminiRequest, reportAiFailure, reportAiSuccess } from '@/lib/gemini';
 
 // Safely validate SQL queries to prevent modifications
 function isSafeQuery(sql: string): boolean {
@@ -200,11 +201,9 @@ Rules:
 7. A lot's current location is its latest lot_locations row (ORDER BY ts DESC, id DESC LIMIT 1).
 `;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+  const response = await fetch(geminiRequest(apiKey).url, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
+    headers: geminiRequest(apiKey).headers,
     body: JSON.stringify({
       contents: [
         {
@@ -222,10 +221,12 @@ Rules:
 
   if (!response.ok) {
     const errText = await response.text();
+    reportAiFailure(response.status, errText);
     throw new Error(`Gemini SQL API error: ${response.status} - ${errText}`);
   }
 
   const resJson = await response.json();
+    reportAiSuccess();
   const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
   return text.trim();
 }
@@ -251,11 +252,9 @@ Please write a helpful, concise response answering the owner's question based on
 - If no rows were returned, politely explain that no matching records were found in the database.
 `;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+  const response = await fetch(geminiRequest(apiKey).url, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
+    headers: geminiRequest(apiKey).headers,
     body: JSON.stringify({
       contents: [
         {
@@ -272,6 +271,7 @@ Please write a helpful, concise response answering the owner's question based on
 
   if (!response.ok) {
     const errText = await response.text();
+    reportAiFailure(response.status, errText);
     throw new Error(`Gemini Summarize API error: ${response.status} - ${errText}`);
   }
 

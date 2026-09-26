@@ -1,3 +1,4 @@
+import { geminiRequest, reportAiFailure, reportAiSuccess } from '@/lib/gemini';
 
 export interface ExtractedStockData {
   lot_id?: string;
@@ -60,11 +61,9 @@ Rules:
 `;
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(geminiRequest(apiKey).url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
+      headers: geminiRequest(apiKey).headers,
       body: JSON.stringify({
         contents: [
           {
@@ -88,10 +87,12 @@ Rules:
 
     if (!response.ok) {
       const errText = await response.text();
+      reportAiFailure(response.status, errText);
       throw new Error(`Gemini Vision API error: ${response.status} - ${errText}`);
     }
 
     const resJson = await response.json();
+    reportAiSuccess();
     const content = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
     // Parse response
@@ -108,6 +109,7 @@ Rules:
       rawResponse: content
     };
   } catch (error) {
+    if (!(error instanceof Error && error.message.startsWith('Gemini'))) reportAiFailure(null, String(error));
     console.error('Error in Gemini Vision Extraction:', error);
     return {
       data: {},

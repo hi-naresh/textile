@@ -147,3 +147,9 @@ export interface Toast {
   text: string;
   tone: ToastTone;
 }
+
+export type AiState = 'connected' | 'missing' | 'invalid_key' | 'model_unavailable' | 'unreachable' | 'demo';
+export interface SystemStatus {
+  ai: { state: AiState; model: string; message: string; fix: string; checkedAt: string };
+  photos: { state: 'connected' | 'local' | 'missing'; message: string; fix?: string };
+}

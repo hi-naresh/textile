@@ -151,6 +151,8 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
           {supervisorPick && <div className="m-role">{supervisorPick}</div>}
         </header>
 
+        <SystemBanner ctx={ctx} onOpenSettings={() => go('settings')} />
+
         {d.dbOk === false && (
           <div className="db-banner"><Icon name="alert" size={16} strokeWidth={2} />Can’t reach the database. Showing the last data loaded. <button className="linkbtn" onClick={() => d.refresh()}>Retry</button></div>
         )}
@@ -189,6 +191,38 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
           </div>
         </div>
       </Sheet>
+    </div>
+  );
+}
+
+/** Warns when AI photo reading or photo storage isn't working. Stays until fixed; can be hidden per session. */
+function SystemBanner({ ctx, onOpenSettings }: { ctx: Ctx; onOpenSettings: () => void }) {
+  const { d, role } = ctx;
+  const [hidden, setHidden] = useState<string | null>(null);
+  const st = d.status;
+  if (!st) return null;
+  const aiOk = st.ai.state === 'connected';
+  const photosOk = st.photos.state !== 'missing';
+  if (aiOk && photosOk) return null;
+
+  const key = `${st.ai.state}|${st.photos.state}`;
+  if (hidden === key) return null;
+  const demo = st.ai.state === 'demo' && photosOk;
+  let text: string;
+  if (role === 'worker') {
+    text = !photosOk || (!aiOk && !demo)
+      ? 'Photo reading is switched off right now. Tell your supervisor, and give them the paper challan or job card.'
+      : 'Demo mode: photo reads are not real.';
+  } else {
+    const parts = [!aiOk ? st.ai.message : '', !photosOk ? st.photos.message : ''].filter(Boolean);
+    text = parts.join(' ') + (!demo ? ' Enter stock and job cards manually until it is fixed.' : '');
+  }
+  return (
+    <div className={`sys-banner ${demo ? 'info' : 'warn'}`} role="alert">
+      <Icon name="alert" size={16} strokeWidth={2} />
+      <span className="grow">{text}</span>
+      {role === 'owner' && <button className="linkbtn" onClick={onOpenSettings}>Details</button>}
+      <button className="ib sm-ib" aria-label="Hide this message" onClick={() => setHidden(key)}><Icon name="x" size={14} /></button>
     </div>
   );
 }

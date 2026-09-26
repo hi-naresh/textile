@@ -27,6 +27,8 @@ No demo data is ever loaded on Vercel. `scripts/db-init.js` (demo data) is **loc
 
 ### 3. Other environment variables (Project → Settings → Environment Variables, Production)
 - `GEMINI_API_KEY` — required. Without it, photo reading is refused (it never invents data in production).
+- `GEMINI_MODEL` — optional (default `gemini-3.5-flash`).
+- If the key is missing/rejected or the model is retired, the app shows a warning banner, disables photo capture for workers, and Settings → **Connections** explains what to fix.
 
 ### 4. Server region
 - `vercel.json` pins the app to Mumbai (`bom1`), next to the database.

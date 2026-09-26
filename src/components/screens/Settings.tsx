@@ -85,6 +85,8 @@ export function Settings({ ctx }: { ctx: Ctx }) {
     <div className="page fade settings">
       <PageHead title="Settings" sub="Everything here is specific to this firm. Changes apply for everyone straight away." />
 
+      <Connections ctx={ctx} />
+
       <div className="settings-grid">
         {/* Firm */}
         <section className="card pad stack-16">
@@ -206,5 +208,51 @@ export function Settings({ ctx }: { ctx: Ctx }) {
         </AddRow>
       </section>
     </div>
+  );
+}
+
+const AI_LABEL: Record<string, { label: string; tone: 'good' | 'warn' | 'bad' | 'info' }> = {
+  connected: { label: 'Connected', tone: 'good' },
+  demo: { label: 'Demo mode', tone: 'info' },
+  missing: { label: 'Not connected', tone: 'bad' },
+  invalid_key: { label: 'Key rejected', tone: 'bad' },
+  model_unavailable: { label: 'Model unavailable', tone: 'bad' },
+  unreachable: { label: 'Unreachable', tone: 'warn' },
+};
+
+function Connections({ ctx }: { ctx: Ctx }) {
+  const { d } = ctx;
+  const [busy, setBusy] = useState(false);
+  const st = d.status;
+  const ai = st ? AI_LABEL[st.ai.state] ?? AI_LABEL.unreachable : null;
+  const photoTone = st?.photos.state === 'missing' ? 'bad' : st?.photos.state === 'local' ? 'info' : 'good';
+  return (
+    <section className="card pad stack-14">
+      <div className="card-head">
+        <div className="stack-4 grow"><h2 className="h2">Connections</h2><span className="muted small">Services the app depends on. Checked every 10 minutes.</span></div>
+        <button className="btn sm" disabled={busy} onClick={async () => { setBusy(true); await d.checkStatus(true); setBusy(false); }}><Icon name="refresh" size={14} />{busy ? 'Checking…' : 'Check again'}</button>
+      </div>
+      {!st && <span className="muted small">Checking…</span>}
+      {st && ai && (
+        <div className="list">
+          <div className="list-row wrap">
+            <div className="stack-2 grow">
+              <span className="strong">AI photo reading & chat</span>
+              <span className="muted small">{st.ai.message}{st.ai.state !== 'missing' && st.ai.state !== 'demo' ? ` Model: ${st.ai.model}.` : ''}</span>
+              {st.ai.fix && <span className="t2 small">What to do: {st.ai.fix}</span>}
+            </div>
+            <Pill tone={ai.tone}>{ai.label}</Pill>
+          </div>
+          <div className="list-row wrap">
+            <div className="stack-2 grow">
+              <span className="strong">Photo storage</span>
+              <span className="muted small">{st.photos.message}</span>
+              {st.photos.fix && <span className="t2 small">What to do: {st.photos.fix}</span>}
+            </div>
+            <Pill tone={photoTone}>{st.photos.state === 'connected' ? 'Connected' : st.photos.state === 'local' ? 'Local folder' : 'Not connected'}</Pill>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

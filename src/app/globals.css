@@ -178,6 +178,10 @@ img { max-width: 100%; display: block; }
 .bell-dot { position: absolute; top: 9px; right: 10px; width: 8px; height: 8px; border-radius: 99px; background: var(--bad); }
 
 .content { flex-grow: 1; min-width: 0; }
+.sys-banner { display: flex; align-items: center; gap: 10px; padding: 10px 28px; font-size: 13px; line-height: 1.4; border-bottom: 1px solid var(--line); }
+.sys-banner.warn { background: var(--warnSoft); color: var(--warn); }
+.sys-banner.info { background: var(--accentSoft); color: var(--accent); }
+.sys-banner .ib { background: transparent; border-color: transparent; color: inherit; }
 .db-banner { display: flex; align-items: center; gap: 8px; padding: 10px 28px; background: var(--badSoft); color: var(--bad); font-size: 13px; }
 
 .m-head, .tabbar { display: none; }
@@ -317,6 +321,7 @@ img { max-width: 100%; display: block; }
 .callout.info { background: var(--accentSoft); } .callout.info .callout-title { color: var(--accent); }
 .alert { padding: 10px 12px; border-radius: 10px; font-size: 13px; }
 .alert.bad { background: var(--badSoft); color: var(--bad); }
+.alert.warn { background: var(--warnSoft); color: var(--warn); line-height: 1.45; }
 
 /* ---------- Tables ---------- */
 .tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -489,7 +494,7 @@ body:has(.sheet-wrap) .toast { top: 20px; bottom: auto; }
   .m-role .segbar { display: flex; width: 100%; }
   .m-role .seg { flex: 1 1 0; }
   .m-role .worker-pick select { width: 100%; max-width: none; height: 44px; }
-  .db-banner { padding: 10px 16px; }
+  .db-banner, .sys-banner { padding: 10px 16px; }
 
   .tabbar {
     display: flex; gap: 4px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
