@@ -7,14 +7,41 @@ export interface Lot {
   grade: string;
   status: string;
   balance: number;
+  location: string | null; // current physical location (latest lot_locations row)
+  location_stage: LocationStage | null;
+  location_ts: string | null;
+}
+
+export type LocationStage = 'arrival' | 'job_card' | 'returned' | 'dispatch' | 'moved';
+
+export interface LotLocationEntry {
+  id: number;
+  lot_id: string;
+  location: string;
+  stage: LocationStage;
+  note: string | null;
+  job_card_id: number | null;
+  stock_movement_id: number | null;
+  moved_by_name: string | null;
+  ts: string;
+}
+
+export interface KnownNames {
+  mills: string[];
+  weavers: string[];
+  parties: string[];
 }
 
 export interface LedgerEntry {
   id: number;
   lot_id: string;
   direction: 'IN' | 'OUT';
-  meters: number;
-  party: string | null;
+  meters: number; // stock quantity (IN: finished if known, else grey)
+  grey_meters: number | null; // IN only
+  finished_meters: number | null; // IN only
+  mill_name: string | null; // IN only
+  weaver_name: string | null; // IN only
+  party: string | null; // OUT only: destination client (older IN rows may hold a legacy supplier)
   source_doc_id: string | null;
   capture_event_id: number | null;
   ts: string;

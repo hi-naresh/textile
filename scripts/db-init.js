@@ -112,8 +112,10 @@ async function main() {
           lot_id: 'LOT-5026',
           quality: 'Poly-Crepe Super',
           design: 'Design-104A',
-          meters: 850.50,
-          party: 'Surat Textiles Ltd',
+          grey_meters: 880.00,
+          finished_meters: 850.50,
+          mill_name: 'Surat Textiles Ltd',
+          weaver_name: 'Laxmi Weaving Works',
           source_doc: 'CH-8821'
         },
         confidence: 0.65,
@@ -142,23 +144,39 @@ async function main() {
     }
     console.log('Capture events seeded.');
 
-    // Seed Stock Movements (IN)
-    const seedMovements = [
-      ['LOT-5021', 'IN', 500.00, 'Karan Fabrics', 'CH-4029'],
-      ['LOT-5022', 'IN', 1200.00, 'Vimal Processors', 'CH-3011'],
-      ['LOT-5023', 'IN', 750.00, 'Navsari Weaves', 'CH-2911'],
-      ['LOT-5024', 'IN', 600.00, 'Surat Cottons', 'CH-9912'],
-      ['LOT-5025', 'IN', 1000.00, 'Radhe Synthetics', 'CH-1180'],
-      // Seed a completed cycle where 1000 went in, and 980 was dispatched (OUT)
-      ['LOT-5025', 'OUT', 980.00, 'Mumbai Retailers', 'DISP-552']
+    // Seed Stock Movements
+    // IN rows: grey meters, finished meters, mill and weaver are separate. `meters` = finished (stock quantity).
+    const seedIncoming = [
+      // lot, grey, finished, mill, weaver, challan
+      ['LOT-5021', 520.00, 500.00, 'Karan Fabrics', 'Karan Fabrics', 'CH-4029'],
+      ['LOT-5022', 1240.00, 1200.00, 'Vimal Processors', 'Navsari Weaves', 'CH-3011'],
+      ['LOT-5023', 780.00, 750.00, 'Navsari Weaves', 'Navsari Weaves', 'CH-2911'],
+      ['LOT-5024', 615.00, 600.00, 'Surat Cottons', 'Patel Looms', 'CH-9912'],
+      ['LOT-5025', 1030.00, 1000.00, 'Radhe Synthetics', 'Radhe Synthetics', 'CH-1180']
     ];
-    for (const mv of seedMovements) {
+    for (const [lot, grey, finished, mill, weaver, challan] of seedIncoming) {
+      const mv = await targetClient.query(
+        `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, source_doc_id)
+         VALUES ($1, 'IN', $2, $3, $2, $4, $5, $6) RETURNING id`,
+        [lot, finished, grey, mill, weaver, challan]
+      );
       await targetClient.query(
-        `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        mv
+        `INSERT INTO lot_locations (lot_id, location, stage, note, stock_movement_id) VALUES ($1, 'Godown', 'arrival', $2, $3)`,
+        [lot, `Received on challan ${challan}`, mv.rows[0].id]
       );
     }
+    // A completed cycle: 1000 m in, 980 m dispatched (OUT) to a client
+    const out = await targetClient.query(
+      `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id)
+       VALUES ('LOT-5025', 'OUT', 980.00, 'Mumbai Retailers', 'DISP-552') RETURNING id`
+    );
+    await targetClient.query(
+      `INSERT INTO lot_locations (lot_id, location, stage, note, stock_movement_id) VALUES ('LOT-5025', 'Godown', 'dispatch', '980 m to Mumbai Retailers (partial)', $1)`,
+      [out.rows[0].id]
+    );
+    await targetClient.query(
+      `INSERT INTO lot_locations (lot_id, location, stage, note) VALUES ('LOT-5024', 'Shop', 'moved', 'Moved for display')`
+    );
     console.log('Stock movements seeded.');
 
     // Seed Job Cards
@@ -176,6 +194,12 @@ async function main() {
     await targetClient.query(
       `INSERT INTO job_cards (lot_id, process, worker_id, meters_in, meters_out, status, ts_closed)
        VALUES ('LOT-5023', 'Printing', 'wrk-03', 750.00, NULL, 'open', NULL)`
+    );
+    // Lots with open job cards are on the floor
+    await targetClient.query(
+      `INSERT INTO lot_locations (lot_id, location, stage, note, job_card_id) VALUES
+       ('LOT-5021', 'Floor', 'job_card', 'JC-1 · Weaving', 1),
+       ('LOT-5023', 'Floor', 'job_card', 'JC-3 · Printing', 3)`
     );
     console.log('Job cards seeded.');
 

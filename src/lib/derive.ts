@@ -1,6 +1,6 @@
 // Pure helpers that turn API data into the numbers each screen shows.
 import type { Allotment, CctvActivity, JobCard, Worker } from './types';
-import { SECTIONS, SHORTAGE_LIMIT_PCT, sectionName } from './access';
+import { sectionName, rules, sectionNames } from './access';
 
 export interface WorkerDay {
   worker: Worker;
@@ -36,7 +36,7 @@ export function avg(nums: number[]): number | null {
 }
 
 export function sectionRows(days: WorkerDay[], jobCards: JobCard[]) {
-  return SECTIONS.map((sec) => {
+  return sectionNames().map((sec) => {
     const cards = jobCards.filter((j) => sectionName(j.process) === sec);
     const open = cards.filter((j) => j.status !== 'closed').length;
     const closed = cards.filter((j) => j.status === 'closed' && j.meters_out != null);
@@ -49,14 +49,14 @@ export function sectionRows(days: WorkerDay[], jobCards: JobCard[]) {
       open,
       eff: allot > 0 ? Math.round((done / allot) * 100) : null,
       shortage,
-      shortTone: shortage == null ? 'neutral' as const : shortage > SHORTAGE_LIMIT_PCT ? 'bad' as const : shortage > SHORTAGE_LIMIT_PCT / 2 ? 'warn' as const : 'good' as const,
+      shortTone: shortage == null ? 'neutral' as const : shortage > rules().shortageLimitPct ? 'bad' as const : shortage > rules().shortageLimitPct / 2 ? 'warn' as const : 'good' as const,
     };
   });
 }
 
 export function shortTone(pct: number | null): 'good' | 'warn' | 'bad' | 'neutral' {
   if (pct == null) return 'neutral';
-  return pct > SHORTAGE_LIMIT_PCT ? 'bad' : pct > SHORTAGE_LIMIT_PCT / 2 ? 'warn' : 'good';
+  return pct > rules().shortageLimitPct ? 'bad' : pct > rules().shortageLimitPct / 2 ? 'warn' : 'good';
 }
 
 export const STATUS_LABEL: Record<JobCard['status'], string> = { open: 'Open', 'in-process': 'In process', folded: 'Folded', closed: 'Closed' };
@@ -65,12 +65,30 @@ export const STATUS_TONE: Record<JobCard['status'], 'good' | 'warn' | 'info' | '
 export const CAPTURE_LABEL = { incoming_stock: 'Incoming challan', outgoing_stock: 'Outgoing challan', job_card_folding: 'Folding job card' } as const;
 
 export const FIELD_LABEL: Record<string, string> = {
-  lot_id: 'Lot', quality: 'Quality', design: 'Design', meters: 'Meters', party: 'Party', source_doc: 'Challan',
+  lot_id: 'Lot', quality: 'Quality', design: 'Design', meters: 'Meters', party: 'Party (client)', source_doc: 'Challan',
+  grey_meters: 'Grey meters', finished_meters: 'Finished meters', mill_name: 'Mill', weaver_name: 'Weaver',
   job_card_id: 'Job card', meters_out: 'Meters out', worker_id: 'Worker',
 };
 
 export const FIELDS_FOR = {
-  incoming_stock: ['lot_id', 'party', 'source_doc', 'meters', 'quality', 'design'],
-  outgoing_stock: ['lot_id', 'party', 'source_doc', 'meters'],
+  incoming_stock: ['lot_id', 'grey_meters', 'finished_meters', 'mill_name', 'weaver_name', 'source_doc', 'quality', 'design'],
+  outgoing_stock: ['lot_id', 'meters', 'party', 'source_doc'],
   job_card_folding: ['lot_id', 'job_card_id', 'meters_out', 'worker_id'],
 } as const;
+
+/** Fields where an empty value is fine (only one of grey/finished is needed; weaver may be unknown). */
+export const OPTIONAL_FIELDS = new Set(['grey_meters', 'finished_meters', 'weaver_name', 'quality', 'design', 'job_card_id', 'worker_id']);
+export const NUMERIC_FIELDS = new Set(['meters', 'meters_out', 'job_card_id', 'grey_meters', 'finished_meters']);
+
+export const STAGE_LABEL: Record<string, string> = {
+  arrival: 'Arrived', job_card: 'On job card', returned: 'Back from job', dispatch: 'Dispatch', moved: 'Moved',
+};
+
+export function locationTone(location: string | null): 'good' | 'warn' | 'info' | 'neutral' {
+  if (!location) return 'neutral';
+  const l = location.toLowerCase();
+  if (l === 'dispatched') return 'neutral';
+  if (l.startsWith('floor')) return 'warn';
+  if (l.startsWith('shop')) return 'info';
+  return 'good';
+}

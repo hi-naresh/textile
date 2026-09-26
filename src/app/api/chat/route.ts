@@ -44,7 +44,7 @@ async function translateMock(question: string): Promise<{ sql: string; explanati
   
   if (q.includes('ledger') || q.includes('movements') || q.includes('transactions')) {
     return {
-      sql: `SELECT sm.id, sm.lot_id, sm.direction, sm.meters, sm.party, sm.source_doc_id, sm.ts 
+      sql: `SELECT sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.finished_meters, sm.mill_name, sm.weaver_name, sm.party, sm.source_doc_id, sm.ts 
             FROM stock_movements sm 
             ORDER BY sm.ts DESC LIMIT 20`,
       explanation: 'Recent stock movements (IN/OUT ledger entries).',
@@ -160,7 +160,9 @@ function mockSummarize(question: string, sql: string, rows: any[]): string {
   }
   
   if (sql.includes('cctv_activity')) {
-    return `Camera tracking indicates that active work is progressing normally. Station A (Folding) has flagged lower activity (45.0% active, 180 min idle) for Bharat Gohil. We should review this against his job-card output before taking coaching actions.`;
+    const lowest = [...rows].sort((a, b) => Number(a.active_pct) - Number(b.active_pct))[0];
+    if (!lowest) return 'No camera activity has been recorded yet.';
+    return `Camera tracking covers ${rows.length} recent reading(s). Lowest activity: ${lowest.name} at ${lowest.station} (${Number(lowest.active_pct).toFixed(1)}% active, ${Number(lowest.idle_min).toFixed(0)} min idle). Review this against their job-card output before taking any action.`;
   }
 
   return `I ran a query against the central database to summarize the information. I found **${rows.length} relevant records** in the database matching your search. You can view the raw query and output data below.`;
@@ -170,7 +172,7 @@ function mockSummarize(question: string, sql: string, rows: any[]): string {
  * Call Google Gemini API for Text-to-SQL translation
  */
 async function translateWithGemini(question: string, apiKey: string): Promise<string> {
-  const schemaPrompt = `You are a safe Text-to-SQL translator for a textile mill database in Surat.
+  const schemaPrompt = `You are a safe Text-to-SQL translator for a textile firm's operations database.
 Your task is to take a natural language question in English, Hindi, or Gujarati and translate it into a safe, valid PostgreSQL query.
 
 The database schema is as follows:
@@ -178,11 +180,14 @@ The database schema is as follows:
 - workers (id VARCHAR(50) PRIMARY KEY, name VARCHAR(100), section VARCHAR(100), role VARCHAR(50), active BOOLEAN)
 - lots (lot_id VARCHAR(50) PRIMARY KEY, quality VARCHAR(100), design VARCHAR(100), grade VARCHAR(10), status VARCHAR(20))
 - capture_events (id SERIAL PRIMARY KEY, photo_url VARCHAR(255), type VARCHAR(30), ai_json JSONB, confidence NUMERIC(3,2), status VARCHAR(20), confirmed_by VARCHAR(50), ts TIMESTAMP)
-- stock_movements (id SERIAL PRIMARY KEY, lot_id VARCHAR(50) REFERENCES lots, direction VARCHAR(5) CHECK (IN/OUT), meters NUMERIC(10,2), party VARCHAR(150), source_doc_id VARCHAR(100), capture_event_id INTEGER, ts TIMESTAMP)
+- stock_movements (id SERIAL PRIMARY KEY, lot_id VARCHAR(50) REFERENCES lots, direction VARCHAR(5) CHECK (IN/OUT), meters NUMERIC(10,2) -- stock quantity used for balances, grey_meters NUMERIC(10,2) -- IN only, finished_meters NUMERIC(10,2) -- IN only, mill_name VARCHAR(150) -- IN only: source mill, weaver_name VARCHAR(150) -- IN only, party VARCHAR(150) -- OUT only: destination client, source_doc_id VARCHAR(100), capture_event_id INTEGER, ts TIMESTAMP)
+- lot_locations (id SERIAL PRIMARY KEY, lot_id VARCHAR(50) REFERENCES lots, location VARCHAR(100) -- e.g. Godown, Shop, Floor, Dispatched, stage VARCHAR(20) -- arrival/job_card/returned/dispatch/moved, note TEXT, ts TIMESTAMP) -- latest row per lot = current location
 - job_cards (id SERIAL PRIMARY KEY, lot_id VARCHAR(50) REFERENCES lots, process VARCHAR(100), worker_id VARCHAR(50) REFERENCES workers, meters_in NUMERIC(10,2), meters_out NUMERIC(10,2), shortage NUMERIC(10,2) GENERATED, status VARCHAR(20), ts_created TIMESTAMP, ts_closed TIMESTAMP)
 - allotments (id SERIAL PRIMARY KEY, worker_id VARCHAR(50) REFERENCES workers, job_card_id INTEGER REFERENCES job_cards, meters_allotted NUMERIC(10,2), shift VARCHAR(20), date DATE)
 - efficiency_daily (id SERIAL PRIMARY KEY, worker_id VARCHAR(50) REFERENCES workers, date DATE, allotted NUMERIC(10,2), done NUMERIC(10,2), efficiency_pct NUMERIC(5,2), flagged BOOLEAN)
 - cctv_activity (id SERIAL PRIMARY KEY, worker_id VARCHAR(50) REFERENCES workers, station VARCHAR(50), active_pct NUMERIC(5,2), idle_min NUMERIC(10,2), ts TIMESTAMP)
+- sections (id SERIAL PRIMARY KEY, name VARCHAR(60), sort_order INT, active BOOLEAN) -- the firm's processes, e.g. Weaving, Dyeing, Folding
+- supervisor_sections (user_id VARCHAR(50) REFERENCES users, section_id INT REFERENCES sections) -- which supervisor runs which section
 - chat_audit (id SERIAL PRIMARY KEY, user_id VARCHAR(50) REFERENCES users, question TEXT, sql_run TEXT, answer TEXT, ts TIMESTAMP)
 
 Rules:
@@ -191,6 +196,8 @@ Rules:
 3. Be careful with joins: join stock_movements with lots on lot_id, join job_cards with workers on worker_id, etc.
 4. For running stock balance of a lot or quality, compute it as: SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END).
 5. For shortage pct on a job card, compute: (shortage / meters_in * 100).
+6. Suppliers are mill_name / weaver_name on IN rows. Clients are party on OUT rows.
+7. A lot's current location is its latest lot_locations row (ORDER BY ts DESC, id DESC LIMIT 1).
 `;
 
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
@@ -227,7 +234,7 @@ Rules:
  * Generate a friendly response for the SQL rows using Gemini
  */
 async function summarizeWithGemini(question: string, sql: string, rows: any[], apiKey: string): Promise<string> {
-  const prompt = `You are the AI Brain of a textile mill in Surat. The owner has asked a question: "${question}".
+  const prompt = `You are the operations assistant of a textile firm. The owner has asked a question: "${question}".
 We executed the following SQL query against our central database:
 \`\`\`sql
 ${sql}

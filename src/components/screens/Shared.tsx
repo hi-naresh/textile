@@ -4,9 +4,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, LockTag, PageHead, Pill, Segmented, Track, dayTime, fmt, inr, time } from '../ui';
 import type { Ctx } from '../ctx';
-import { ACTIVE_SUPERVISOR, SCOPE_TEXT, SECTIONS, SHORTAGE_LIMIT_PCT, can, captureInScope, captureSection, inSupervisorScope, jobInScope, sectionName } from '@/lib/access';
-import { CAPTURE_LABEL, FIELDS_FOR, FIELD_LABEL, STATUS_LABEL, STATUS_TONE, shortTone } from '@/lib/derive';
-import type { CaptureEvent, JobCard } from '@/lib/types';
+import { can, captureInScope, captureSection, inSupervisorScope, jobInScope, sectionName, activeSupervisor, scopeText, rules, sectionNames, firm, locationPresets } from '@/lib/access';
+import { CAPTURE_LABEL, FIELDS_FOR, FIELD_LABEL, NUMERIC_FIELDS, OPTIONAL_FIELDS, STAGE_LABEL, STATUS_LABEL, STATUS_TONE, locationTone, shortTone } from '@/lib/derive';
+import type { StockEntry } from '@/lib/useTextileData';
+import type { CaptureEvent, JobCard, LotLocationEntry } from '@/lib/types';
 
 // ---------------- Job cards ----------------
 export function JobCards({ ctx }: { ctx: Ctx }) {
@@ -23,7 +24,7 @@ export function JobCards({ ctx }: { ctx: Ctx }) {
   const submitClose = async (e: React.FormEvent) => {
     e.preventDefault();
     if (closing == null || !metersOut) return;
-    if (await d.closeJobCard(closing, metersOut)) setClosing(null);
+    if (await d.closeJobCard(role, closing, metersOut)) setClosing(null);
   };
 
   return (
@@ -34,7 +35,7 @@ export function JobCards({ ctx }: { ctx: Ctx }) {
       <div className="toolbar">
         <Segmented label="Status" value={status} onChange={setStatus} options={[{ value: 'all', label: 'All' }, { value: 'open', label: 'Open' }, { value: 'in-process', label: 'In process' }, { value: 'closed', label: 'Closed' }]} />
         <div className="grow" />
-        <Pill tone="info" className="tall"><Icon name="filter" size={12} strokeWidth={2} />{SCOPE_TEXT[role].chip}</Pill>
+        <Pill tone="info" className="tall"><Icon name="filter" size={12} strokeWidth={2} />{scopeText(role).chip}</Pill>
       </div>
       <section className="card flush">
         <table className="tbl rtbl">
@@ -63,7 +64,7 @@ export function JobCards({ ctx }: { ctx: Ctx }) {
                           <label className="fld inline">Meters out for JC-{j.id}
                             <input className="num" inputMode="decimal" value={metersOut} onChange={(e) => setMetersOut(e.target.value)} autoFocus />
                           </label>
-                          <span className="muted small">In: {fmt(j.meters_in, 1)} m · shortage over {SHORTAGE_LIMIT_PCT}% gets flagged</span>
+                          <span className="muted small">In: {fmt(j.meters_in, 1)} m · shortage over {rules().shortageLimitPct}% gets flagged</span>
                           <div className="grow" />
                           <button type="button" className="btn sm" onClick={() => setClosing(null)}>Cancel</button>
                           <button type="submit" className="btn sm primary"><Icon name="check" size={14} strokeWidth={2} />Close card</button>
@@ -78,7 +79,7 @@ export function JobCards({ ctx }: { ctx: Ctx }) {
           </tbody>
         </table>
       </section>
-      {!isOwner && <p className="muted small note"><Icon name="lock" size={14} strokeWidth={2} />Rupee loss and party rates are visible to the owner only. Cards outside {ACTIVE_SUPERVISOR.sections.join(' and ')} are hidden from your view.</p>}
+      {!isOwner && <p className="muted small note"><Icon name="lock" size={14} strokeWidth={2} />Rupee loss and party rates are visible to the owner only. Cards outside {activeSupervisor().sections.join(' and ')} are hidden from your view.</p>}
     </div>
   );
 }
@@ -107,17 +108,23 @@ export function Review({ ctx }: { ctx: Ctx }) {
   if (!pending.length) {
     return (
       <div className="page fade">
-        <PageHead title="Review queue" sub="AI reads from challan and job-card photos. Nothing reaches the ledger until someone confirms it."><Pill tone="info" className="tall">{SCOPE_TEXT[role].chip}</Pill></PageHead>
+        <PageHead title="Review queue" sub="AI reads from challan and job-card photos. Nothing reaches the ledger until someone confirms it."><Pill tone="info" className="tall">{scopeText(role).chip}</Pill></PageHead>
         <Empty title="Queue clear" text="Every photo read in your scope has been handled."><button className="btn sm" onClick={() => d.refresh()}><Icon name="refresh" size={14} />Check again</button></Empty>
       </div>
     );
   }
 
   const conf = Math.round((sel!.confidence ?? 0) * 100);
-  const tone = conf >= 85 ? 'good' : conf >= 80 ? 'warn' : 'bad';
-  const keys = FIELDS_FOR[sel!.type] as readonly string[];
+  const auto = rules().aiAutoConfirmPct;
+  const tone = conf >= auto + 5 ? 'good' : conf >= auto ? 'warn' : 'bad';
   const data = (sel!.ai_json ?? {}) as Record<string, unknown>;
-  const missing = keys.filter((k) => fieldValue(data[k]) == null);
+  const base = FIELDS_FOR[sel!.type] as readonly string[];
+  // Older incoming reads used `meters` + `party` (supplier); show them so nothing is hidden.
+  const legacy = sel!.type === 'incoming_stock' ? ['meters', 'party'].filter((k) => fieldValue(data[k]) != null) : [];
+  const keys = [...base, ...legacy];
+  const label = (k: string) => (sel!.type === 'incoming_stock' && k === 'party' ? 'Supplier (old read → mill)' : sel!.type === 'incoming_stock' && k === 'meters' ? 'Meters (old read)' : FIELD_LABEL[k] ?? k);
+  const hasQty = sel!.type !== 'incoming_stock' || ['grey_meters', 'finished_meters', 'meters'].some((k) => fieldValue(data[k]) != null);
+  const missing = [...base.filter((k) => !OPTIONAL_FIELDS.has(k) && fieldValue(data[k]) == null), ...(hasQty ? [] : ['grey or finished meters'])];
 
   const startEdit = () => {
     const x: Record<string, string> = {};
@@ -131,14 +138,14 @@ export function Review({ ctx }: { ctx: Ctx }) {
     const out: Record<string, unknown> = { ...data };
     keys.forEach((k) => {
       const v = draft[k]?.trim();
-      out[k] = v === '' ? null : ['meters', 'meters_out', 'job_card_id'].includes(k) && !Number.isNaN(Number(v)) ? Number(v) : v;
+      out[k] = v === '' ? null : NUMERIC_FIELDS.has(k) && !Number.isNaN(Number(v.replace(/,/g, ''))) ? Number(v.replace(/,/g, '')) : v;
     });
     return act(() => d.confirmCapture(role, sel!, out));
   };
 
   return (
     <div className="page fade">
-      <PageHead title="Review queue" sub="AI reads from challan and job-card photos. Nothing reaches the ledger until someone confirms it."><Pill tone="info" className="tall">{SCOPE_TEXT[role].chip}</Pill></PageHead>
+      <PageHead title="Review queue" sub="AI reads from challan and job-card photos. Nothing reaches the ledger until someone confirms it."><Pill tone="info" className="tall">{scopeText(role).chip}</Pill></PageHead>
       <div className="review">
         <div className="review-list">
           <span className="eyebrow mob-only">Up next</span>
@@ -146,7 +153,7 @@ export function Review({ ctx }: { ctx: Ctx }) {
             const p = Math.round(c.confidence * 100);
             return (
               <button key={c.id} className={`q ${sel?.id === c.id ? 'on' : ''}`} onClick={() => setSelId(c.id)}>
-                <div className="q-top"><span className="num strong small grow">#{c.id} · {String((c.ai_json as Record<string, unknown> | null)?.lot_id ?? 'Lot ?')}</span><Pill tone={p >= 85 ? 'good' : p >= 80 ? 'warn' : 'bad'}><span className="num">{p}%</span></Pill></div>
+                <div className="q-top"><span className="num strong small grow">#{c.id} · {String((c.ai_json as Record<string, unknown> | null)?.lot_id ?? 'Lot ?')}</span><Pill tone={p >= rules().aiAutoConfirmPct + 5 ? 'good' : p >= rules().aiAutoConfirmPct ? 'warn' : 'bad'}><span className="num">{p}%</span></Pill></div>
                 <span className="strong">{CAPTURE_LABEL[c.type]}</span>
                 <span className="muted small">{captureSection(c.type)} · {dayTime(c.ts)}</span>
               </button>
@@ -168,20 +175,21 @@ export function Review({ ctx }: { ctx: Ctx }) {
             <div className="fields">
               {keys.map((k) => {
                 const v = fieldValue(data[k]);
+                const required = !OPTIONAL_FIELDS.has(k) && !legacy.includes(k);
                 return (
-                  <div key={k} className={`field-row ${v == null ? 'miss' : ''}`}>
-                    <span className="t2 small">{FIELD_LABEL[k] ?? k}</span>
+                  <div key={k} className={`field-row ${v == null && required ? 'miss' : ''}`}>
+                    <span className="t2 small">{label(k)}</span>
                     {editing ? (
-                      <input className="input num" aria-label={FIELD_LABEL[k] ?? k} value={draft[k] ?? ''} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />
+                      <input className="input num" aria-label={label(k)} inputMode={NUMERIC_FIELDS.has(k) ? 'decimal' : undefined} value={draft[k] ?? ''} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />
                     ) : (
-                      <span className="num strong">{v ?? 'Not read'}</span>
+                      <span className={`num ${v == null ? 'muted' : 'strong'}`}>{v ?? (required ? 'Not read' : '—')}</span>
                     )}
                   </div>
                 );
               })}
             </div>
-            {(conf < 80 || missing.length > 0) && !editing && (
-              <div className="alert bad">{missing.length ? `${missing.length} field${missing.length > 1 ? 's' : ''} could not be read. ` : ''}{conf < 80 ? 'Confidence is under 80%. ' : ''}Check against the photo before confirming.</div>
+            {(conf < auto || missing.length > 0) && !editing && (
+              <div className="alert bad">{missing.length ? `Could not read: ${missing.map((m) => FIELD_LABEL[m] ?? m).join(', ')}. ` : ''}{conf < auto ? `Confidence is under ${auto}%. ` : ''}Check against the photo before confirming.</div>
             )}
             <div className="actions">
               <button className="btn danger" disabled={busy} onClick={() => act(() => d.rejectCapture(role, sel!))}>Reject</button>
@@ -196,7 +204,7 @@ export function Review({ ctx }: { ctx: Ctx }) {
   );
 }
 
-// ---------------- Ask Textile Brain ----------------
+// ---------------- Ask (chat over the firm's data) ----------------
 export function Ask({ ctx }: { ctx: Ctx }) {
   const { d, role } = ctx;
   const [q, setQ] = useState('');
@@ -210,7 +218,7 @@ export function Ask({ ctx }: { ctx: Ctx }) {
 
   return (
     <div className="page fade ask-page">
-      <PageHead title="Ask Textile Brain" sub={role === 'owner' ? 'Plain-language questions over the live database. Every query is logged.' : 'Meters and job cards for your sections. Every query is logged.'} />
+      <PageHead title={`Ask ${firm().name}`} sub={role === 'owner' ? 'Plain-language questions over the live database. Every query is logged.' : 'Meters and job cards for your sections. Every query is logged.'} />
       <section className="card chat">
         <div className="chat-thread">
           {d.messages.map((m, i) => (
@@ -254,8 +262,8 @@ export function Ask({ ctx }: { ctx: Ctx }) {
 export function AllotForm({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) {
   const { d, role } = ctx;
   const workers = d.workers.filter((w) => role === 'owner' || inSupervisorScope(w.section));
-  const processes = role === 'owner' ? SECTIONS : SECTIONS.filter((s) => ACTIVE_SUPERVISOR.sections.includes(s));
-  const lots = d.lots.filter((l) => l.status !== 'dispatched');
+  const processes = role === 'owner' ? sectionNames() : sectionNames().filter((s) => activeSupervisor().sections.includes(s));
+  const lots = d.lots.filter((l) => l.status !== 'dispatched' && l.balance > 0);
   const [workerId, setWorkerId] = useState('');
   const [lotId, setLotId] = useState('');
   const [process, setProcess] = useState('');
@@ -271,7 +279,7 @@ export function AllotForm({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) {
     e.preventDefault();
     if (!w || !lot || !meters) { d.showToast('Pick a worker, a lot and meters.', 'warning'); return; }
     setBusy(true);
-    const ok = await d.createJobCard({ lot_id: lot, process: proc, worker_id: w.id, meters_in: meters, shift }, w.name);
+    const ok = await d.createJobCard(role, { lot_id: lot, process: proc, worker_id: w.id, meters_in: meters, shift }, w.name);
     setBusy(false);
     if (ok) { setMeters(''); onDone?.(); }
   };
@@ -285,7 +293,7 @@ export function AllotForm({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) {
       </label>
       <label className="fld">Lot
         <select value={lot} onChange={(e) => setLotId(e.target.value)}>
-          {lots.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.lot_id} · {l.quality} · {fmt(l.balance)} m</option>)}
+          {lots.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.lot_id} · {l.quality} · {fmt(l.balance)} m{l.location ? ` · ${l.location}` : ''}</option>)}
         </select>
       </label>
       <label className="fld">Process
@@ -340,41 +348,164 @@ export function Allot({ ctx }: { ctx: Ctx }) {
 }
 
 // ---------------- Manual stock entry (owner) ----------------
-export function StockForm({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) {
-  const { d } = ctx;
-  const [f, setF] = useState({ lot_id: '', direction: 'IN' as 'IN' | 'OUT', meters: '', party: '', source_doc: '', quality: '', design: '' });
+const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: 'Godown', quality: '', design: '', meters: '', party: '', source_doc: '' };
+
+export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; onDone?: () => void; initialDirection?: 'IN' | 'OUT' }) {
+  const { d, role } = ctx;
+  const [f, setF] = useState<StockEntry>({ ...EMPTY_ENTRY, direction: initialDirection });
+  const [sameAsMill, setSameAsMill] = useState(false);
+  const [otherLoc, setOtherLoc] = useState(false);
   const [busy, setBusy] = useState(false);
-  const known = d.lots.find((l) => l.lot_id === f.lot_id);
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  const known = d.lots.find((l) => l.lot_id === f.lot_id.trim());
+  const set = (k: keyof StockEntry) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  const isIn = f.direction === 'IN';
+  const grey = parseFloat(f.grey_meters);
+  const fin = parseFloat(f.finished_meters);
+  const diff = Number.isFinite(grey) && Number.isFinite(fin) && grey > 0 ? ((grey - fin) / grey) * 100 : null;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!f.lot_id || !f.meters) { d.showToast('Lot and meters are required.', 'warning'); return; }
+    const entry = { ...f, lot_id: f.lot_id.trim(), weaver_name: sameAsMill ? f.mill_name : f.weaver_name };
+    if (!entry.lot_id) return d.showToast('Lot number is required.', 'warning');
+    if (isIn && !entry.grey_meters && !entry.finished_meters) return d.showToast('Enter grey meters or finished meters.', 'warning');
+    if (isIn && !entry.mill_name.trim()) return d.showToast('Mill name is required.', 'warning');
+    if (isIn && !known && (!entry.quality.trim() || !entry.design.trim())) return d.showToast('New lot: enter quality and design.', 'warning');
+    if (!isIn && (!entry.meters || !entry.party.trim())) return d.showToast('Meters and party (client) are required.', 'warning');
     setBusy(true);
-    const ok = await d.addStock(f);
+    const ok = await d.addStock(role, entry);
     setBusy(false);
-    if (ok) { setF({ ...f, lot_id: '', meters: '', party: '', source_doc: '', quality: '', design: '' }); onDone?.(); }
+    if (ok) { setF({ ...EMPTY_ENTRY, direction: f.direction }); setSameAsMill(false); setOtherLoc(false); onDone?.(); }
   };
+
   return (
     <form className="stack-16" onSubmit={submit}>
       <div className="fld">Direction
-        <Segmented label="Direction" value={f.direction} onChange={(v) => setF({ ...f, direction: v })} className="fit" options={[{ value: 'IN', label: 'Inward (IN)' }, { value: 'OUT', label: 'Outward (OUT)' }]} />
+        <Segmented label="Direction" value={f.direction} onChange={(v) => setF({ ...f, direction: v })} className="fit" options={[{ value: 'IN', label: 'Incoming (IN)' }, { value: 'OUT', label: 'Outgoing (OUT)' }]} />
       </div>
       <label className="fld">Lot number
-        <input className="num" list="lot-list" value={f.lot_id} onChange={set('lot_id')} placeholder="e.g. LOT-5030" />
+        <input className="num" list="lot-list" value={f.lot_id} onChange={set('lot_id')} placeholder="e.g. LOT-5030" autoComplete="off" />
         <datalist id="lot-list">{d.lots.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.quality}</option>)}</datalist>
-        {known && <span className="muted small">{known.quality} · balance {fmt(known.balance, 1)} m</span>}
+        {known && <span className="muted small">{known.quality} · balance {fmt(known.balance, 1)} m{known.location ? ` · at ${known.location}` : ''}</span>}
       </label>
-      <label className="fld">Meters<input className="num" inputMode="decimal" value={f.meters} onChange={set('meters')} placeholder="0.0" /></label>
-      <label className="fld">{f.direction === 'IN' ? 'Supplier' : 'Buyer'}<input value={f.party} onChange={set('party')} /></label>
-      <label className="fld">Challan / ref no.<input className="num" value={f.source_doc} onChange={set('source_doc')} /></label>
-      {f.direction === 'IN' && !known && f.lot_id && (
+
+      {isIn ? (
         <>
-          <label className="fld">Quality (new lot)<input value={f.quality} onChange={set('quality')} /></label>
-          <label className="fld">Design (new lot)<input value={f.design} onChange={set('design')} /></label>
+          <div className="two-col">
+            <label className="fld">Grey meters<input className="num" inputMode="decimal" value={f.grey_meters} onChange={set('grey_meters')} placeholder="0.0" /></label>
+            <label className="fld">Finished meters<input className="num" inputMode="decimal" value={f.finished_meters} onChange={set('finished_meters')} placeholder="0.0" /></label>
+          </div>
+          <span className="muted small hint">Stock is counted in finished meters (grey if finished isn’t known yet).{diff != null ? ` Grey → finished difference: ${diff.toFixed(1)}%.` : ''}</span>
+          <label className="fld">Mill name
+            <input list="mill-list" value={f.mill_name} onChange={set('mill_name')} autoComplete="off" />
+            <datalist id="mill-list">{d.names.mills.map((n) => <option key={n} value={n} />)}</datalist>
+          </label>
+          <div className="fld">
+            <label htmlFor="weaver">Weaver name</label>
+            <input id="weaver" list="weaver-list" value={sameAsMill ? f.mill_name : f.weaver_name} onChange={set('weaver_name')} disabled={sameAsMill} autoComplete="off" />
+            <datalist id="weaver-list">{d.names.weavers.map((n) => <option key={n} value={n} />)}</datalist>
+            <label className="check"><input type="checkbox" checked={sameAsMill} onChange={(e) => setSameAsMill(e.target.checked)} />Same as mill</label>
+          </div>
+          <label className="fld">Challan no.<input className="num" value={f.source_doc} onChange={set('source_doc')} /></label>
+          <div className="fld">Location on arrival
+            <LocationPicker value={f.location} other={otherLoc} setOther={setOtherLoc} onChange={(v) => setF({ ...f, location: v })} />
+          </div>
+          {!known && f.lot_id.trim() && (
+            <div className="two-col">
+              <label className="fld">Quality (new lot)<input name="quality" value={f.quality} onChange={set('quality')} /></label>
+              <label className="fld">Design (new lot)<input name="design" value={f.design} onChange={set('design')} /></label>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <label className="fld">Meters<input className="num" inputMode="decimal" value={f.meters} onChange={set('meters')} placeholder="0.0" /></label>
+          <label className="fld">Party (client receiving the goods)
+            <input list="party-list" value={f.party} onChange={set('party')} autoComplete="off" />
+            <datalist id="party-list">{d.names.parties.map((n) => <option key={n} value={n} />)}</datalist>
+          </label>
+          <label className="fld">Dispatch challan / invoice no.<input className="num" value={f.source_doc} onChange={set('source_doc')} /></label>
+          {known && <span className="muted small hint">If this empties the lot, its location becomes “Dispatched”.</span>}
         </>
       )}
-      <button className="btn primary big" type="submit" disabled={busy}>Record {f.direction}</button>
+      <button className="btn primary big" type="submit" disabled={busy}>{isIn ? 'Record incoming' : 'Record dispatch'}</button>
       <LockTag label="Manual ledger entries are owner only" />
     </form>
+  );
+}
+
+// ---------------- Lot location ----------------
+
+export function LocationPicker({ value, onChange, other, setOther }: { value: string; onChange: (v: string) => void; other: boolean; setOther: (b: boolean) => void }) {
+  return (
+    <div className="stack-10">
+      <div role="group" aria-label="Location" className="loc-opts">
+        {locationPresets().map((l) => (
+          <button key={l} type="button" className={`opt ${!other && value === l ? 'on' : ''}`} aria-pressed={!other && value === l} onClick={() => { setOther(false); onChange(l); }}>{l}</button>
+        ))}
+        <button type="button" className={`opt ${other ? 'on' : ''}`} aria-pressed={other} onClick={() => { setOther(true); onChange(''); }}>Other…</button>
+      </div>
+      {other && <input aria-label="Other location" placeholder="e.g. Godown 2, Ring Road shop" value={value} onChange={(e) => onChange(e.target.value)} autoFocus />}
+    </div>
+  );
+}
+
+export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: string; onDone?: () => void }) {
+  const { d, role } = ctx;
+  const lot = d.lots.find((l) => l.lot_id === lotId);
+  const [history, setHistory] = useState<LotLocationEntry[] | null>(null);
+  const [loc, setLoc] = useState('Godown');
+  const [other, setOther] = useState(false);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const canMove = role === 'owner'; // supervisors move lots only through job cards (see MATRIX)
+
+  useEffect(() => {
+    let alive = true;
+    d.lotHistory(lotId).then((h) => { if (alive) setHistory(h); }).catch(() => { if (alive) setHistory([]); });
+    return () => { alive = false; };
+  }, [d, lotId, lot?.location_ts]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loc.trim()) return d.showToast('Pick or type a location.', 'warning');
+    setBusy(true);
+    const ok = await d.moveLot(role, lotId, loc.trim(), note.trim());
+    setBusy(false);
+    if (ok) { setNote(''); onDone?.(); }
+  };
+
+  return (
+    <div className="stack-16">
+      <div className="card pad stack-6 flat">
+        <span className="muted small">Now at</span>
+        <span className="loc-now"><Pill tone={locationTone(lot?.location ?? null)} className="tall">{lot?.location ?? 'Not recorded'}</Pill>{lot?.location_ts && <span className="muted small">since {dayTime(lot.location_ts)}</span>}</span>
+        {lot && <span className="muted small">{lot.quality} · {fmt(lot.balance, 1)} m in stock</span>}
+      </div>
+      {canMove && lot?.location !== 'Dispatched' && (
+        <form className="stack-12" onSubmit={submit}>
+          <span className="fld">Move to</span>
+          <LocationPicker value={loc} onChange={setLoc} other={other} setOther={setOther} />
+          <label className="fld">Note (optional)<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. for cutting, customer viewing" /></label>
+          <button className="btn primary big" type="submit" disabled={busy}>Move lot</button>
+        </form>
+      )}
+      <div className="stack-10">
+        <span className="eyebrow">History</span>
+        {history == null && <span className="muted small">Loading…</span>}
+        {history && !history.length && <span className="muted small">No moves recorded yet.</span>}
+        <ol className="timeline">
+          {history?.map((h) => (
+            <li key={h.id}>
+              <span className={`tl-dot ${locationTone(h.location)}`} />
+              <div className="stack-2">
+                <span className="strong">{h.location} <span className="muted small">· {STAGE_LABEL[h.stage] ?? h.stage}</span></span>
+                {h.note && <span className="t2 small">{h.note}</span>}
+                <span className="muted tiny">{dayTime(h.ts)}{h.moved_by_name ? ` · ${h.moved_by_name}` : ''}</span>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
   );
 }

@@ -7,6 +7,7 @@
 // in the API routes once real authentication is added.
 
 import type { CaptureType, JobCard } from './types';
+import { DEFAULT_CONFIG, type FirmConfig, type SupervisorProfile } from './config';
 
 export type Role = 'owner' | 'supervisor' | 'worker';
 
@@ -18,22 +19,27 @@ export const ROLE_LABEL: Record<Role, string> = {
   worker: 'Worker',
 };
 
-// Users from the `users` table (scripts/db-init.js seed).
-export const OWNER = { id: 'usr-owner', name: 'Mukesh' };
+// ---------- Firm configuration (loaded from /api/settings) ----------
+// Screens read the current firm's names, sections and rules through these getters.
+// page.tsx calls setFirmConfig() when settings load or change, then re-renders.
+let current: FirmConfig = DEFAULT_CONFIG;
+let previewSupervisorId: string | null = null;
 
-// Supervisor → the sections (processes) they are responsible for.
-export const SUPERVISORS = [
-  { id: 'usr-sup1', name: 'Sanjay Patel', sections: ['Folding', 'Dyeing'] },
-  { id: 'usr-sup2', name: 'Kishore Gajiwala', sections: ['Weaving', 'Printing'] },
-];
+export function setFirmConfig(c: FirmConfig) { current = c; }
+export function firmConfig(): FirmConfig { return current; }
+export function firm() { return current.firm; }
+export function owner() { return current.owner; }
+export function rules() { return current.rules; }
+export function locationPresets() { return current.locationPresets; }
+export function activeSupervisors() { return current.supervisors.filter((s) => s.active); }
+export function sectionNames(): string[] { return current.sections.filter((s) => s.active).map((s) => s.name); }
 
-// The supervisor used when previewing the Supervisor role.
-export const ACTIVE_SUPERVISOR = SUPERVISORS[0];
-
-export const SECTIONS = ['Weaving', 'Dyeing', 'Printing', 'Folding'];
-
-export const SHORTAGE_LIMIT_PCT = 3; // matches SHORTAGE_THRESHOLD_PCT in /api/job-cards
-export const EFFICIENCY_FLAG_PCT = 85; // matches efficiency roll-up flag in /api/job-cards
+/** Supervisor used when previewing the Supervisor role. */
+export function setPreviewSupervisor(id: string | null) { previewSupervisorId = id; }
+export function activeSupervisor(): SupervisorProfile {
+  const list = activeSupervisors();
+  return list.find((s) => s.id === previewSupervisorId) ?? list[0] ?? { id: '', name: 'Supervisor', sections: [], active: true };
+}
 
 /** "Folding Section" → "Folding" */
 export function sectionName(raw: string | null | undefined): string {
@@ -42,7 +48,7 @@ export function sectionName(raw: string | null | undefined): string {
 }
 
 export function supervisorFor(section: string): string {
-  const s = SUPERVISORS.find((x) => x.sections.includes(sectionName(section)));
+  const s = activeSupervisors().find((x) => x.sections.includes(sectionName(section)));
   return s ? s.name : '—';
 }
 
@@ -54,7 +60,7 @@ export function captureSection(type: CaptureType): string {
 }
 
 export function inSupervisorScope(section: string): boolean {
-  return ACTIVE_SUPERVISOR.sections.includes(sectionName(section));
+  return activeSupervisor().sections.includes(sectionName(section));
 }
 
 export function jobInScope(role: Role, jc: JobCard, workerId?: string): boolean {
@@ -81,10 +87,12 @@ export type Capability =
   | 'capture.confirm'
   | 'jobs.manage'
   | 'work.allot'
+  | 'lots.move'
   | 'ledger.edit'
-  | 'users.manage';
+  | 'users.manage'
+  | 'settings.manage';
 
-type Level = 'Full' | 'Full + override' | 'Section' | 'Section lots' | 'Section crew' | 'Meters only' | 'Own cards' | 'Own only' | '—';
+type Level = 'Full' | 'Full + override' | 'Via job cards' | 'Section' | 'Section lots' | 'Section crew' | 'Meters only' | 'Own cards' | 'Own only' | '—';
 
 export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string; owner: Level; supervisor: Level; worker: Level }[] = [
   { layer: 'Data', cap: 'stock.quantity', label: 'Stock quantities (meters)', owner: 'Full', supervisor: 'Section lots', worker: '—' },
@@ -92,12 +100,14 @@ export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string
   { layer: 'Data', cap: 'jobs.view', label: 'Job cards & shortage', owner: 'Full', supervisor: 'Section', worker: 'Own cards' },
   { layer: 'Data', cap: 'efficiency.view', label: 'Worker efficiency', owner: 'Full', supervisor: 'Section crew', worker: 'Own only' },
   { layer: 'Data', cap: 'cctv.view', label: 'CCTV activity', owner: 'Full', supervisor: 'Section crew', worker: '—' },
-  { layer: 'Data', cap: 'chat.use', label: 'Ask Textile Brain + audit log', owner: 'Full', supervisor: 'Meters only', worker: '—' },
+  { layer: 'Data', cap: 'chat.use', label: 'Ask {firm} + audit log', owner: 'Full', supervisor: 'Meters only', worker: '—' },
   { layer: 'Control', cap: 'capture.create', label: 'Capture photos', owner: 'Full', supervisor: 'Full', worker: 'Full' },
   { layer: 'Control', cap: 'capture.confirm', label: 'Confirm AI reads to ledger', owner: 'Full + override', supervisor: 'Section', worker: '—' },
   { layer: 'Control', cap: 'jobs.manage', label: 'Create / close job cards', owner: 'Full', supervisor: 'Section', worker: '—' },
   { layer: 'Control', cap: 'work.allot', label: 'Allot work', owner: 'Full', supervisor: 'Section crew', worker: '—' },
+  { layer: 'Control', cap: 'lots.move', label: 'Move lots (godown / shop / floor)', owner: 'Full', supervisor: 'Via job cards', worker: '—' },
   { layer: 'Control', cap: 'ledger.edit', label: 'Manual ledger entries', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'settings.manage', label: 'Firm settings & rules', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'users.manage', label: 'Users, roles & sections', owner: 'Full', supervisor: '—', worker: '—' },
 ];
 
@@ -115,7 +125,7 @@ export function levelTone(level: string): 'good' | 'warn' | 'info' | 'neutral' {
 
 // ---------- Navigation ----------
 export type Tab =
-  | 'overview' | 'stock' | 'jobs' | 'review' | 'ask' | 'people' | 'access'
+  | 'overview' | 'stock' | 'jobs' | 'review' | 'ask' | 'people' | 'access' | 'settings'
   | 'floor' | 'allot'
   | 'shift' | 'capture' | 'history';
 
@@ -133,16 +143,17 @@ export const NAV: Record<Role, NavItem[]> = {
     { tab: 'stock', label: 'Stock ledger', short: 'Stock', icon: 'box', group: 'Business' },
     { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'Business' },
     { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'Business' },
-    { tab: 'ask', label: 'Ask Textile Brain', short: 'Ask', icon: 'chat', group: 'Business' },
+    { tab: 'ask', label: 'Ask {firm}', short: 'Ask', icon: 'chat', group: 'Business' },
     { tab: 'people', label: 'People & CCTV', short: 'People', icon: 'users', group: 'Admin' },
     { tab: 'access', label: 'Access & roles', short: 'Access', icon: 'shield', group: 'Admin' },
+    { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Admin' },
   ],
   supervisor: [
     { tab: 'floor', label: 'Floor today', short: 'Floor', icon: 'factory', group: 'My sections' },
     { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'My sections' },
     { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'My sections' },
     { tab: 'allot', label: 'Allot work', short: 'Allot', icon: 'userPlus', group: 'My sections' },
-    { tab: 'ask', label: 'Ask Textile Brain', short: 'Ask', icon: 'chat', group: 'My sections' },
+    { tab: 'ask', label: 'Ask {firm}', short: 'Ask', icon: 'chat', group: 'My sections' },
   ],
   worker: [
     { tab: 'shift', label: 'My shift', short: 'My shift', icon: 'clock', group: 'My work' },
@@ -164,20 +175,17 @@ export function tabAllowed(role: Role, tab: Tab): boolean {
   return NAV[role].some((n) => n.tab === tab);
 }
 
-export const SCOPE_TEXT: Record<Role, { scope: string; line: string; chip: string }> = {
-  owner: {
-    scope: 'Full access · all units',
-    line: 'Sees ₹ values, party rates, CCTV and every section. Manages users.',
-    chip: 'Viewing all sections',
-  },
-  supervisor: {
-    scope: `${ACTIVE_SUPERVISOR.sections.join(' + ')} · can edit`,
-    line: 'Meters, not money. Confirms reads, runs job cards and allots work in own sections.',
-    chip: `${ACTIVE_SUPERVISOR.sections.join(' + ')} only`,
-  },
-  worker: {
-    scope: 'Own records · capture',
-    line: 'Sees own allotments and history. Can photograph cards and challans.',
-    chip: 'My work only',
-  },
-};
+export function scopeText(role: Role): { scope: string; line: string; chip: string } {
+  if (role === 'owner') return { scope: 'Full access · all units', line: 'Sees ₹ values, party rates, CCTV and every section. Manages people and settings.', chip: 'Viewing all sections' };
+  if (role === 'supervisor') {
+    const secs = activeSupervisor().sections;
+    const list = secs.length ? secs.join(' + ') : 'No sections assigned';
+    return { scope: `${list} · can edit`, line: 'Meters, not money. Confirms reads, runs job cards and allots work in own sections.', chip: secs.length ? `${list} only` : list };
+  }
+  return { scope: 'Own records · capture', line: 'Sees own allotments and history. Can photograph cards and challans.', chip: 'My work only' };
+}
+
+/** Labels may contain {firm}, replaced with the firm's name. */
+export function withFirm(label: string): string {
+  return label.replace('{firm}', firm().name);
+}

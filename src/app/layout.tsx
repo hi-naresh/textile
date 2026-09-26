@@ -3,7 +3,8 @@ import "./globals.css";
 import InlineScript from "@/components/InlineScript";
 
 export const metadata: Metadata = {
-  title: "Textile Brain · Surat Mill",
+  // Replaced in the browser with the firm name from Settings once data loads.
+  title: "Textile operations",
   description: "Stock, job cards, AI photo reads and floor efficiency for owners, supervisors and workers",
 };
 

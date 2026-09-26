@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, withTransaction } from '@/lib/db';
+import { LedgerError, applyCaptureRead } from '@/lib/ledger';
+import { readRules } from '@/lib/settings';
 import { extractDataFromPhoto } from '@/lib/ai';
-import fs from 'fs';
-import path from 'path';
+import { photoUrlForClient, savePhoto } from '@/lib/photos';
 
-const CONFIDENCE_THRESHOLD = 0.80; // 80% confidence required to auto-commit
+// TODO(auth): attribute auto-commits to a system user once users/sessions exist.
+const AUTO_COMMIT_ACTOR = 'usr-owner';
 
 export async function GET() {
   // GET: Fetch all capture events (e.g. for the confirm queue)
@@ -18,6 +20,7 @@ export async function GET() {
     return NextResponse.json({
       events: res.rows.map(row => ({
         ...row,
+        photo_url: photoUrlForClient(row.photo_url),
         confidence: parseFloat(row.confidence)
       }))
     });
@@ -44,164 +47,63 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Create upload directory if it doesn't exist
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    // 1. Validate and read the photo
+    const MAX_BYTES = 15 * 1024 * 1024;
+    const ALLOWED: Record<string, string> = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic' };
+    const mediaType = ALLOWED[file.type] ? file.type : 'image/jpeg';
+    if (file.type && !ALLOWED[file.type]) {
+      return NextResponse.json({ error: 'Please upload a JPG, PNG, WEBP or HEIC photo.' }, { status: 400 });
     }
+    if (file.size > MAX_BYTES) {
+      return NextResponse.json({ error: 'Photo is larger than 15 MB. Please retake at a lower resolution.' }, { status: 400 });
+    }
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const safeName = `${type}_${Date.now()}${ALLOWED[mediaType]}`;
 
-    // 2. Write file to public/uploads
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    
-    // Create unique filename
-    const fileExt = path.extname(file.name) || '.jpg';
-    const timestamp = Date.now();
-    const safeName = `${type}_${timestamp}${fileExt}`;
-    const filePath = path.join(uploadDir, safeName);
-    
-    fs.writeFileSync(filePath, buffer);
-    const photoUrl = `/uploads/${safeName}`;
-
-    // 3. Trigger AI vision extraction
+    // 2. Read it with AI first (nothing is stored if the photo can't be read)
     console.log(`[Capture API] Initiating vision extraction for type: ${type}, file: ${safeName}`);
-    const extraction = await extractDataFromPhoto(filePath, type);
+    const extraction = await extractDataFromPhoto({ buffer, filename: file.name || safeName, mediaType }, type);
 
     if (!extraction.success) {
       return NextResponse.json(
-        { error: 'AI vision extraction failed.', details: extraction.rawResponse },
-        { status: 500 }
+        { error: 'Could not read the photo. Please retake it or enter the details manually.', details: extraction.rawResponse },
+        { status: 502 }
       );
     }
 
     const { data: aiData, confidence } = extraction;
 
+    // 3. Store the photo (Supabase Storage on Vercel, public/uploads locally)
+    const photoRef = await savePhoto(buffer, safeName, mediaType);
+
     // 4. Save capture event to DB in a pending state
     const insertEventRes = await query(
       `INSERT INTO capture_events (photo_url, type, ai_json, confidence, status)
        VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
-      [photoUrl, type, JSON.stringify(aiData), confidence]
+      [photoRef, type, JSON.stringify(aiData), confidence]
     );
     const event = insertEventRes.rows[0];
 
     // 5. If confidence >= threshold, attempt auto-commit
     let autoCommitted = false;
-    let commitError = null;
+    let commitError: string | null = null;
 
-    if (confidence >= CONFIDENCE_THRESHOLD) {
-      await query('BEGIN');
+    // Reads at or above the firm's auto-confirm level are saved without review (Settings → Rules).
+    const { aiAutoConfirmPct } = await readRules();
+    if (confidence * 100 >= aiAutoConfirmPct) {
       try {
-        if (type === 'incoming_stock') {
-          const { lot_id, quality, design, meters, party, source_doc } = aiData;
-          if (lot_id && meters) {
-            // Check if lot exists, else create it
-            const lotCheck = await query('SELECT 1 FROM lots WHERE lot_id = $1', [lot_id]);
-            if (lotCheck.rowCount === 0) {
-              await query(
-                `INSERT INTO lots (lot_id, quality, design, grade, status)
-                 VALUES ($1, $2, $3, 'A', 'active')`,
-                [lot_id, quality || 'Unknown Quality', design || 'Unknown Design']
-              );
-            }
-            // Record stock movement
-            await query(
-              `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id)
-               VALUES ($1, 'IN', $2, $3, $4, $5)`,
-              [lot_id, meters, party || null, source_doc || null, event.id]
-            );
-            
-            // Mark event as confirmed
-            await query(
-              `UPDATE capture_events SET status = 'confirmed', confirmed_by = 'usr-owner' WHERE id = $1`,
-              [event.id]
-            );
-            autoCommitted = true;
-          }
-        } else if (type === 'outgoing_stock') {
-          const { lot_id, meters, party, source_doc } = aiData;
-          if (lot_id && meters) {
-            // Verify sufficient balance before auto-commit
-            const balanceCheck = await query(
-              `SELECT COALESCE(SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END), 0) as balance 
-               FROM stock_movements WHERE lot_id = $1`,
-              [lot_id]
-            );
-            const currentBalance = parseFloat(balanceCheck.rows[0].balance || 0);
-
-            if (currentBalance >= parseFloat(String(meters))) {
-              await query(
-                `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id)
-                 VALUES ($1, 'OUT', $2, $3, $4, $5)`,
-                [lot_id, meters, party || null, source_doc || null, event.id]
-              );
-              // Mark event as confirmed
-              await query(
-                `UPDATE capture_events SET status = 'confirmed', confirmed_by = 'usr-owner' WHERE id = $1`,
-                [event.id]
-              );
-              autoCommitted = true;
-            } else {
-              commitError = `Sufficient stock balance not available for auto-commit. Lot has ${currentBalance} meters, dispatch requested ${meters} meters. Leaving in review queue.`;
-            }
-          }
-        } else if (type === 'job_card_folding') {
-          const { job_card_id, meters_out, lot_id } = aiData;
-          let resolvedJobCardId = job_card_id;
-          
-          if (!resolvedJobCardId && lot_id) {
-            const jcLookup = await query(
-              `SELECT id FROM job_cards 
-               WHERE lot_id = $1 AND status IN ('open', 'in-process') 
-               ORDER BY ts_created DESC LIMIT 1`,
-              [lot_id]
-            );
-            if (jcLookup.rowCount !== null && jcLookup.rowCount > 0) {
-              resolvedJobCardId = jcLookup.rows[0].id;
-              console.log(`[Capture API] Fallback resolved Job Card ID ${resolvedJobCardId} for Lot ${lot_id}`);
-            }
-          }
-
-          if (resolvedJobCardId && meters_out !== undefined) {
-            // Update job card
-            const updateRes = await query(
-              `UPDATE job_cards 
-               SET meters_out = $1, status = 'closed', ts_closed = NOW()
-               WHERE id = $2 
-               RETURNING *`,
-              [meters_out, resolvedJobCardId]
-            );
-            
-            if (updateRes.rowCount !== null && updateRes.rowCount > 0) {
-              const updatedJobCard = updateRes.rows[0];
-              // Update daily efficiency
-              const totalAllotted = parseFloat(updatedJobCard.meters_in);
-              const totalDone = parseFloat(String(meters_out));
-              const efficiencyPct = totalAllotted > 0 ? (totalDone / totalAllotted) * 100 : 0;
-              
-              await query(
-                `INSERT INTO efficiency_daily (worker_id, date, allotted, done, efficiency_pct, flagged)
-                 VALUES ($1, CURRENT_DATE, $2, $3, $4, $5)
-                 ON CONFLICT (worker_id, date) DO UPDATE 
-                 SET allotted = $2, done = $3, efficiency_pct = $4, flagged = $5`,
-                [updatedJobCard.worker_id, totalAllotted, totalDone, efficiencyPct, efficiencyPct < 85.0]
-              );
-              
-              // Mark event as confirmed
-              await query(
-                `UPDATE capture_events SET status = 'confirmed', confirmed_by = 'usr-owner' WHERE id = $1`,
-                [event.id]
-              );
-              autoCommitted = true;
-            } else {
-              commitError = `Job card ID ${resolvedJobCardId} not found. Leaving in review queue.`;
-            }
-          }
-        }
-        await query('COMMIT');
-      } catch (txErr) {
-        await query('ROLLBACK');
-        commitError = String(txErr);
-        console.error('[Capture API] Transaction error during auto-commit:', txErr);
+        await withTransaction(async (q) => {
+          const saved = await applyCaptureRead(q, type, aiData as Record<string, unknown>, event.id, AUTO_COMMIT_ACTOR);
+          await q(
+            `UPDATE capture_events SET status = 'confirmed', confirmed_by = $1, ai_json = $2 WHERE id = $3`,
+            [AUTO_COMMIT_ACTOR, JSON.stringify(saved), event.id]
+          );
+        });
+        autoCommitted = true;
+      } catch (err) {
+        // Anything that can't be saved automatically stays in the review queue.
+        commitError = err instanceof LedgerError ? `${err.message} Left in review queue.` : String(err);
+        if (!(err instanceof LedgerError)) console.error('[Capture API] Auto-commit failed:', err);
       }
     }
 
@@ -209,6 +111,7 @@ export async function POST(request: NextRequest) {
       success: true,
       event: {
         ...event,
+        photo_url: photoUrlForClient(event.photo_url),
         status: autoCommitted ? 'confirmed' : 'pending',
         confidence: parseFloat(event.confidence)
       },

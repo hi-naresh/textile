@@ -1,12 +1,14 @@
-import fs from 'fs';
-import path from 'path';
 
 export interface ExtractedStockData {
   lot_id?: string;
   quality?: string;
   design?: string;
-  meters?: number;
-  party?: string;
+  meters?: number; // outgoing only
+  grey_meters?: number; // incoming: raw (grey) meters on the challan
+  finished_meters?: number; // incoming: finished meters on the challan
+  mill_name?: string; // incoming: mill the material came from
+  weaver_name?: string; // incoming: weaver (may be the same as the mill)
+  party?: string; // outgoing only: destination client
   source_doc?: string;
   job_card_id?: number;
   meters_out?: number;
@@ -20,20 +22,15 @@ export interface ExtractionResult {
   rawResponse?: string;
 }
 
-/**
- * Encodes a local file to base64
- */
-function fileToBase64(filePath: string): { data: string; mediaType: string } {
-  const ext = path.extname(filePath).toLowerCase();
-  let mediaType = 'image/jpeg';
-  if (ext === '.png') mediaType = 'image/png';
-  else if (ext === '.webp') mediaType = 'image/webp';
-  
-  const fileData = fs.readFileSync(filePath);
-  return {
-    data: fileData.toString('base64'),
-    mediaType
-  };
+export interface PhotoInput {
+  buffer: Buffer;
+  filename: string; // original upload name (used only by the mock reader)
+  mediaType: string; // e.g. image/jpeg
+}
+
+/** Mock reads are for local development only; in production a failed read must never invent data. */
+function mockAllowed() {
+  return process.env.ALLOW_MOCK_AI === '1' || (process.env.NODE_ENV !== 'production' && !process.env.VERCEL);
 }
 
 /**
@@ -45,12 +42,12 @@ async function extractWithGemini(
   type: 'incoming_stock' | 'outgoing_stock' | 'job_card_folding',
   apiKey: string
 ): Promise<ExtractionResult> {
-  const systemPrompt = `You are a specialized OCR and data extraction system for a textile mill in Surat.
+  const systemPrompt = `You are a specialized OCR and data extraction system for an Indian textile firm (challans may be in English, Hindi or Gujarati).
 Your job is to read images of challans, lot tags, or meter displays and extract the required information in a strict JSON format.
 
 ${
   type === 'incoming_stock'
-    ? 'For incoming stock, extract: "lot_id" (e.g. LOT-5021), "quality" (fabric quality name, e.g. Poly-Crepe, Georgette), "design" (design code, e.g. Design-104A), "meters" (numeric total meters), "party" (supplier name), "source_doc" (challan number).'
+    ? 'For incoming stock, extract: "lot_id" (e.g. LOT-5021), "quality" (fabric quality name, e.g. Poly-Crepe, Georgette), "design" (design code, e.g. Design-104A), "grey_meters" (numeric grey / raw meters, if shown), "finished_meters" (numeric finished meters, if shown), "mill_name" (the mill the goods came from), "weaver_name" (the weaver, if named separately; it can be the same as the mill), "source_doc" (challan number). Grey and finished meters are different numbers — never copy one into the other. Do not extract a party for incoming stock.'
     : type === 'outgoing_stock'
     ? 'For outgoing stock, extract: "lot_id" (e.g. LOT-5021), "meters" (numeric total dispatch meters), "party" (client/buyer name), "source_doc" (dispatch challan or invoice number).'
     : 'For job card folding, extract: "lot_id" (e.g. LOT-5021), "job_card_id" (numeric, if visible), "meters_out" (numeric folded meters out), "worker_id" (worker ID, e.g. wrk-04 if visible).'
@@ -143,8 +140,10 @@ function extractWithMock(
         lot_id: '257A',
         quality: 'DON-2',
         design: 'Design-DON2',
-        meters: 8988.00,
-        party: 'HARIDWAR TEXTILES',
+        grey_meters: 9240.00,
+        finished_meters: 8988.00,
+        mill_name: 'HARIDWAR TEXTILES',
+        weaver_name: 'HARIDWAR TEXTILES',
         source_doc: '51'
       },
       confidence,
@@ -168,7 +167,7 @@ function extractWithMock(
         lot_id: '257A',
         job_card_id: undefined, // Simulates missing job_card_id to test dynamic fallback lookup
         meters_out: 7704.00,
-        worker_id: 'wrk-05' // Bharat Gohil
+        worker_id: 'wrk-05' // mock data (demo seed worker)
       },
       confidence,
       success: true
@@ -180,25 +179,29 @@ function extractWithMock(
  * Main API to extract data from a photo
  */
 export async function extractDataFromPhoto(
-  filePath: string,
+  photo: PhotoInput,
   type: 'incoming_stock' | 'outgoing_stock' | 'job_card_folding'
 ): Promise<ExtractionResult> {
   const apiKey = process.env.GEMINI_API_KEY;
-  const filename = path.basename(filePath);
+  const filename = photo.filename;
 
   if (apiKey) {
     console.log(`[AI Extraction] Connecting to Gemini API for ${filename}...`);
     try {
-      const { data, mediaType } = fileToBase64(filePath);
-      return await extractWithGemini(data, mediaType, type, apiKey);
+      const result = await extractWithGemini(photo.buffer.toString('base64'), photo.mediaType, type, apiKey);
+      if (result.success || !mockAllowed()) return result;
+      return extractWithMock(filename, type);
     } catch (e) {
-      console.error('[AI Extraction] Gemini extraction failed, falling back to mock.', e);
+      console.error('[AI Extraction] Gemini extraction failed.', e);
+      if (!mockAllowed()) return { data: {}, confidence: 0, success: false, rawResponse: String(e) };
       return extractWithMock(filename, type);
     }
-  } else {
-    console.log(`[AI Extraction] No Gemini API key found. Using mock OCR for ${filename}.`);
-    // Simulate slight delay to feel real
-    await new Promise(resolve => setTimeout(resolve, 800));
-    return extractWithMock(filename, type);
   }
+  if (!mockAllowed()) {
+    return { data: {}, confidence: 0, success: false, rawResponse: 'GEMINI_API_KEY is not set on the server.' };
+  }
+  console.log(`[AI Extraction] No Gemini API key found. Using mock OCR for ${filename}.`);
+  // Simulate slight delay to feel real
+  await new Promise(resolve => setTimeout(resolve, 800));
+  return extractWithMock(filename, type);
 }

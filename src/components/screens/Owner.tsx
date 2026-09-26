@@ -2,10 +2,12 @@
 
 import React, { useMemo, useState } from 'react';
 import Icon from '../Icon';
-import { Kpi, PageHead, Pill, Segmented, Track, dayTime, effTone, fmt, fmtM, inr, initials, time } from '../ui';
+import { Kpi, PageHead, Pill, Segmented, Sheet, Track, dayTime, effTone, fmt, fmtM, inr, initials, time } from '../ui';
+import { LotLocationPanel } from './Shared';
+import type { LedgerEntry } from '@/lib/types';
 import type { Ctx } from '../ctx';
-import { MATRIX, OWNER, ROLE_LABEL, SCOPE_TEXT, SHORTAGE_LIMIT_PCT, SUPERVISORS, levelTone, supervisorFor, type Role } from '@/lib/access';
-import { camStatus, sectionRows } from '@/lib/derive';
+import { MATRIX, ROLE_LABEL, levelTone, supervisorFor, type Role, scopeText, rules, activeSupervisors, owner, firm, withFirm } from '@/lib/access';
+import { STAGE_LABEL, camStatus, locationTone, sectionRows } from '@/lib/derive';
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -21,22 +23,24 @@ export function Overview({ ctx }: { ctx: Ctx }) {
   const allot = days.reduce((s, x) => s + x.allotted, 0);
   const done = days.reduce((s, x) => s + x.done, 0);
   const floorEff = allot > 0 ? (done / allot) * 100 : null;
-  const flaggedWorkers = days.filter((x) => x.eff != null && x.eff < 85).length;
+  const target = rules().efficiencyTargetPct;
+  const flaggedWorkers = days.filter((x) => x.eff != null && x.eff < target).length;
   const sections = sectionRows(days, d.jobCards);
   const pending = d.captures.filter((c) => c.status === 'pending');
-  const lowConf = pending.filter((c) => c.confidence < 0.8).length;
+  const autoPct = rules().aiAutoConfirmPct;
+  const lowConf = pending.filter((c) => c.confidence * 100 < autoPct).length;
 
   const attention = useMemo(() => {
     const items: { tone: 'bad' | 'warn' | 'info'; title: string; sub: string; action: string; onClick: () => void }[] = [];
     d.jobCards.filter((j) => j.flagged).slice(0, 2).forEach((j) =>
-      items.push({ tone: 'bad', title: `Shortage ${j.shortage_pct.toFixed(1)}% on ${j.lot_id}`, sub: `${j.process} · JC-${j.id} · above ${SHORTAGE_LIMIT_PCT}% limit${rate && j.shortage ? ` · ${inr(j.shortage * rate)}` : ''}`, action: 'Open', onClick: () => go('jobs') }));
-    if (pending.length) items.push({ tone: 'warn', title: `${pending.length} AI photo read${pending.length > 1 ? 's' : ''} waiting`, sub: lowConf ? `${lowConf} below 80% confidence` : 'All above 80% confidence', action: 'Review', onClick: () => go('review') });
+      items.push({ tone: 'bad', title: `Shortage ${j.shortage_pct.toFixed(1)}% on ${j.lot_id}`, sub: `${j.process} · JC-${j.id} · above ${rules().shortageLimitPct}% limit${rate && j.shortage ? ` · ${inr(j.shortage * rate)}` : ''}`, action: 'Open', onClick: () => go('jobs') }));
+    if (pending.length) items.push({ tone: 'warn', title: `${pending.length} AI photo read${pending.length > 1 ? 's' : ''} waiting`, sub: lowConf ? `${lowConf} below ${autoPct}% confidence` : `All above ${autoPct}% confidence`, action: 'Review', onClick: () => go('review') });
     days.filter((x) => x.cam && x.cam.active_pct < 60).slice(0, 2).forEach((x) =>
       items.push({ tone: 'warn', title: `${x.worker.name} idle ${Math.round(x.cam!.idle_min)} min`, sub: `CCTV · ${x.cam!.station} · ${x.section}`, action: 'View', onClick: () => go('people') }));
     d.lots.filter((l) => l.balance > 0 && l.balance < 200).slice(0, 1).forEach((l) =>
       items.push({ tone: 'info', title: `${l.lot_id} running low`, sub: `${fmtM(l.balance)} left · ${l.quality}`, action: 'Ledger', onClick: () => go('stock') }));
     return items;
-  }, [d.jobCards, d.lots, pending.length, lowConf, days, go, rate]);
+  }, [d.jobCards, d.lots, pending.length, lowConf, autoPct, days, go, rate]);
 
   const max = Math.max(1, ...d.flow.map((f) => Math.max(f.in_m, f.out_m)));
   const lastQ = [...d.messages].reverse().find((m) => m.sender === 'user');
@@ -44,7 +48,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
 
   return (
     <div className="page fade">
-      <PageHead title={`${greeting()}, ${OWNER.name.split(' ')[0]}`} sub={`All units · ${sections.filter((s) => s.open > 0).length} section${sections.filter((s) => s.open > 0).length === 1 ? '' : 's'} running${d.lastSync ? ` · synced ${time(d.lastSync.toISOString())}` : ''}`}>
+      <PageHead title={`${greeting()}, ${owner().name.split(' ')[0]}`} sub={`All units · ${sections.filter((s) => s.open > 0).length} section${sections.filter((s) => s.open > 0).length === 1 ? '' : 's'} running${d.lastSync ? ` · synced ${time(d.lastSync.toISOString())}` : ''}`}>
         <button className="btn" onClick={() => d.refresh()}><Icon name="refresh" size={16} strokeWidth={2} />Refresh</button>
         <button className="btn primary" onClick={() => ctx.openSheet('stock')}><Icon name="plus" size={16} strokeWidth={2} />New entry</button>
       </PageHead>
@@ -53,7 +57,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
         <Kpi label="Stock on hand" value={fmtM(onHand)} sub={`${activeLots} active lots`} />
         <RateKpi ctx={ctx} onHand={onHand} />
         <Kpi label="Dispatched today" value={fmtM(today?.out_m ?? 0)} sub={`In today: ${fmtM(today?.in_m ?? 0)}`} />
-        <Kpi label="Floor efficiency" value={floorEff == null ? '—' : `${floorEff.toFixed(1)}%`} sub={floorEff == null ? 'No work allotted today' : flaggedWorkers ? `${flaggedWorkers} worker${flaggedWorkers > 1 ? 's' : ''} below 85%` : 'Everyone on track'} subTone={flaggedWorkers ? 'warn' : 'good'} />
+        <Kpi label="Floor efficiency" value={floorEff == null ? '—' : `${floorEff.toFixed(1)}%`} sub={floorEff == null ? 'No work allotted today' : flaggedWorkers ? `${flaggedWorkers} worker${flaggedWorkers > 1 ? 's' : ''} below ${target}%` : 'Everyone on track'} subTone={flaggedWorkers ? 'warn' : 'good'} />
       </div>
 
       <div className="grid-split">
@@ -116,7 +120,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
         </section>
 
         <section className="card pad stack-14">
-          <div className="card-head"><Icon name="chat" style={{ color: 'var(--accent)' }} /><h2>Ask Textile Brain</h2><Pill>Every answer audited</Pill></div>
+          <div className="card-head"><Icon name="chat" style={{ color: 'var(--accent)' }} /><h2>Ask {firm().name}</h2><Pill>Every answer audited</Pill></div>
           {lastQ && lastA && !lastA.loading ? (
             <div className="qa">
               <span className="muted small">You asked · {time(lastQ.timestamp.toISOString())}</span>
@@ -170,12 +174,13 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   const { d, rate } = ctx;
   const [view, setView] = useState<'moves' | 'lots'>('moves');
   const [dir, setDir] = useState<'ALL' | 'IN' | 'OUT'>('ALL');
+  const [lotSheet, setLotSheet] = useState<string | null>(null);
   const rows = d.ledger.filter((l) => dir === 'ALL' || l.direction === dir);
   const today = d.flow[d.flow.length - 1];
 
   const exportCsv = () => {
-    const head = ['time', 'direction', 'lot', 'quality', 'design', 'meters', 'party', 'challan', 'source'];
-    const lines = d.ledger.map((l) => [l.ts, l.direction, l.lot_id, l.quality ?? '', l.design ?? '', l.meters, l.party ?? '', l.source_doc_id ?? '', l.capture_event_id ? 'photo' : 'manual']
+    const head = ['time', 'direction', 'lot', 'quality', 'design', 'meters', 'grey_meters', 'finished_meters', 'mill', 'weaver', 'party', 'challan', 'source'];
+    const lines = d.ledger.map((l) => [l.ts, l.direction, l.lot_id, l.quality ?? '', l.design ?? '', l.meters, l.grey_meters ?? '', l.finished_meters ?? '', l.mill_name ?? '', l.weaver_name ?? '', l.direction === 'OUT' ? l.party ?? '' : '', l.source_doc_id ?? '', l.capture_event_id ? 'photo' : 'manual']
       .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','));
     const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -200,7 +205,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       {view === 'moves' ? (
         <section className="card flush">
           <table className="tbl rtbl">
-            <thead><tr><th>Time</th><th>Dir</th><th>Lot</th><th>Quality · Design</th><th className="r">Meters</th><th>Party</th><th>Challan</th><th>Source</th><th className="r"><span className="lock th-lock"><Icon name="lock" size={12} strokeWidth={2} />Value</span></th></tr></thead>
+            <thead><tr><th>Time</th><th>Dir</th><th>Lot</th><th>Quality · Design</th><th className="r">Meters</th><th className="r">Grey → Finished</th><th>From (mill · weaver) / To (party)</th><th>Challan</th><th>Source</th><th className="r"><span className="lock th-lock"><Icon name="lock" size={12} strokeWidth={2} />Value</span></th></tr></thead>
             <tbody>
               {rows.map((l) => (
                 <tr key={l.id}>
@@ -209,20 +214,21 @@ export function Stock({ ctx }: { ctx: Ctx }) {
                   <td data-label="Lot" className="num strong">{l.lot_id}</td>
                   <td data-label="Quality"><div>{l.quality ?? '—'}</div><div className="muted small">{l.design}</div></td>
                   <td data-label="Meters" className="r num">{fmt(l.meters, 1)}</td>
-                  <td data-label="Party" className="t2">{l.party ?? '—'}</td>
+                  <td data-label="Grey → Finished" className="r num t2">{l.direction === 'IN' && (l.grey_meters != null || l.finished_meters != null) ? `${fmt(l.grey_meters, 1)} → ${fmt(l.finished_meters, 1)}` : '—'}</td>
+                  <td data-label={l.direction === 'IN' ? 'From' : 'To'} className="t2">{l.direction === 'IN' ? <InSource l={l} /> : <span>→ {l.party ?? '—'}</span>}</td>
                   <td data-label="Challan" className="num t2">{l.source_doc_id ?? '—'}</td>
                   <td data-label="Source"><Pill>{l.capture_event_id ? 'Photo · AI' : 'Manual'}</Pill></td>
                   <td data-label="Value" className="r num">{rate ? inr(l.meters * rate) : '—'}</td>
                 </tr>
               ))}
-              {!rows.length && <tr><td colSpan={9} className="muted center">No movements</td></tr>}
+              {!rows.length && <tr><td colSpan={10} className="muted center">No movements</td></tr>}
             </tbody>
           </table>
         </section>
       ) : (
         <section className="card flush">
           <table className="tbl rtbl">
-            <thead><tr><th>Lot</th><th>Quality</th><th>Design</th><th>Grade</th><th>Status</th><th className="r">Balance</th></tr></thead>
+            <thead><tr><th>Lot</th><th>Quality</th><th>Design</th><th>Grade</th><th>Status</th><th>Location</th><th className="r">Balance</th><th className="r">Action</th></tr></thead>
             <tbody>
               {d.lots.map((l) => (
                 <tr key={l.lot_id}>
@@ -231,13 +237,29 @@ export function Stock({ ctx }: { ctx: Ctx }) {
                   <td data-label="Design" className="t2">{l.design}</td>
                   <td data-label="Grade">{l.grade}</td>
                   <td data-label="Status"><Pill tone={l.status === 'active' ? 'good' : l.status === 'hold' ? 'warn' : 'neutral'}>{l.status}</Pill></td>
+                  <td data-label="Location"><div className="loc-cell"><Pill tone={locationTone(l.location)}>{l.location ?? 'Not recorded'}</Pill>{l.location_stage && <span className="muted tiny">{STAGE_LABEL[l.location_stage]} · {dayTime(l.location_ts!)}</span>}</div></td>
                   <td data-label="Balance" className="r num strong">{fmt(l.balance, 1)} m</td>
+                  <td data-label="Action" className="r"><button className="btn sm" onClick={() => setLotSheet(l.lot_id)}>{l.location === 'Dispatched' ? 'History' : 'Move'}</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </section>
       )}
+      <Sheet open={lotSheet != null} title={lotSheet ? `${lotSheet} · location` : ''} onClose={() => setLotSheet(null)}>
+        {lotSheet && <LotLocationPanel ctx={ctx} lotId={lotSheet} onDone={() => setLotSheet(null)} />}
+      </Sheet>
+    </div>
+  );
+}
+
+function InSource({ l }: { l: LedgerEntry }) {
+  if (!l.mill_name && !l.weaver_name) return <span>{l.party ? <>{l.party} <span className="muted tiny">(old entry)</span></> : '—'}</span>;
+  const same = l.mill_name && l.weaver_name && l.mill_name === l.weaver_name;
+  return (
+    <div className="stack-0">
+      <span>{l.mill_name ?? '—'}</span>
+      <span className="muted small">{same ? 'Weaver: same as mill' : `Weaver: ${l.weaver_name ?? '—'}`}</span>
     </div>
   );
 }
@@ -273,7 +295,7 @@ export function People({ ctx }: { ctx: Ctx }) {
 
 // ---------------- Access & roles ----------------
 export function Access({ ctx }: { ctx: Ctx }) {
-  const counts: Record<Role, number> = { owner: 1, supervisor: SUPERVISORS.length, worker: ctx.d.workers.length };
+  const counts: Record<Role, number> = { owner: 1, supervisor: activeSupervisors().length, worker: ctx.d.workers.length };
   const blurb: Record<Role, string> = {
     owner: 'Whole firm. Money, rates, CCTV, users. Can override any read.',
     supervisor: 'Assigned sections only. Meters, not money. Confirm reads, run job cards, allot work.',
@@ -289,7 +311,7 @@ export function Access({ ctx }: { ctx: Ctx }) {
             <div className="stack-4">
               <span className="role-name">{ROLE_LABEL[r]}{r !== 'owner' ? 's' : ''}</span>
               <span className="t2 small lh">{blurb[r]}</span>
-              <span className="muted small">{SCOPE_TEXT[r].scope}</span>
+              <span className="muted small">{scopeText(r).scope}</span>
             </div>
           </div>
         ))}
@@ -301,7 +323,7 @@ export function Access({ ctx }: { ctx: Ctx }) {
             {MATRIX.map((m) => (
               <tr key={m.cap}>
                 <td data-label="Layer" className="muted caps">{m.layer}</td>
-                <td data-label="Capability" className="strong">{m.label}</td>
+                <td data-label="Capability" className="strong">{withFirm(m.label)}</td>
                 <td data-label="Owner"><Pill tone={levelTone(m.owner)}>{m.owner}</Pill></td>
                 <td data-label="Supervisor"><Pill tone={levelTone(m.supervisor)}>{m.supervisor}</Pill></td>
                 <td data-label="Worker"><Pill tone={levelTone(m.worker)}>{m.worker}</Pill></td>
@@ -310,7 +332,7 @@ export function Access({ ctx }: { ctx: Ctx }) {
           </tbody>
         </table>
       </section>
-      <p className="muted small note"><Icon name="lock" size={14} strokeWidth={2} />Supervisor sections: {SUPERVISORS.map((s) => `${s.name} — ${s.sections.join(' & ')}`).join(' · ')}</p>
+      <p className="muted small note"><Icon name="lock" size={14} strokeWidth={2} />Supervisor sections: {activeSupervisors().map((s) => `${s.name} — ${s.sections.join(' & ')}`).join(' · ')}</p>
     </div>
   );
 }

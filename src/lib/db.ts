@@ -1,13 +1,21 @@
-import { Pool, PoolConfig } from 'pg';
+import { Pool, PoolConfig, QueryResult } from 'pg';
+import { resolveDbConfig } from './dbUrl';
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://naresh@localhost:5432/textile_db';
+// Local: DATABASE_URL or the local default.
+// Vercel + Supabase: the integration provides POSTGRES_URL (pooled connection).
+const onVercel = !!process.env.VERCEL;
+const { connectionString, ssl } = resolveDbConfig(
+  process.env.DATABASE_URL || process.env.POSTGRES_URL,
+  'postgresql://naresh@localhost:5432/textile_db',
+);
 
 const poolConfig: PoolConfig = {
   connectionString,
-  // Configure pool limits for reliability
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  ssl,
+  // Serverless functions each hold their own pool; keep it small there.
+  max: onVercel ? 3 : 10,
+  idleTimeoutMillis: onVercel ? 10_000 : 30_000,
+  connectionTimeoutMillis: onVercel ? 8_000 : 2_000,
 };
 
 // Create a single instance of Pool
@@ -39,5 +47,28 @@ export async function query(text: string, params?: any[]) {
   } catch (error) {
     console.error(`[DB Query Error]`, { text, error });
     throw error;
+  }
+}
+
+/**
+ * Run several statements as ONE transaction on ONE connection.
+ * (pool.query('BEGIN') is unsafe: each pool.query may use a different client.)
+ * The callback gets a `q` with the same signature as `query`.
+ */
+export type Q = (text: string, params?: unknown[]) => Promise<QueryResult>;
+
+export async function withTransaction<T>(fn: (q: Q) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  const q: Q = (text, params) => client.query(text, params as unknown[] | undefined);
+  try {
+    await client.query('BEGIN');
+    const result = await fn(q);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('[DB] Rollback failed', rbErr); }
+    throw err;
+  } finally {
+    client.release();
   }
 }

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, withTransaction } from '@/lib/db';
+import { closeJobCard, createJobCard, errorResponseBody } from '@/lib/ledger';
+import { readRules } from '@/lib/settings';
 
-const SHORTAGE_THRESHOLD_PCT = 3.0; // 3% shortage is flagged
 
 // GET: Fetch all job cards and allotments
 export async function GET() {
@@ -36,6 +37,7 @@ export async function GET() {
     `;
     const allotmentsRes = await query(allotmentsQuery);
 
+    const { shortageLimitPct: SHORTAGE_THRESHOLD_PCT } = await readRules();
     const formattedJobCards = jobCardsRes.rows.map(row => {
       const shortagePct = parseFloat(row.shortage_pct);
       const isFlagged = row.meters_out !== null && shortagePct > SHORTAGE_THRESHOLD_PCT;
@@ -62,157 +64,27 @@ export async function GET() {
   }
 }
 
-// POST: Create a new job card
+// POST: Create a job card, allot it to the worker, and move the lot to the floor.
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { lot_id, process, worker_id, meters_in, shift } = body;
-
-    if (!lot_id || !process || !worker_id || !meters_in) {
-      return NextResponse.json(
-        { error: 'lot_id, process, worker_id, and meters_in are required.' },
-        { status: 400 }
-      );
-    }
-
-    const metersInNum = parseFloat(meters_in);
-    if (isNaN(metersInNum) || metersInNum <= 0) {
-      return NextResponse.json(
-        { error: 'meters_in must be a valid positive number.' },
-        { status: 400 }
-      );
-    }
-
-    await query('BEGIN');
-
-    try {
-      // 1. Verify worker exists
-      const workerCheck = await query('SELECT 1 FROM workers WHERE id = $1', [worker_id]);
-      if (workerCheck.rowCount === 0) {
-        await query('ROLLBACK');
-        return NextResponse.json({ error: `Worker ${worker_id} does not exist.` }, { status: 400 });
-      }
-
-      // 2. Verify lot exists
-      const lotCheck = await query('SELECT 1 FROM lots WHERE lot_id = $1', [lot_id]);
-      if (lotCheck.rowCount === 0) {
-        await query('ROLLBACK');
-        return NextResponse.json({ error: `Lot ${lot_id} does not exist.` }, { status: 400 });
-      }
-
-      // 3. Create job card
-      const jobCardRes = await query(
-        `INSERT INTO job_cards (lot_id, process, worker_id, meters_in, status)
-         VALUES ($1, $2, $3, $4, 'in-process') RETURNING *`,
-        [lot_id, process, worker_id, metersInNum]
-      );
-      const newJobCard = jobCardRes.rows[0];
-
-      // 4. Create allotment automatically
-      await query(
-        `INSERT INTO allotments (worker_id, job_card_id, meters_allotted, shift, date)
-         VALUES ($1, $2, $3, $4, CURRENT_DATE)`,
-        [worker_id, newJobCard.id, metersInNum, shift || 'Morning']
-      );
-
-      await query('COMMIT');
-
-      return NextResponse.json({
-        success: true,
-        jobCard: newJobCard
-      });
-    } catch (txErr) {
-      await query('ROLLBACK');
-      throw txErr;
-    }
+    const jobCard = await withTransaction((q) => createJobCard(q, { ...body, moved_by: body.moved_by ?? null }));
+    return NextResponse.json({ success: true, jobCard });
   } catch (error) {
-    console.error('Failed to create job card:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }
 
-// PATCH: Record meters_out (folding completion) on a job card
+// PATCH: Close a job card with meters_out (updates worker efficiency; lot returns to godown when its last card closes).
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, meters_out } = body;
-
-    if (!id || meters_out === undefined) {
-      return NextResponse.json(
-        { error: 'id and meters_out are required.' },
-        { status: 400 }
-      );
-    }
-
-    const metersOutNum = parseFloat(meters_out);
-    if (isNaN(metersOutNum) || metersOutNum < 0) {
-      return NextResponse.json(
-        { error: 'meters_out must be a valid non-negative number.' },
-        { status: 400 }
-      );
-    }
-
-    // Update job card and set status to 'folded' or 'closed'
-    const updateRes = await query(
-      `UPDATE job_cards 
-       SET meters_out = $1, status = 'closed', ts_closed = NOW()
-       WHERE id = $2 
-       RETURNING *`,
-      [metersOutNum, id]
-    );
-
-    if (updateRes.rowCount === 0) {
-      return NextResponse.json({ error: `Job card ${id} not found.` }, { status: 404 });
-    }
-
-    const updatedJobCard = updateRes.rows[0];
-    const shortage = parseFloat(updatedJobCard.meters_in) - metersOutNum;
-    const shortagePct = (shortage / parseFloat(updatedJobCard.meters_in)) * 100;
-    const isFlagged = shortagePct > SHORTAGE_THRESHOLD_PCT;
-
-    // Check if worker has an efficiency_daily entry for today, if so update it, else insert
-    try {
-      const workerId = updatedJobCard.worker_id;
-      // Get all allotments for this worker today
-      const workerSummaryRes = await query(
-        `SELECT 
-          COALESCE(SUM(meters_allotted), 0) as total_allotted,
-          COALESCE(SUM(CASE WHEN status = 'closed' THEN meters_out ELSE 0 END), 0) as total_done
-         FROM job_cards jc
-         JOIN allotments a ON a.job_card_id = jc.id
-         WHERE jc.worker_id = $1 AND a.date = CURRENT_DATE`,
-        [workerId]
-      );
-      
-      const totalAllotted = parseFloat(workerSummaryRes.rows[0].total_allotted);
-      const totalDone = parseFloat(workerSummaryRes.rows[0].total_done);
-      const efficiencyPct = totalAllotted > 0 ? (totalDone / totalAllotted) * 100 : 0;
-      
-      await query(
-        `INSERT INTO efficiency_daily (worker_id, date, allotted, done, efficiency_pct, flagged)
-         VALUES ($1, CURRENT_DATE, $2, $3, $4, $5)
-         ON CONFLICT (worker_id, date) DO UPDATE 
-         SET allotted = $2, done = $3, efficiency_pct = $4, flagged = $5`,
-        [workerId, totalAllotted, totalDone, efficiencyPct, efficiencyPct < 85.0] // Flag if under 85%
-      );
-    } catch (effErr) {
-      console.error('Error updating worker efficiency:', effErr);
-      // Don't crash job card completion if efficiency roll-up fails
-    }
-
-    return NextResponse.json({
-      success: true,
-      jobCard: {
-        ...updatedJobCard,
-        meters_in: parseFloat(updatedJobCard.meters_in),
-        meters_out: parseFloat(updatedJobCard.meters_out),
-        shortage,
-        shortage_pct: shortagePct,
-        flagged: isFlagged
-      }
-    });
+    const jobCard = await withTransaction((q) => closeJobCard(q, { id: body.id, meters_out: body.meters_out, moved_by: body.moved_by ?? null }));
+    const { shortageLimitPct } = await readRules();
+    return NextResponse.json({ success: true, jobCard: { ...jobCard, flagged: jobCard.shortage_pct > shortageLimitPct } });
   } catch (error) {
-    console.error('Failed to complete job card:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }

@@ -9,7 +9,8 @@ import { Access, Overview, People, Stock } from '@/components/screens/Owner';
 import { Allot, AllotForm, Ask, JobCards, Review, StockForm } from '@/components/screens/Shared';
 import { Floor } from '@/components/screens/Floor';
 import { Capture, History, Shift } from '@/components/screens/Worker';
-import { HOME_TAB, can, sectionName, tabAllowed, type Role, type Tab } from '@/lib/access';
+import { HOME_TAB, can, sectionName, setPreviewSupervisor, tabAllowed, type Role, type Tab } from '@/lib/access';
+import { Settings } from '@/components/screens/Settings';
 import { useTextileData } from '@/lib/useTextileData';
 import { workerDay } from '@/lib/derive';
 import type { CaptureType } from '@/lib/types';
@@ -27,6 +28,7 @@ export default function TextileBrain() {
   const [lang, setLangState] = useState<Lang>('en');
   const [rate, setRateState] = useState<number | null>(null);
   const [workerId, setWorkerIdState] = useState<string | null>(null);
+  const [supervisorId, setSupervisorIdState] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetKind>(null);
   const [capType, setCapType] = useState<CaptureType>('job_card_folding');
   const [dark, setDark] = useState(false);
@@ -44,6 +46,9 @@ export default function TextileBrain() {
     if (l === 'en' || l === 'hi' || l === 'gu') setLangState(l);
     if (Number.isFinite(rt) && rt > 0) setRateState(rt);
     setWorkerIdState(store.get('tb-worker'));
+    const sup = store.get('tb-sup');
+    setPreviewSupervisor(sup);
+    setSupervisorIdState(sup);
     setDark(document.documentElement.dataset.theme === 'dark');
     setMounted(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -65,6 +70,7 @@ export default function TextileBrain() {
   const setLang = (l: Lang) => { setLangState(l); store.set('tb-lang', l); };
   const setRate = (r: number | null) => { setRateState(r); store.set('tb-rate', r == null ? null : String(r)); };
   const setWorkerId = (id: string) => { setWorkerIdState(id); store.set('tb-worker', id); };
+  const setSupervisorId = (id: string) => { setPreviewSupervisor(id); setSupervisorIdState(id); store.set('tb-sup', id); };
 
   const toggleTheme = () => {
     const next = !dark;
@@ -73,6 +79,12 @@ export default function TextileBrain() {
     store.set('tb-theme', next ? 'dark' : 'light');
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', next ? '#111210' : '#F3F0E8');
   };
+
+  // Browser tab title follows the firm name from Settings
+  useEffect(() => {
+    const f = d.config.firm;
+    if (d.lastSync) document.title = f.city ? `${f.name} · ${f.city}` : f.name;
+  }, [d.config, d.lastSync]);
 
   const days = useMemo(() => d.workers.map((w) => workerDay(w, d.allotments, d.jobCards, d.cctv)), [d.workers, d.allotments, d.jobCards, d.cctv]);
   const me = useMemo(() => {
@@ -99,11 +111,12 @@ export default function TextileBrain() {
     case 'shift': screen = <Shift ctx={ctx} />; break;
     case 'capture': screen = <Capture ctx={ctx} />; break;
     case 'history': screen = <History ctx={ctx} />; break;
+    case 'settings': screen = <Settings ctx={ctx} />; break;
   }
 
   return (
     <>
-      <Shell ctx={ctx} tab={safeTab} dark={dark} toggleTheme={toggleTheme} setRole={setRole} workerId={me?.id ?? null} setWorkerId={setWorkerId}>
+      <Shell ctx={ctx} tab={safeTab} dark={dark} toggleTheme={toggleTheme} setRole={setRole} workerId={me?.id ?? null} setWorkerId={setWorkerId} supervisorId={supervisorId} setSupervisorId={setSupervisorId}>
         {!mounted || (d.loading && !d.lastSync) ? (
           <div className="page"><div className="loading"><span className="spinner" />Loading floor data…</div></div>
         ) : (

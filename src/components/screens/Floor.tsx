@@ -4,12 +4,12 @@ import React from 'react';
 import Icon from '../Icon';
 import { Kpi, PageHead, Pill, Track, effTone, fmt, fmtM } from '../ui';
 import type { Ctx } from '../ctx';
-import { ACTIVE_SUPERVISOR, SHORTAGE_LIMIT_PCT, captureInScope, jobInScope } from '@/lib/access';
+import { captureInScope, jobInScope, activeSupervisor, rules } from '@/lib/access';
 import { avg, camStatus } from '@/lib/derive';
 
 export function Floor({ ctx }: { ctx: Ctx }) {
   const { d, go, days, role } = ctx;
-  const crew = days.filter((x) => ACTIVE_SUPERVISOR.sections.includes(x.section));
+  const crew = days.filter((x) => activeSupervisor().sections.includes(x.section));
   const allot = crew.reduce((s, x) => s + x.allotted, 0);
   const done = crew.reduce((s, x) => s + x.done, 0);
   const pct = allot > 0 ? Math.round((done / allot) * 100) : 0;
@@ -22,7 +22,7 @@ export function Floor({ ctx }: { ctx: Ctx }) {
 
   return (
     <div className="page fade">
-      <PageHead title={`${ACTIVE_SUPERVISOR.sections.join(' & ')} floor`} sub={`${crew.length} workers · ${openCards} open job cards`}>
+      <PageHead title={activeSupervisor().sections.length ? `${activeSupervisor().sections.join(' & ')} floor` : 'My floor'} sub={`${crew.length} workers · ${openCards} open job cards`}>
         <button className="btn" onClick={() => go('allot')}>Allot work</button>
         <button className="btn primary" onClick={() => go('review')}>Review <span className="num">{pending}</span> read{pending === 1 ? '' : 's'}</button>
       </PageHead>
@@ -30,7 +30,7 @@ export function Floor({ ctx }: { ctx: Ctx }) {
       <div className="grid-4">
         <Kpi label="Allotted today" value={fmtM(allot)} sub={`across ${crew.filter((x) => x.allotted > 0).length} workers`} />
         <Kpi label="Done so far" value={fmtM(done)}><Track pct={pct} tone="info" /></Kpi>
-        <Kpi label="Section shortage" value={shortage == null ? '—' : `${shortage.toFixed(1)}%`} sub={`limit ${SHORTAGE_LIMIT_PCT}% · ${over.length} card${over.length === 1 ? '' : 's'} over`} subTone={over.length ? 'warn' : 'good'} />
+        <Kpi label="Section shortage" value={shortage == null ? '—' : `${shortage.toFixed(1)}%`} sub={`limit ${rules().shortageLimitPct}% · ${over.length} card${over.length === 1 ? '' : 's'} over`} subTone={over.length ? 'warn' : 'good'} />
         <Kpi label="Stock value" lock value={<span className="muted">••••••</span>} sub="hidden for your role" />
       </div>
 
@@ -75,7 +75,7 @@ export function Floor({ ctx }: { ctx: Ctx }) {
           ))}
           <div className="callout info">
             <span className="callout-title"><span className="num">{pending}</span> photo read{pending === 1 ? '' : 's'} to confirm</span>
-            <span className="t2 small">{ACTIVE_SUPERVISOR.sections.join(' and ')} job cards</span>
+            <span className="t2 small">{activeSupervisor().sections.length ? `${activeSupervisor().sections.join(' and ')} job cards` : 'Assign sections to this supervisor in Settings'}</span>
             <div><button className="btn sm" onClick={() => go('review')}>Open queue</button></div>
           </div>
           {!over.length && !idle.length && <p className="muted small" style={{ margin: 0 }}><Icon name="check" size={14} /> No shortage or idle alerts.</p>}

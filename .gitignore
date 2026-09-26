@@ -43,3 +43,6 @@ next-env.d.ts
 
 #Ignore vscode AI rules
 .github/instructions/codacy.instructions.md
+
+# Keep the example env file in git
+!.env.example

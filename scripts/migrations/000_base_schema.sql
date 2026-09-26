@@ -1,24 +1,8 @@
--- PostgreSQL Database Schema for Textile Operations Platform
-
--- Drop tables if they exist
-DROP TABLE IF EXISTS schema_migrations CASCADE;
-DROP TABLE IF EXISTS supervisor_sections CASCADE;
-DROP TABLE IF EXISTS sections CASCADE;
-DROP TABLE IF EXISTS app_settings CASCADE;
-DROP TABLE IF EXISTS lot_locations CASCADE;
-DROP TABLE IF EXISTS chat_audit CASCADE;
-DROP TABLE IF EXISTS cctv_activity CASCADE;
-DROP TABLE IF EXISTS efficiency_daily CASCADE;
-DROP TABLE IF EXISTS allotments CASCADE;
-DROP TABLE IF EXISTS job_cards CASCADE;
-DROP TABLE IF EXISTS stock_movements CASCADE;
-DROP TABLE IF EXISTS lots CASCADE;
-DROP TABLE IF EXISTS workers CASCADE;
-DROP TABLE IF EXISTS capture_events CASCADE;
-DROP TABLE IF EXISTS users CASCADE;
-
+-- 000 — Base tables. Creates the core schema on an EMPTY database (e.g. a new Supabase project).
+-- Safe on existing databases: every table uses IF NOT EXISTS, so nothing already there is touched.
+-- No demo data here — demo data lives only in scripts/db-init.js (local development).
 -- Users table (Admins/Supervisors/Owners)
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     role VARCHAR(20) NOT NULL CHECK (role IN ('owner', 'supervisor', 'worker', 'admin')),
@@ -27,7 +11,7 @@ CREATE TABLE users (
 );
 
 -- Workers table
-CREATE TABLE workers (
+CREATE TABLE IF NOT EXISTS workers (
     id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     section VARCHAR(100) NOT NULL,
@@ -36,7 +20,7 @@ CREATE TABLE workers (
 );
 
 -- Lots table
-CREATE TABLE lots (
+CREATE TABLE IF NOT EXISTS lots (
     lot_id VARCHAR(50) PRIMARY KEY,
     quality VARCHAR(100) NOT NULL,
     design VARCHAR(100) NOT NULL,
@@ -45,7 +29,7 @@ CREATE TABLE lots (
 );
 
 -- Capture Events table (Temporary staging for photo reads before ledger confirmation)
-CREATE TABLE capture_events (
+CREATE TABLE IF NOT EXISTS capture_events (
     id SERIAL PRIMARY KEY,
     photo_url VARCHAR(255) NOT NULL,
     type VARCHAR(30) NOT NULL CHECK (type IN ('incoming_stock', 'outgoing_stock', 'job_card_folding')),
@@ -57,23 +41,19 @@ CREATE TABLE capture_events (
 );
 
 -- Stock Movements table (IN/OUT Ledger)
-CREATE TABLE stock_movements (
+CREATE TABLE IF NOT EXISTS stock_movements (
     id SERIAL PRIMARY KEY,
     lot_id VARCHAR(50) REFERENCES lots(lot_id) ON DELETE RESTRICT,
     direction VARCHAR(5) NOT NULL CHECK (direction IN ('IN', 'OUT')),
-    meters NUMERIC(10, 2) NOT NULL CHECK (meters > 0), -- Stock quantity for balances (IN: finished if known, else grey)
-    grey_meters NUMERIC(10, 2) CHECK (grey_meters IS NULL OR grey_meters > 0), -- IN only
-    finished_meters NUMERIC(10, 2) CHECK (finished_meters IS NULL OR finished_meters > 0), -- IN only
-    mill_name VARCHAR(150), -- IN only: mill the material came from
-    weaver_name VARCHAR(150), -- IN only: weaver (may or may not be the same as the mill)
-    party VARCHAR(150), -- OUT only: destination client
+    meters NUMERIC(10, 2) NOT NULL CHECK (meters > 0),
+    party VARCHAR(150), -- Source supplier for IN, Destination client for OUT
     source_doc_id VARCHAR(100), -- Challan number or invoice reference
     capture_event_id INTEGER REFERENCES capture_events(id) ON DELETE SET NULL,
     ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Job Cards table
-CREATE TABLE job_cards (
+CREATE TABLE IF NOT EXISTS job_cards (
     id SERIAL PRIMARY KEY,
     lot_id VARCHAR(50) REFERENCES lots(lot_id) ON DELETE RESTRICT,
     process VARCHAR(100) NOT NULL, -- e.g., 'weaving', 'dyeing', 'printing', 'folding'
@@ -87,7 +67,7 @@ CREATE TABLE job_cards (
 );
 
 -- Allotments table (Work assigned to worker)
-CREATE TABLE allotments (
+CREATE TABLE IF NOT EXISTS allotments (
     id SERIAL PRIMARY KEY,
     worker_id VARCHAR(50) REFERENCES workers(id) ON DELETE CASCADE,
     job_card_id INTEGER REFERENCES job_cards(id) ON DELETE CASCADE,
@@ -97,7 +77,7 @@ CREATE TABLE allotments (
 );
 
 -- Daily Worker Efficiency table (rolled up daily)
-CREATE TABLE efficiency_daily (
+CREATE TABLE IF NOT EXISTS efficiency_daily (
     id SERIAL PRIMARY KEY,
     worker_id VARCHAR(50) REFERENCES workers(id) ON DELETE CASCADE,
     date DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -109,7 +89,7 @@ CREATE TABLE efficiency_daily (
 );
 
 -- CCTV Activity table (lightweight logging of active/idle time from cameras)
-CREATE TABLE cctv_activity (
+CREATE TABLE IF NOT EXISTS cctv_activity (
     id SERIAL PRIMARY KEY,
     worker_id VARCHAR(50) REFERENCES workers(id) ON DELETE CASCADE,
     station VARCHAR(50) NOT NULL,
@@ -119,7 +99,7 @@ CREATE TABLE cctv_activity (
 );
 
 -- Chat Audit table (logging questions, SQL queries, and responses)
-CREATE TABLE chat_audit (
+CREATE TABLE IF NOT EXISTS chat_audit (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) REFERENCES users(id),
     question TEXT NOT NULL,
@@ -128,19 +108,7 @@ CREATE TABLE chat_audit (
     ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Firm settings, sections and supervisor responsibilities are created by
--- scripts/migrations/002_*.sql (run automatically at server start, or `npm run db:migrate`).
-
--- Lot location history (latest row = current location). See scripts/migrations/001_*.sql
-CREATE TABLE lot_locations (
-    id SERIAL PRIMARY KEY,
-    lot_id VARCHAR(50) NOT NULL REFERENCES lots(lot_id) ON DELETE RESTRICT,
-    location VARCHAR(100) NOT NULL CHECK (length(btrim(location)) > 0),
-    stage VARCHAR(20) NOT NULL CHECK (stage IN ('arrival', 'job_card', 'returned', 'dispatch', 'moved')),
-    note TEXT,
-    job_card_id INTEGER REFERENCES job_cards(id) ON DELETE SET NULL,
-    stock_movement_id INTEGER REFERENCES stock_movements(id) ON DELETE SET NULL,
-    moved_by VARCHAR(50) REFERENCES users(id),
-    ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_lot_locations_lot_ts ON lot_locations (lot_id, ts DESC, id DESC);
+-- The owner account must exist: photo auto-confirm and audit rows reference users(id).
+-- The name is changed later in Settings (or by the firm's setup migration).
+INSERT INTO users (id, name, role, locale, active) VALUES ('usr-owner', 'Owner', 'owner', 'en', true)
+ON CONFLICT (id) DO NOTHING;

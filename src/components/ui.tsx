@@ -2,6 +2,7 @@
 
 import React, { useEffect } from 'react';
 import Icon from './Icon';
+import { rules } from '@/lib/access';
 
 export type Tone = 'good' | 'warn' | 'bad' | 'info' | 'neutral';
 
@@ -16,7 +17,11 @@ export const inr = (n: number) => {
   return `₹ ${fmt(n)}`;
 };
 
-export const effTone = (e: number): Tone => (e >= 85 ? 'good' : e >= 75 ? 'warn' : 'bad');
+/** Green at/above the firm's efficiency target, amber within 10 points below it, red further below. */
+export const effTone = (e: number): Tone => {
+  const t = rules().efficiencyTargetPct;
+  return e >= t ? 'good' : e >= t - 10 ? 'warn' : 'bad';
+};
 
 export const time = (ts: string) => {
   const d = new Date(ts);

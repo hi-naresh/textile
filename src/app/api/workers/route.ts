@@ -1,10 +1,14 @@
-import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { NextRequest, NextResponse } from 'next/server';
+import { query, withTransaction } from '@/lib/db';
+import { errorResponseBody, LedgerError } from '@/lib/ledger';
+import { cleanName } from '@/lib/settings';
 
-export async function GET() {
+// GET: active workers + efficiency + CCTV. ?include_inactive=1 also returns deactivated workers (for Settings).
+export async function GET(request: NextRequest) {
+  const includeInactive = request.nextUrl.searchParams.get('include_inactive') === '1';
   try {
     // 1. Fetch workers
-    const workersRes = await query(`SELECT * FROM workers WHERE active = true ORDER BY name ASC`);
+    const workersRes = await query(`SELECT * FROM workers ${includeInactive ? '' : 'WHERE active = true'} ORDER BY active DESC, name ASC`);
     
     // 2. Fetch daily efficiency for the last 7 days
     const efficiencyRes = await query(`
@@ -40,5 +44,49 @@ export async function GET() {
   } catch (error) {
     console.error('Failed to fetch workers data:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
+}
+
+async function requireSection(q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null; rows: { name: string }[] }>, raw: unknown) {
+  const name = cleanName(raw, 'Section', 60);
+  const r = await q(`SELECT name FROM sections WHERE lower(name) = lower($1) AND active`, [name]);
+  if (!r.rowCount) throw new LedgerError(`Section "${name}" does not exist. Add it under Settings → Sections first.`);
+  return r.rows[0].name;
+}
+
+// POST: add a worker { name, section }
+export async function POST(request: NextRequest) {
+  try {
+    const b = await request.json();
+    const name = cleanName(b.name, 'Worker name');
+    const worker = await withTransaction(async (q) => {
+      const section = await requireSection(q, b.section);
+      const id = `wrk-${Date.now().toString(36)}`;
+      const r = await q(`INSERT INTO workers (id, name, section, role, active) VALUES ($1, $2, $3, 'operator', true) RETURNING *`, [id, name, section]);
+      return r.rows[0];
+    });
+    return NextResponse.json({ success: true, worker });
+  } catch (error) {
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
+  }
+}
+
+// PATCH: edit a worker { id, name?, section?, active? }
+export async function PATCH(request: NextRequest) {
+  try {
+    const b = await request.json();
+    const worker = await withTransaction(async (q) => {
+      const cur = await q(`SELECT id FROM workers WHERE id = $1 FOR UPDATE`, [String(b.id ?? '')]);
+      if (!cur.rowCount) throw new LedgerError('Worker not found.', 404);
+      if ('name' in b) await q(`UPDATE workers SET name = $1 WHERE id = $2`, [cleanName(b.name, 'Worker name'), b.id]);
+      if ('section' in b) await q(`UPDATE workers SET section = $1 WHERE id = $2`, [await requireSection(q, b.section), b.id]);
+      if ('active' in b) await q(`UPDATE workers SET active = $1 WHERE id = $2`, [!!b.active, b.id]);
+      return (await q(`SELECT * FROM workers WHERE id = $1`, [b.id])).rows[0];
+    });
+    return NextResponse.json({ success: true, worker });
+  } catch (error) {
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }

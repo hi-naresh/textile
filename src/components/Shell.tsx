@@ -4,7 +4,7 @@ import React, { useState, useSyncExternalStore } from 'react';
 import Icon, { Logo } from './Icon';
 import { Segmented, Sheet, initials } from './ui';
 import type { Ctx } from './ctx';
-import { ACTIVE_SUPERVISOR, MOBILE_PRIMARY, NAV, OWNER, ROLE_LABEL, SCOPE_TEXT, captureInScope, sectionName, type Role } from '@/lib/access';
+import { MOBILE_PRIMARY, NAV, ROLE_LABEL, captureInScope, sectionName, type Role, activeSupervisor, activeSupervisors, scopeText, owner, firm, withFirm } from '@/lib/access';
 import type { Worker } from '@/lib/types';
 
 export function shiftName(d = new Date()) {
@@ -13,8 +13,8 @@ export function shiftName(d = new Date()) {
 }
 
 export function whoAmI(role: Role, me: Worker | null) {
-  if (role === 'owner') return { name: OWNER.name, title: 'Owner' };
-  if (role === 'supervisor') return { name: ACTIVE_SUPERVISOR.name, title: `Supervisor · ${ACTIVE_SUPERVISOR.sections.join(' & ')}` };
+  if (role === 'owner') return { name: owner().name, title: 'Owner' };
+  if (role === 'supervisor') return { name: activeSupervisor().name, title: activeSupervisor().sections.length ? `Supervisor · ${activeSupervisor().sections.join(' & ')}` : activeSupervisor().id ? 'Supervisor · no sections yet' : 'No supervisors yet — add in Settings' };
   return { name: me?.name ?? 'Worker', title: `Worker · ${sectionName(me?.section)}` };
 }
 
@@ -34,10 +34,12 @@ interface ShellProps {
   setRole: (r: Role) => void;
   workerId: string | null;
   setWorkerId: (id: string) => void;
+  supervisorId: string | null;
+  setSupervisorId: (id: string) => void;
   children: React.ReactNode;
 }
 
-export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, setWorkerId, children }: ShellProps) {
+export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, setWorkerId, supervisorId, setSupervisorId, children }: ShellProps) {
   const { role, d, go, me } = ctx;
   const [more, setMore] = useState(false);
   const [search, setSearch] = useState('');
@@ -53,6 +55,15 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
 
   const roleSwitch = (
     <Segmented label="Preview as role" value={role} onChange={setRole} options={(['owner', 'supervisor', 'worker'] as Role[]).map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
+  );
+  const sups = activeSupervisors();
+  const supervisorPick = role === 'supervisor' && sups.length > 1 && (
+    <label className="worker-pick">
+      <span className="sr-only">Preview which supervisor</span>
+      <select value={supervisorId ?? sups[0].id} onChange={(e) => setSupervisorId(e.target.value)} aria-label="Preview which supervisor">
+        {sups.map((s) => <option key={s.id} value={s.id}>{s.name}{s.sections.length ? ` · ${s.sections.join(', ')}` : ''}</option>)}
+      </select>
+    </label>
   );
   const workerPick = role === 'worker' && d.workers.length > 0 && (
     <label className="worker-pick">
@@ -74,7 +85,7 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
       <aside className="side">
         <div className="brand">
           <Logo />
-          <div className="stack-0"><span className="brand-name">Textile Brain</span><span className="muted tiny">Surat Mill</span></div>
+          <div className="stack-0"><span className="brand-name">{firm().name}</span><span className="muted tiny">{firm().city}</span></div>
         </div>
         <div className="me-card">
           <span className={`av ${role}`}>{initials(who.name)}</span>
@@ -87,7 +98,7 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
               {nav.filter((n) => n.group === g).map((n) => (
                 <button key={n.tab} className={`nav ${tab === n.tab ? 'on' : ''}`} aria-current={tab === n.tab ? 'page' : undefined} onClick={() => go(n.tab)}>
                   <Icon name={n.icon} />
-                  <span className="grow">{n.label}</span>
+                  <span className="grow">{withFirm(n.label)}</span>
                   {n.tab === 'review' && pending > 0 && <span className="pill warn num">{pending}</span>}
                 </button>
               ))}
@@ -95,8 +106,8 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
           ))}
         </nav>
         <div className="scope-card">
-          <div className="scope-title"><Icon name="lock" size={14} strokeWidth={2} />{SCOPE_TEXT[role].scope}</div>
-          <span className="muted tiny lh">{SCOPE_TEXT[role].line}</span>
+          <div className="scope-title"><Icon name="lock" size={14} strokeWidth={2} />{scopeText(role).scope}</div>
+          <span className="muted tiny lh">{scopeText(role).line}</span>
         </div>
       </aside>
 
@@ -116,6 +127,7 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
             {roleSwitch}
           </div>
           {workerPick}
+          {supervisorPick}
           {now && <span className="pill neutral tall hide-md"><Icon name="clock" size={14} strokeWidth={2} />{today} · {shiftName(now)}</span>}
           {themeBtn}
           {role !== 'worker' && (
@@ -130,12 +142,13 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
         <header className="m-head">
           <div className="m-row">
             <Logo size={30} />
-            <div className="stack-0 grow min0"><span className="brand-name">Textile Brain</span><span className="muted tiny ellipsis">{who.name} · {who.title}</span></div>
+            <div className="stack-0 grow min0"><span className="brand-name">{firm().name}</span><span className="muted tiny ellipsis">{who.name} · {who.title}</span></div>
             {themeBtn}
             <span className={`av ${role} m-av`}>{initials(who.name)}</span>
           </div>
           <div className="m-role">{roleSwitch}</div>
           {workerPick && <div className="m-role">{workerPick}</div>}
+          {supervisorPick && <div className="m-role">{supervisorPick}</div>}
         </header>
 
         {d.dbOk === false && (
@@ -167,12 +180,12 @@ export default function Shell({ ctx, tab, dark, toggleTheme, setRole, workerId, 
         <div className="stack-4">
           {moreItems.map((n) => (
             <button key={n.tab} className={`nav big-nav ${tab === n.tab ? 'on' : ''}`} onClick={() => { go(n.tab); setMore(false); }}>
-              <Icon name={n.icon} /><span className="grow">{n.label}</span><Icon name="arrow" size={16} />
+              <Icon name={n.icon} /><span className="grow">{withFirm(n.label)}</span><Icon name="arrow" size={16} />
             </button>
           ))}
           <div className="scope-card" style={{ marginTop: 12 }}>
-            <div className="scope-title"><Icon name="lock" size={14} strokeWidth={2} />{SCOPE_TEXT[role].scope}</div>
-            <span className="muted tiny lh">{SCOPE_TEXT[role].line}</span>
+            <div className="scope-title"><Icon name="lock" size={14} strokeWidth={2} />{scopeText(role).scope}</div>
+            <span className="muted tiny lh">{scopeText(role).line}</span>
           </div>
         </div>
       </Sheet>
