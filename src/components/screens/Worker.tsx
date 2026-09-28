@@ -44,9 +44,7 @@ export function Capture({ ctx }: { ctx: Ctx }) {
     if (ok) { setFile(null); setPreview(null); startedAt.current = null; }
   };
 
-  const aiState = d.status?.ai.state;
-  const ocrOn = d.status?.ocr?.state === 'connected';
-  const readingOff = !!d.status && ((!ocrOn && aiState !== 'connected' && aiState !== 'demo') || d.status.photos.state === 'missing');
+  const readingOff = !!d.status && !d.status.photoReading;
   const mine = d.captures.filter((c) => allowed.includes(c.type)).slice(0, 6);
   const statusTone = { pending: 'warn', confirmed: 'good', corrected: 'good', rejected: 'bad' } as const;
   const statusText = { pending: 'In review', confirmed: 'Confirmed', corrected: 'Confirmed', rejected: 'Retake asked' } as const;

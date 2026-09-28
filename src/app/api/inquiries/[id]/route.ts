@@ -6,10 +6,10 @@ import { getInquiry, updateInquiry } from '@/lib/sales/inquiries';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-// GET ?role= → { inquiry, stock, rate, promise_date }
+// GET → { inquiry, stock, rate, promise_date }
 export async function GET(req: NextRequest, { params }: Ctx) {
   try {
-    const role = requireCap(req.nextUrl.searchParams.get('role'), 'inquiry.handle');
+    const { role } = await requireCap(req, 'inquiry.handle');
     const { id } = await params;
     return NextResponse.json(await getInquiry(query, id, role), { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
@@ -18,11 +18,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   }
 }
 
-// PATCH { status?, quoted_rate? (owner), reply_draft?, meters?, quality?, design?, needed_by?, party_name?, source?, role, actor }
+// PATCH { status?, quoted_rate? (owner), reply_draft?, meters?, quality?, design?, needed_by?, party_name?, source? }
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
+    const { role } = await requireCap(req, 'inquiry.handle');
     const b = await readObject(req);
-    const role = requireCap(b.role, 'inquiry.handle');
     const { id } = await params;
     const res = await withTransaction((q) => updateInquiry(q, id, b, role));
     return NextResponse.json(res);

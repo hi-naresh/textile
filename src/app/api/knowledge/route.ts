@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readObject } from '@/lib/apiAuth';
+import { readObject, requireCap } from '@/lib/apiAuth';
 import { query } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName } from '@/lib/settings';
 
-// Firm knowledge notes used by chat for policy / how-to questions.
+// Firm knowledge notes used by chat for policy / how-to questions. Owner only (Settings).
 // GET → list. POST { title, body } → add. PATCH { id, title?, body?, active? } → edit.
-// TODO(auth): owner only once login exists (the UI shows this in Settings, owner only).
 const cleanBody = (v: unknown) => {
   const s = typeof v === 'string' ? v.trim() : '';
   if (!s) throw new LedgerError('Write the note text.');
@@ -14,8 +13,9 @@ const cleanBody = (v: unknown) => {
   return s;
 };
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    await requireCap(req, 'settings.manage');
     const r = await query(`SELECT id, title, body, active, updated_at FROM knowledge_docs ORDER BY active DESC, title`);
     return NextResponse.json({ docs: r.rows });
   } catch (error) {
@@ -26,6 +26,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireCap(req, 'settings.manage');
     const b = await readObject(req);
     const r = await query(`INSERT INTO knowledge_docs (title, body) VALUES ($1, $2) RETURNING id, title, body, active, updated_at`, [cleanName(b.title, 'Title', 150), cleanBody(b.body)]);
     return NextResponse.json({ doc: r.rows[0] });
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
+    await requireCap(req, 'settings.manage');
     const b = await readObject(req);
     const id = Number(b.id);
     if (!Number.isInteger(id) || id <= 0) throw new LedgerError('A valid note id is required.');

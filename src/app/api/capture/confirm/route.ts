@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readObject } from '@/lib/apiAuth';
+import { readObject, requireCap } from '@/lib/apiAuth';
 import { withTransaction } from '@/lib/db';
 import { LedgerError, applyCaptureRead, errorResponseBody } from '@/lib/ledger';
 
-// POST: Confirm, correct or reject a pending AI photo read.
-// Confirm/correct writes to the ledger through the same rules as manual entry.
+// POST (owner / supervisor) { event_id, status: confirmed|corrected|rejected, corrected_data?, review_seconds? }
+// Confirm/correct writes to the ledger through the same rules as manual entry. confirmed_by = the signed-in user.
 export async function POST(request: NextRequest) {
   try {
+    const a = await requireCap(request, 'capture.confirm');
+    const confirmed_by = a.by;
     const body = await readObject(request);
-    const { event_id, confirmed_by, status, corrected_data } = body;
+    const { event_id, status, corrected_data } = body;
     const rs = parseFloat(body.review_seconds);
     const reviewSeconds = Number.isFinite(rs) && rs >= 0 ? Math.min(rs, 3600) : null;
 
-    if (!event_id || !confirmed_by || !status) {
-      return NextResponse.json({ error: 'event_id, confirmed_by, and status are required.' }, { status: 400 });
+    if (!event_id || !status) {
+      return NextResponse.json({ error: 'event_id and status are required.' }, { status: 400 });
     }
     if (!['confirmed', 'corrected', 'rejected'].includes(status)) {
       return NextResponse.json({ error: 'status must be either confirmed, corrected, or rejected.' }, { status: 400 });

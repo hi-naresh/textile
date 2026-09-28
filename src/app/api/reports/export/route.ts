@@ -8,14 +8,14 @@ import { buildReport, stripForRole } from '@/lib/reports/build';
 import { reportFileName, reportWorkbook } from '@/lib/reports/export';
 import { REPORT_PERIODS, isIsoDate, type ReportPeriod } from '@/lib/reports/dates';
 
-// GET /api/reports/export?period=day|week|month&date=YYYY-MM-DD&role=owner|supervisor
+// GET /api/reports/export?period=day|week|month&date=YYYY-MM-DD
 //   → .xlsx, one sheet per section. Money / AI usage sheets only for the owner. Workers: 403.
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    const role = requireCap(sp.get('role'), 'reports.view');
+    const { role } = await requireCap(req, 'reports.view');
     const period = (sp.get('period') ?? 'day') as ReportPeriod;
     if (!REPORT_PERIODS.includes(period)) throw new LedgerError('period must be day, week or month.');
     const date = sp.get('date');

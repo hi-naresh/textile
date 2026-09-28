@@ -156,6 +156,12 @@ export interface Toast {
   tone: ToastTone;
 }
 
+/** What owner / supervisor / worker screens may know about services: plain yes/no, no details. */
+export interface Features {
+  photoReading: boolean; // a photo can be read (OCR or AI) and stored
+  aiWriting: boolean; // AI can polish text (reminders, replies)
+}
+
 export type AiState = 'connected' | 'missing' | 'invalid_key' | 'model_unavailable' | 'unreachable' | 'demo';
 export interface SystemStatus {
   ai: { state: AiState; model: string; message: string; fix: string; checkedAt: string };

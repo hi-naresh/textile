@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readObject } from '@/lib/apiAuth';
+import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
+import { can } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, recordIncoming, recordOutgoing } from '@/lib/ledger';
 
-// GET: Fetch lots, running stock balances, and ledger history
-export async function GET() {
+// GET: Fetch lots, running stock balances, and ledger history (owner / supervisor; workers get nothing)
+export async function GET(request: NextRequest) {
   try {
+    const a = await requireUser(request);
+    if (!can(a.role, 'stock.quantity')) {
+      return NextResponse.json({ lots: [], ledger: [], names: { mills: [], weavers: [], parties: [] }, flow: [] });
+    }
     // 1. Fetch all lots with their derived running stock balances
     const balanceQuery = `
       SELECT 
@@ -86,16 +91,17 @@ export async function GET() {
       }))
     });
   } catch (error) {
-    console.error('Failed to fetch stock data:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }
 
-// POST: Add a manual stock movement.
+// POST (owner): Add a manual stock movement.
 // IN:  lot_id, grey_meters and/or finished_meters, mill_name, weaver_name, source_doc, location, quality + design (new lot)
 // OUT: lot_id, meters, party (destination client, required), source_doc
 export async function POST(request: NextRequest) {
   try {
+    const a = await requireCap(request, 'ledger.edit');
     const body = await readObject(request);
     const direction = body?.direction;
     if (direction !== 'IN' && direction !== 'OUT') {
@@ -103,8 +109,8 @@ export async function POST(request: NextRequest) {
     }
     const movement = await withTransaction((q) =>
       direction === 'IN'
-        ? recordIncoming(q, { ...body, capture_event_id: null, moved_by: body.moved_by ?? null }, { requireLotDetails: true })
-        : recordOutgoing(q, { ...body, capture_event_id: null, moved_by: body.moved_by ?? null })
+        ? recordIncoming(q, { ...body, capture_event_id: null, moved_by: a.by }, { requireLotDetails: true })
+        : recordOutgoing(q, { ...body, capture_event_id: null, moved_by: a.by })
     );
     return NextResponse.json({ success: true, movement });
   } catch (error) {

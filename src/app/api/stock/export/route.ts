@@ -2,16 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { getFirmConfig } from '@/lib/settings';
 import { challanSheet, importTemplate, lotsSheet, newWorkbook, toBuffer } from '@/lib/excel';
+import { requireCap } from '@/lib/apiAuth';
+import { errorResponseBody } from '@/lib/ledger';
 
+// Owner only (₹-free, but the whole ledger).
 // GET /api/stock/export?kind=challans[&direction=IN|OUT][&from=YYYY-MM-DD&to=YYYY-MM-DD]  → .xlsx of every challan (S.No first)
 // GET /api/stock/export?kind=lots       → lot balances + locations
 // GET /api/stock/export?kind=template   → blank import template for manual stock entry
-// TODO(auth): owner only (₹-free, but the whole ledger).
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const isDate = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null);
 
 export async function GET(req: NextRequest) {
   try {
+    await requireCap(req, 'ledger.edit');
     const sp = req.nextUrl.searchParams;
     const kind = sp.get('kind') ?? 'challans';
     const cfg = await getFirmConfig();
@@ -52,7 +55,7 @@ export async function GET(req: NextRequest) {
       headers: { 'Content-Type': XLSX, 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    console.error('[stock/export] failed', error);
-    return NextResponse.json({ error: 'Could not create the Excel file.' }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }

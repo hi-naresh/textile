@@ -1,7 +1,16 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requireDeveloper } from '@/lib/apiAuth';
+import { errorResponseBody } from '@/lib/ledger';
 
-export async function GET() {
+// Developer only (404 for everyone else). Table counts to verify the schema exists.
+export async function GET(req: NextRequest) {
+  try {
+    await requireDeveloper(req);
+  } catch (error) {
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
+  }
   try {
     const timeRes = await query('SELECT NOW() as now');
     
@@ -25,7 +34,7 @@ export async function GET() {
       try {
         const countRes = await query(`SELECT COUNT(*) as count FROM ${table}`);
         tableStatuses[table] = parseInt(countRes.rows[0].count, 10);
-      } catch (err) {
+      } catch {
         tableStatuses[table] = false;
       }
     }

@@ -342,9 +342,14 @@ export function narrativeFor(r: Report): string[] {
   return out.slice(0, 5);
 }
 
-/** Remove owner-only parts (₹ and AI cost). buildReport already skips them for non-owners; use this on any copy. */
+/** Remove what a client role must not see: AI usage / cost for everyone (developer console only),
+ *  ₹ for everyone but the owner. buildReport already skips ₹ for non-owners; use this on any copy sent to a client. */
 export function stripForRole<T extends Report>(r: T, role: Role): T {
-  if (role === 'owner') return r;
+  if (role === 'owner') {
+    const { ai: _ai, ...noAi } = r;
+    void _ai;
+    return { ...noAi, kpis: r.kpis.filter((x) => x.key !== 'ai_cost') } as T;
+  }
   const { money: _m, ai: _a, ...rest } = r;
   void _m; void _a;
   const out = { ...rest, kpis: r.kpis.filter((x) => !x.ownerOnly), role } as T;

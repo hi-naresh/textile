@@ -1,5 +1,5 @@
 // Developer-facing log of every paid AI call (OCR + LLM): feature, model tier, tokens, latency, cost.
-// Read it at /dev/usage (needs DEV_ACCESS_TOKEN). Logging never breaks the calling feature.
+// Read it in the developer console (/dev → AI usage & cost; API /api/dev/usage, developer session only). Logging never breaks the calling feature.
 import { query } from './db';
 
 export type Tier = 'ocr' | 'low' | 'high';

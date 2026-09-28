@@ -14,26 +14,66 @@ import { Orders } from '@/components/screens/Orders';
 import { Dispatch } from '@/components/screens/Dispatch';
 import { Money } from '@/components/screens/Money';
 import { Reports } from '@/components/screens/Reports';
-import { HOME_TAB, can, sectionName, setPreviewSupervisor, tabAllowed, type Role, type Tab } from '@/lib/access';
+import { Team } from '@/components/screens/Team';
+import { ForcePasswordScreen, PendingScreen } from '@/components/screens/Account';
+import { HOME_TAB, can, setPreviewSupervisor, tabAllowed, type Role, type Tab } from '@/lib/access';
 import { Settings } from '@/components/screens/Settings';
 import { useTextileData } from '@/lib/useTextileData';
 import { workerDay } from '@/lib/derive';
 import type { CaptureType } from '@/lib/types';
+import { fetchMe, installAuthFetch, type Me } from '@/lib/authClient';
 
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k: string, v: string | null) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
 };
 
+// Who is signed in decides everything: not signed in → /login; developer → /dev (unless viewing as someone);
+// pending sign up → waiting screen; starting password → choose a new one; otherwise the app for that role.
 export default function TextileBrain() {
+  const [session, setSession] = useState<Me | null | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
+
+  const load = useCallback(() => {
+    setFailed(false);
+    fetchMe()
+      .then((m) => {
+        if (!m) window.location.replace('/login');
+        else if (m.kind === 'developer' && !m.viewAs) window.location.replace('/dev');
+        else setSession(m);
+      })
+      .catch(() => setFailed(true));
+  }, []);
+
+  useEffect(() => {
+    installAuthFetch();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial session load (state is set after the request resolves)
+    load();
+  }, [load]);
+
+  if (failed) {
+    return (
+      <main className="auth-wrap"><div className="card pad stack-16 auth-card">
+        <span className="t2">Something went wrong, try again.</span>
+        <button className="btn primary" onClick={load}>Try again</button>
+      </div></main>
+    );
+  }
+  if (!session) return <div className="page"><div className="loading"><span className="spinner" />Loading…</div></div>;
+  if (session.kind === 'client' && session.user.status === 'pending') return <PendingScreen me={session} onCheck={load} />;
+  if (session.kind === 'client' && session.user.mustChangePassword) return <ForcePasswordScreen me={session} onDone={load} />;
+  return <App session={session} />;
+}
+
+function App({ session }: { session: Me }) {
+  const account = session.viewAs ?? session.user;
+  const role = account.role as Role;
+
   const d = useTextileData();
   const [mounted, setMounted] = useState(false);
-  const [role, setRoleState] = useState<Role>('owner');
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(HOME_TAB[role]);
   const [lang, setLangState] = useState<Lang>('en');
   const [rate, setRateState] = useState<number | null>(null);
-  const [workerId, setWorkerIdState] = useState<string | null>(null);
-  const [supervisorId, setSupervisorIdState] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetKind>(null);
   const [capType, setCapType] = useState<CaptureType>('job_card_folding');
   const [theme, setThemeState] = useState<ThemePref>('system');
@@ -42,26 +82,21 @@ export default function TextileBrain() {
 
   // Restore per-device preferences after hydration.
   useEffect(() => {
-    const r = store.get('tb-role') as Role | null;
-    const role0: Role = r === 'owner' || r === 'supervisor' || r === 'worker' ? r : 'owner';
     const t = store.get('tb-tab') as Tab | null;
     const l = store.get('tb-lang') as Lang | null;
     const rt = parseFloat(store.get('tb-rate') ?? '');
+    // Supervisor screens scope to the signed-in supervisor's sections (screens render after `mounted`).
+    setPreviewSupervisor(role === 'supervisor' ? account.id : null);
     /* eslint-disable react-hooks/set-state-in-effect */
-    setRoleState(role0);
-    setTab(t && tabAllowed(role0, t) ? t : HOME_TAB[role0]);
+    setTab(t && tabAllowed(role, t) ? t : HOME_TAB[role]);
     if (l === 'en' || l === 'hi' || l === 'gu') setLangState(l);
     if (Number.isFinite(rt) && rt > 0) setRateState(rt);
-    setWorkerIdState(store.get('tb-worker'));
-    const sup = store.get('tb-sup');
-    setPreviewSupervisor(sup);
-    setSupervisorIdState(sup);
     const th = store.get('tb-theme');
     setThemeState(th === 'light' || th === 'dark' ? th : 'system');
     setDensityState(store.get('tb-density') === 'compact' ? 'compact' : 'detailed');
     setMounted(true);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, []);
+  }, [role, account.id]);
 
   const go = useCallback((t: Tab) => {
     setTab(t);
@@ -69,20 +104,8 @@ export default function TextileBrain() {
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  // From Settings → View the screen stays on Settings (every role has it).
-  const setRole = (r: Role) => {
-    setRoleState(r);
-    store.set('tb-role', r);
-    const next: Tab = tab === 'settings' ? 'settings' : HOME_TAB[r];
-    setTab(next);
-    store.set('tb-tab', next);
-    setSheet(null);
-    setChatOpen(false);
-  };
   const setLang = (l: Lang) => { setLangState(l); store.set('tb-lang', l); };
   const setRate = (r: number | null) => { setRateState(r); store.set('tb-rate', r == null ? null : String(r)); };
-  const setWorkerId = (id: string) => { setWorkerIdState(id); store.set('tb-worker', id); };
-  const setSupervisorId = (id: string) => { setPreviewSupervisor(id); setSupervisorIdState(id); store.set('tb-sup', id); };
 
   const setTheme = (t: ThemePref) => {
     setThemeState(t);
@@ -100,15 +123,11 @@ export default function TextileBrain() {
   }, [d.config, d.lastSync]);
 
   const days = useMemo(() => d.workers.map((w) => workerDay(w, d.allotments, d.jobCards, d.cctv)), [d.workers, d.allotments, d.jobCards, d.cctv]);
-  const me = useMemo(() => {
-    if (!d.workers.length) return null;
-    return d.workers.find((w) => w.id === workerId)
-      ?? d.workers.find((w) => sectionName(w.section) === 'Folding')
-      ?? d.workers[0];
-  }, [d.workers, workerId]);
+  // A worker's own worker record (the server only sends that one to a worker).
+  const me = useMemo(() => (account.workerId ? d.workers.find((w) => w.id === account.workerId) ?? null : null), [d.workers, account.workerId]);
 
-  const ctx: Ctx = { role, d, go, days, me, lang, setLang, rate: role === 'owner' ? rate : null, setRate, openSheet: setSheet, capType, setCapType, theme, setTheme, openChat: () => setChatOpen(true),
-    setRole, density, setDensity, workerId: me?.id ?? null, setWorkerId, supervisorId, setSupervisorId };
+  const ctx: Ctx = { role, d, go, days, me, session, account, lang, setLang, rate: role === 'owner' ? rate : null, setRate, openSheet: setSheet, capType, setCapType, theme, setTheme, openChat: () => setChatOpen(true),
+    density, setDensity, workerId: account.workerId };
   const compact = role === 'owner' && density === 'compact';
   const safeTab: Tab = tabAllowed(role, tab) ? tab : HOME_TAB[role];
 
@@ -120,6 +139,7 @@ export default function TextileBrain() {
     case 'review': screen = <Review ctx={ctx} />; break;
     case 'people': screen = <People ctx={ctx} />; break;
     case 'access': screen = <Access ctx={ctx} />; break;
+    case 'team': screen = <Team ctx={ctx} />; break;
     case 'floor': screen = <Floor ctx={ctx} />; break;
     case 'allot': screen = <Allot ctx={ctx} />; break;
     case 'capture': screen = <Capture ctx={ctx} />; break;

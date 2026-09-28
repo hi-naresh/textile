@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
-import { actorOf, requireCap, readObject } from '@/lib/apiAuth';
+import { requireCap, readObject } from '@/lib/apiAuth';
 import { isIsoDate } from '@/lib/gst';
 import { createInvoiceForDispatch, listInvoices, recordTallyInvoice } from '@/lib/dispatch/invoices';
 
 // Owner only (₹).
-// GET ?party_id=&status=open|paid|cancelled|overdue&source=app|tally&from=&to=&role=owner
+// GET ?party_id=&status=open|paid|cancelled|overdue&source=app|tally&from=&to=
 //   → { invoices: Invoice[] } newest first; paid/balance = payments applied FIFO per party (oldest invoice first).
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    requireCap(sp.get('role'), 'finance.view');
+    await requireCap(req, 'finance.view');
     const pid = sp.get('party_id') ? Number(sp.get('party_id')) : null;
     if (pid != null && (!Number.isInteger(pid) || pid <= 0)) throw new LedgerError('party_id is not valid.');
     const status = sp.get('status');
@@ -29,16 +29,15 @@ export async function GET(req: NextRequest) {
 }
 
 // POST (owner)
-//   { dispatch_id, rates?: { [lot_id | quality]: ₹/m }, invoice_date?, role, actor } → GST invoice from a dispatch
-//   { source: 'tally', invoice_no, party (name or id), invoice_date, taxable_amount?, total, due_date?, dispatch_id?, role, actor }
+//   { dispatch_id, rates?: { [lot_id | quality]: ₹/m }, invoice_date? } → GST invoice from a dispatch
+//   { source: 'tally', invoice_no, party (name or id), invoice_date, taxable_amount?, total, due_date?, dispatch_id? }
 //     → records an invoice made in Tally (amounts only)
 //   → { invoice, note? }
 export async function POST(req: NextRequest) {
   try {
+    const { by: actor } = await requireCap(req, 'finance.view');
     const b = await readObject(req);
     if (!b || typeof b !== 'object') throw new LedgerError('Send the invoice as JSON.');
-    requireCap(b.role, 'finance.view');
-    const actor = actorOf(b.actor);
     const out = await withTransaction(async (q) => {
       if (b.source === 'tally') return { invoice: await recordTallyInvoice(q, b, actor), note: null };
       const { invoice, note } = await createInvoiceForDispatch(q, Number(b.dispatch_id), { rates: b.rates, invoice_date: b.invoice_date, actor });

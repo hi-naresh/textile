@@ -152,7 +152,7 @@ function ReminderPanel({ ctx, party }: { ctx: Ctx; party: PartyCredit }) {
   const [polish, setPolish] = useState(false);
   const url = `/api/credit/reminder?party_id=${party.party_id}&lang=${lang}${polish ? '&polish=1' : ''}&${who(ctx.role, actorId(ctx.role))}`;
   const { data, error, loading } = useApi<Reminder>(url);
-  const aiOn = ctx.d.status?.ai.state === 'connected';
+  const aiOn = !!ctx.d.status?.aiWriting;
   const copy = async () => {
     if (!data) return;
     try { await navigator.clipboard.writeText(data.text); ctx.d.showToast('Reminder copied'); } catch { ctx.d.showToast('Could not copy — select the text and copy it', 'warning'); }

@@ -5,11 +5,11 @@ import { requireCap } from '@/lib/apiAuth';
 import { rateFor } from '@/lib/pricing';
 import { partyByName } from '@/lib/parties';
 
-// GET ?quality=&party_id=|party=&role=owner → { rate } (₹/m, null when no rate is set)
+// GET ?quality=&party_id=|party= (owner) → { rate } (₹/m, null when no rate is set)
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    requireCap(sp.get('role'), 'orders.manage');
+    await requireCap(req, 'orders.manage');
     const quality = (sp.get('quality') ?? '').trim();
     if (!quality) throw new LedgerError('quality is required.');
     let partyId: number | null = Number(sp.get('party_id')) || null;

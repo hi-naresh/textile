@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
-import { actorOf, requireCap } from '@/lib/apiAuth';
+import { requireCap } from '@/lib/apiAuth';
 import { readBilling } from '@/lib/billing';
 import { isIsoDate } from '@/lib/gst';
 import { listInvoices } from '@/lib/dispatch/invoices';
@@ -10,12 +10,12 @@ import { dbToday, logDoc } from '@/lib/dispatch/common';
 
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-// GET ?format=xlsx|xml&from=YYYY-MM-DD&to=YYYY-MM-DD&role=owner&actor=
+// GET ?format=xlsx|xml&from=YYYY-MM-DD&to=YYYY-MM-DD (owner)
 //   → app-made invoices (not cancelled) in the date range, for Tally. Marks them exported.
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    requireCap(sp.get('role'), 'finance.view');
+    const a = await requireCap(req, 'finance.view');
     const format = sp.get('format') ?? 'xlsx';
     if (format !== 'xlsx' && format !== 'xml') throw new LedgerError('format must be xlsx or xml.');
     for (const k of ['from', 'to']) if (sp.get(k) && !isIsoDate(sp.get(k))) throw new LedgerError(`"${k}" must be a date like 2026-09-28.`);
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
       if (ids.length) await q(`UPDATE invoices SET exported_at = NOW() WHERE id = ANY($1::int[])`, [ids]);
       return { body, count: ids.length };
     });
-    await logDoc(query, 'tally_export', `${format} ${from ?? 'start'}..${to} (${count})`, actorOf(sp.get('actor')));
+    await logDoc(query, 'tally_export', `${format} ${from ?? 'start'}..${to} (${count})`, a.by);
     const name = `tally-sales-${from ?? 'all'}-to-${to}.${format}`;
     return new NextResponse(new Uint8Array(body), {
       headers: {

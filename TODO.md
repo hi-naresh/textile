@@ -131,24 +131,26 @@ Decision: **one copy per firm** (own install + own database). Nothing firm-speci
 
 ---
 
-## 1. Authentication (who is this person?)
-Today there is no login. The role comes from the "Preview as" switch.
-
-- [ ] Login for owner and supervisors (phone/email + password, passwords hashed)
-- [ ] Worker login that works on the shop floor (e.g. short PIN on a shared or personal phone) — *decide*
-- [ ] Secure session cookie (httpOnly, sameSite), logout, session expiry
+## 1. Authentication (who is this person?) — built on branch `auth` (migration 006)
+- [x] Phone number + password for owner / supervisors / workers; email + password for the developer (separate `/dev/login`)
+- [x] Passwords hashed (scrypt); starting password `12345678` only for created/reset accounts, must be changed at first sign-in
+- [x] Server-side sessions (`auth_sessions`): httpOnly + Secure + SameSite cookies, 15-min access token + rotating refresh token, sliding 60-day client / 12-h developer sessions, logout
+- [x] Sign up → pending → owner approves + assigns role (supervisor / worker); rejected numbers may retry 3 times
+- [x] Owner: deactivate / reactivate, change role, reset password, see + end sessions per user (immediate sign-out)
+- [x] "Preview as" removed; developer "View as" (read-only by default, banner, every call logged)
+- [x] Developer console `/dev`: health, connections, AI usage + cost, technical errors, users, audit trail
 - [x] Link `users` to `workers` (`users.worker_id`, migration 004)
-- [ ] Add a password/PIN column to `users` (schema change + migration)
-- [ ] Remove "Preview as" from production (keep for development only)
+- [x] Installable app manifest (home-screen app keeps its sign-in)
+- [ ] OTP (SMS / WhatsApp) — later; passwords only for now
+- [ ] App icons 192 px + 512 px for the Android install prompt (only 180 px exists)
+- [ ] Offline / service worker (not needed for sign-in)
 
 ## 2. Authorization (what may this person see and change?)
-Rules exist in `src/lib/access.ts` but only the screens apply them.
-
-- [ ] Check role + section in every API route (`/api/stock`, `/api/job-cards`, `/api/capture`, `/api/capture/confirm`, `/api/workers`, `/api/chat`)
-- [ ] Filter data on the server by role (supervisor: own sections only; worker: own records only; ₹ values owner only)
-- [ ] Take `confirmed_by` / chat `user_id` from the session, not from the request body (audit trail can be faked today)
-- [ ] Move supervisor → section mapping from code into the database (editable by owner)
-- [ ] Owner screen to add/disable users and assign sections ("Users, roles & sections" in the matrix)
+- [x] Every API route checks the session + capability on the server (`src/lib/apiAuth.ts`); `npm run lint` fails on an unchecked route
+- [x] Take `confirmed_by` / `moved_by` / `captured_by` / chat `user_id` / `created_by` from the session, never the request body
+- [x] Workers get only their own job cards, photos and worker record; no stock / efficiency data
+- [ ] Supervisor section scoping is still applied by the screens for job cards / review queue (chat is scoped on the server) — move to the server
+- [x] Supervisor → section mapping in the database (editable by owner)
 
 ## 3. Security and data safety
 - [x] Chat: no AI-generated SQL any more (fixed templates only)
@@ -157,12 +159,14 @@ Rules exist in `src/lib/access.ts` but only the screens apply them.
 - [x] Fix transactions for stock, job cards and photo confirm (now `withTransaction` in `src/lib/db.ts`)
 - [x] Validate uploads (file type, size limit) on `/api/capture`
 - [ ] Move `DATABASE_URL` / `GEMINI_API_KEY` to proper secrets for production
-- [ ] Rate-limit login and chat endpoints
+- [x] Rate-limit login (5 wrong passwords per phone/email → 15-min pause) and sign up (10 per network per hour)
+- [ ] Rate-limit chat
+- [ ] Local development photos in `public/uploads` are served without sign-in (production uses the private Supabase bucket)
 
 ## 4. Data model gaps
 - [ ] Rates table (₹ per meter by quality/party) — replaces the owner's per-device "average rate"
-- [ ] Record which worker took each photo — `capture_events.captured_by` exists; fill it from the session once workers log in
-- [ ] Record who moved a lot from the session (today `moved_by` comes from the browser)
+- [x] Record which worker took each photo — `capture_events.captured_by` from the session
+- [x] Record who moved a lot from the session
 - [ ] Stop allotting more meters than a lot's balance (today the API allows it)
 - [ ] Shift stored with efficiency records (history currently has no shift)
 
