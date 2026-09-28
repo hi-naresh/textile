@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withTransaction } from '@/lib/db';
 import { LedgerError, errorResponseBody, recordIncoming, recordOutgoing } from '@/lib/ledger';
 import { readImport } from '@/lib/excel';
-import { can, type Role } from '@/lib/access';
+import { requireCap } from '@/lib/apiAuth';
 
-// POST multipart { file: .xlsx (import template), role, moved_by }
+// POST multipart { file: .xlsx (import template) } (owner)
 // All-or-nothing: every row is checked with the same rules as manual entry. If any row fails,
 // nothing is saved and all problems come back as [{ row, error }].
-// TODO(auth): role and actor from the session.
 const MAX_ROWS = 1000;
 
 class RowErrors extends Error {
@@ -16,14 +15,13 @@ class RowErrors extends Error {
 
 export async function POST(req: NextRequest) {
   try {
+    const a = await requireCap(req, 'ledger.edit');
     const fd = await req.formData();
-    const role = String(fd.get('role') ?? '') as Role;
-    if (!can(role, 'ledger.edit')) return NextResponse.json({ error: 'Only the owner can import stock.' }, { status: 403 });
     const file = fd.get('file') as File | null;
     if (!file) return NextResponse.json({ error: 'Choose the Excel file to import.' }, { status: 400 });
     if (!/\.xlsx$/i.test(file.name)) return NextResponse.json({ error: 'Use the .xlsx template (Excel).' }, { status: 400 });
     if (file.size > 3 * 1024 * 1024) return NextResponse.json({ error: 'File is larger than 3 MB.' }, { status: 400 });
-    const movedBy = String(fd.get('moved_by') ?? '').slice(0, 50) || null;
+    const movedBy = a.by;
 
     let rows;
     try {

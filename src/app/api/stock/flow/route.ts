@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requireCap } from '@/lib/apiAuth';
+import { errorResponseBody } from '@/lib/ledger';
 
 // GET /api/stock/flow?range=day|week|month|year|all[&quality=Georgette]
 //   day   → today, by hour        week  → last 7 days, by day
@@ -22,6 +24,7 @@ type Range = keyof typeof RANGES;
 
 export async function GET(req: NextRequest) {
   try {
+    await requireCap(req, 'stock.quantity');
     const sp = req.nextUrl.searchParams;
     const range = (sp.get('range') ?? 'week') as Range;
     if (!(range in RANGES)) return NextResponse.json({ error: 'range must be day, week, month, year or all.' }, { status: 400 });
@@ -63,7 +66,7 @@ export async function GET(req: NextRequest) {
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[stock/flow] failed', error);
-    return NextResponse.json({ error: 'Could not load stock flow.' }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }

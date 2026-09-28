@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readObject } from '@/lib/apiAuth';
+import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
+import { can } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName } from '@/lib/settings';
 
 // GET: active workers + efficiency + CCTV. ?include_inactive=1 also returns deactivated workers (for Settings).
+// A worker gets only their own worker record (no efficiency / CCTV).
 export async function GET(request: NextRequest) {
-  const includeInactive = request.nextUrl.searchParams.get('include_inactive') === '1';
   try {
+    const a = await requireUser(request);
+    if (!can(a.role, 'efficiency.view')) {
+      const own = a.workerId ? await query(`SELECT * FROM workers WHERE id = $1`, [a.workerId]) : { rows: [] };
+      return NextResponse.json({ workers: own.rows, efficiency: [], cctv: [] });
+    }
+    const includeInactive = request.nextUrl.searchParams.get('include_inactive') === '1' && can(a.role, 'users.manage');
     // 1. Fetch workers
     const workersRes = await query(`SELECT * FROM workers ${includeInactive ? '' : 'WHERE active = true'} ORDER BY active DESC, name ASC`);
     
@@ -43,8 +50,8 @@ export async function GET(request: NextRequest) {
       }))
     });
   } catch (error) {
-    console.error('Failed to fetch workers data:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }
 
@@ -55,9 +62,10 @@ async function requireSection(q: (t: string, p?: unknown[]) => Promise<{ rowCoun
   return r.rows[0].name;
 }
 
-// POST: add a worker { name, section }
+// POST (owner): add a worker { name, section }
 export async function POST(request: NextRequest) {
   try {
+    await requireCap(request, 'users.manage');
     const b = await readObject(request);
     const name = cleanName(b.name, 'Worker name');
     const worker = await withTransaction(async (q) => {
@@ -73,9 +81,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH: edit a worker { id, name?, section?, active? }
+// PATCH (owner): edit a worker { id, name?, section?, active? }
 export async function PATCH(request: NextRequest) {
   try {
+    await requireCap(request, 'users.manage');
     const b = await readObject(request);
     const worker = await withTransaction(async (q) => {
       const cur = await q(`SELECT id FROM workers WHERE id = $1 FOR UPDATE`, [String(b.id ?? '')]);

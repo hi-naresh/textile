@@ -1,24 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readObject } from '@/lib/apiAuth';
+import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
 import { withTransaction } from '@/lib/db';
 import { LIMITS } from '@/lib/config';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName, getFirmConfig, invalidateSettings, pct } from '@/lib/settings';
 
-// GET: the firm's configuration (names, sections, supervisors, rules, location presets)
-export async function GET() {
+// GET (any signed-in user): the firm's configuration (names, sections, supervisors, rules, location presets)
+export async function GET(request: NextRequest) {
   try {
+    await requireUser(request);
     return NextResponse.json({ config: await getFirmConfig(true) });
   } catch (error) {
-    console.error('Failed to load settings:', error);
-    return NextResponse.json({ error: 'Could not load settings.' }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }
 
-// PUT: update firm profile, rules and location presets. Send only the fields you change.
+// PUT (owner): update firm profile, rules and location presets. Send only the fields you change.
 // { firm_name?, firm_city?, shortage_limit_pct?, efficiency_target_pct?, ai_auto_confirm_pct?, location_presets? }
 export async function PUT(request: NextRequest) {
   try {
+    await requireCap(request, 'settings.manage');
     const b = await readObject(request);
     const sets: string[] = [];
     const vals: unknown[] = [];

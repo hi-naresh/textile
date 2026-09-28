@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readObject } from '@/lib/apiAuth';
+import { readObject, requireCap } from '@/lib/apiAuth';
 import { withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName, getFirmConfig, invalidateSettings, sectionKey } from '@/lib/settings';
 
-// POST: add a section { name }
+// POST (owner): add a section { name }
 export async function POST(request: NextRequest) {
   try {
+    await requireCap(request, 'settings.manage');
     const b = await readObject(request);
     const name = cleanName(b.name, 'Section name', 60);
     await withTransaction(async (q) => {
@@ -26,6 +27,7 @@ export async function POST(request: NextRequest) {
 // Renaming also updates workers and job cards that use the old name, so history stays grouped.
 export async function PATCH(request: NextRequest) {
   try {
+    await requireCap(request, 'settings.manage');
     const b = await readObject(request);
     const id = Number(b.id);
     await withTransaction(async (q) => {

@@ -5,13 +5,13 @@ import { AGENTS } from '@/lib/agents/registry';
 import { runAgents } from '@/lib/agents/runner';
 import { markAgentsStale } from '@/lib/agents/stale';
 import type { Suggestion } from '@/lib/agents/types';
-import { actorOf, roleOf, readObject } from '@/lib/apiAuth';
+import { readObject, requireUser } from '@/lib/apiAuth';
 
-// GET ?role=owner|supervisor → open alerts + suggested actions (runs the agent scan first if it's stale).
-// Supervisors never see money-related (owner_only) items.
+// GET → open alerts + suggested actions (runs the agent scan first if it's stale).
+// Supervisors never see money-related (owner_only) items; workers get none.
 export async function GET(req: NextRequest) {
   try {
-    const role = roleOf(req.nextUrl.searchParams.get('role'));
+    const { role } = await requireUser(req);
     if (role === 'worker') return NextResponse.json({ suggestions: [] });
     await runAgents(false).catch((e) => console.error('[agents] run failed', e));
     const r = await query(
@@ -27,12 +27,11 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST { id, action: 'accept' | 'reject', role, actor } → act on a suggestion.
+// POST { id, action: 'accept' | 'reject' } → act on a suggestion.
 export async function POST(req: NextRequest) {
   try {
+    const { role, by: actor } = await requireUser(req);
     const b = await readObject(req);
-    const role = roleOf(b.role);
-    const actor = actorOf(b.actor);
     const id = Number(b.id);
     if (!Number.isInteger(id) || id <= 0) throw new LedgerError('A valid suggestion id is required.');
     if (b.action !== 'accept' && b.action !== 'reject') throw new LedgerError('action must be accept or reject.');
