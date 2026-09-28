@@ -10,6 +10,10 @@ import { Access, Overview, People, Stock } from '@/components/screens/Owner';
 import { Allot, AllotForm, JobCards, Review, StockForm, StockImport } from '@/components/screens/Shared';
 import { Floor } from '@/components/screens/Floor';
 import { Capture } from '@/components/screens/Worker';
+import { Orders } from '@/components/screens/Orders';
+import { Dispatch } from '@/components/screens/Dispatch';
+import { Money } from '@/components/screens/Money';
+import { Reports } from '@/components/screens/Reports';
 import { HOME_TAB, can, sectionName, setPreviewSupervisor, tabAllowed, type Role, type Tab } from '@/lib/access';
 import { Settings } from '@/components/screens/Settings';
 import { useTextileData } from '@/lib/useTextileData';
@@ -120,6 +124,10 @@ export default function TextileBrain() {
     case 'allot': screen = <Allot ctx={ctx} />; break;
     case 'capture': screen = <Capture ctx={ctx} />; break;
     case 'settings': screen = <Settings ctx={ctx} />; break;
+    case 'orders': screen = <Orders ctx={ctx} />; break;
+    case 'dispatch': screen = <Dispatch ctx={ctx} />; break;
+    case 'money': screen = <Money ctx={ctx} />; break;
+    case 'reports': screen = <Reports ctx={ctx} />; break;
   }
 
   return (

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName, getFirmConfig, invalidateSettings, sectionKey } from '@/lib/settings';
@@ -6,7 +7,7 @@ import { cleanName, getFirmConfig, invalidateSettings, sectionKey } from '@/lib/
 // POST: add a section { name }
 export async function POST(request: NextRequest) {
   try {
-    const b = await request.json();
+    const b = await readObject(request);
     const name = cleanName(b.name, 'Section name', 60);
     await withTransaction(async (q) => {
       const dup = await q(`SELECT 1 FROM sections WHERE lower(name) = lower($1)`, [name]);
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
 // Renaming also updates workers and job cards that use the old name, so history stays grouped.
 export async function PATCH(request: NextRequest) {
   try {
-    const b = await request.json();
+    const b = await readObject(request);
     const id = Number(b.id);
     await withTransaction(async (q) => {
       const cur = await q(`SELECT name FROM sections WHERE id = $1 FOR UPDATE`, [id]);

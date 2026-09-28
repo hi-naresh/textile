@@ -107,9 +107,18 @@ export type Capability =
   | 'lots.move'
   | 'ledger.edit'
   | 'users.manage'
-  | 'settings.manage';
+  | 'settings.manage'
+  // Phase 2
+  | 'orders.view'
+  | 'orders.manage'
+  | 'orders.allocate'
+  | 'inquiry.handle'
+  | 'dispatch.manage'
+  | 'finance.view'
+  | 'master.manage'
+  | 'reports.view';
 
-type Level = 'Full' | 'Full + override' | 'Via job cards' | 'Section' | 'Section lots' | 'Section crew' | 'Meters only' | 'In + out challans' | 'Job card (cut)' | 'Own cards' | 'Own only' | '—';
+type Level = 'Full' | 'View' | 'Full + override' | 'Via job cards' | 'Section' | 'Section lots' | 'Section crew' | 'Meters only' | 'In + out challans' | 'Job card (cut)' | 'Own cards' | 'Own only' | '—';
 
 export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string; owner: Level; supervisor: Level; worker: Level }[] = [
   { layer: 'Data', cap: 'stock.quantity', label: 'Stock quantities (meters)', owner: 'Full', supervisor: 'Section lots', worker: '—' },
@@ -126,6 +135,14 @@ export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string
   { layer: 'Control', cap: 'ledger.edit', label: 'Manual ledger entries', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'settings.manage', label: 'Firm settings & rules', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'users.manage', label: 'Users, roles & sections', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Data', cap: 'orders.view', label: 'Orders & allocations', owner: 'Full', supervisor: 'Meters only', worker: '—' },
+  { layer: 'Data', cap: 'finance.view', label: 'Invoices, payments, credit, margin (₹)', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Data', cap: 'reports.view', label: 'Reports', owner: 'Full', supervisor: 'Meters only', worker: '—' },
+  { layer: 'Control', cap: 'inquiry.handle', label: 'Log inquiries, draft replies', owner: 'Full', supervisor: 'Full', worker: '—' },
+  { layer: 'Control', cap: 'orders.allocate', label: 'Reserve / release lots for orders', owner: 'Full', supervisor: 'Meters only', worker: '—' },
+  { layer: 'Control', cap: 'orders.manage', label: 'Create orders, set rates', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'dispatch.manage', label: 'Record dispatches, print challans', owner: 'Full', supervisor: 'Full', worker: '—' },
+  { layer: 'Control', cap: 'master.manage', label: 'Parties, rates, costs, billing', owner: 'Full', supervisor: '—', worker: '—' },
 ];
 
 export function can(role: Role, cap: Capability): boolean {
@@ -143,7 +160,8 @@ export function levelTone(level: string): 'good' | 'warn' | 'info' | 'neutral' {
 // ---------- Navigation ----------
 export type Tab =
   | 'overview' | 'stock' | 'jobs' | 'review' | 'capture' | 'people' | 'access' | 'settings'
-  | 'floor' | 'allot';
+  | 'floor' | 'allot'
+  | 'orders' | 'dispatch' | 'money' | 'reports';
 
 export interface NavItem {
   tab: Tab;
@@ -160,6 +178,10 @@ export const NAV: Record<Role, NavItem[]> = {
     { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'Business' },
     { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'Business' },
     { tab: 'capture', label: 'Capture', short: 'Capture', icon: 'camera', group: 'Business' },
+    { tab: 'orders', label: 'Orders & inquiries', short: 'Orders', icon: 'cart', group: 'Sales' },
+    { tab: 'dispatch', label: 'Dispatch & documents', short: 'Dispatch', icon: 'truck', group: 'Sales' },
+    { tab: 'money', label: 'Money', short: 'Money', icon: 'rupee', group: 'Sales' },
+    { tab: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', group: 'Sales' },
     { tab: 'people', label: 'People & CCTV', short: 'People', icon: 'users', group: 'Admin' },
     { tab: 'access', label: 'Access & roles', short: 'Access', icon: 'shield', group: 'Admin' },
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Admin' },
@@ -170,6 +192,8 @@ export const NAV: Record<Role, NavItem[]> = {
     { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'My sections' },
     { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'My sections' },
     { tab: 'allot', label: 'Allot work', short: 'Allot', icon: 'userPlus', group: 'My sections' },
+    { tab: 'orders', label: 'Orders & inquiries', short: 'Orders', icon: 'cart', group: 'Sales' },
+    { tab: 'dispatch', label: 'Dispatch', short: 'Dispatch', icon: 'truck', group: 'Sales' },
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Me' },
   ],
   worker: [

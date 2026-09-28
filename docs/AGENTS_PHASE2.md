@@ -1,6 +1,6 @@
 # Phase 2 — Agents (spec)
 
-Status: **spec only, not built.** Written 27 Sep 2026 after the "Textile Brain — Discussed Changes" review.
+Status: **built 28 Sep 2026** (all nine agents). Written 27 Sep 2026 after the "Textile Brain — Discussed Changes" review. Code: `src/lib/agents/*` (one module per agent), shared helpers in `src/lib/{stock,pricing,billing,parties,orderStatus}.ts`, contracts in `docs/PHASE2_CONTRACTS.md`. Invoices: both — GST invoices made here and invoices recorded from Tally (+ Tally export).
 
 ## Principles (same as Phase 1)
 - **Deterministic code first.** An "agent" is mostly rules + fixed queries. An LLM is used only to understand free text (a WhatsApp inquiry, a question) or to write a draft a person approves.

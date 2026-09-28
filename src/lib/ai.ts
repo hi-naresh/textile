@@ -10,6 +10,7 @@ export interface ExtractedStockData {
   grey_meters?: number; // incoming: raw (grey) meters on the challan
   finished_meters?: number; // incoming: finished meters on the challan
   mill_name?: string; // incoming: mill the material came from
+  purchase_rate?: number; // incoming: ₹/m purchase rate (Pu.Rate), for costing
   weaver_name?: string; // incoming: weaver (may be the same as the mill)
   party?: string; // outgoing only: destination client
   source_doc?: string;
@@ -50,7 +51,7 @@ function ocrMinConfidence() {
 
 function fieldsPrompt(type: CaptureKind) {
   return type === 'incoming_stock'
-    ? '"lot_id" (lot number), "quality" (fabric quality), "design" (design code, if any), "grey_meters" (total grey / raw meters), "finished_meters" (total finished / received meters), "mill_name", "weaver_name" (can be the same as the mill), "source_doc" (challan number). Grey and finished meters are different numbers — never copy one into the other. Do not extract a party for incoming stock.'
+    ? '"lot_id" (lot number), "quality" (fabric quality), "design" (design code, if any), "grey_meters" (total grey / raw meters), "finished_meters" (total finished / received meters), "mill_name", "weaver_name" (can be the same as the mill), "source_doc" (challan number), "purchase_rate" (purchase / Pu.Rate in ₹ per meter, if printed). Grey and finished meters are different numbers — never copy one into the other. Do not extract a party for incoming stock.'
     : type === 'outgoing_stock'
     ? '"lot_id", "meters" (total dispatch meters), "party" (client receiving the goods), "source_doc" (dispatch challan or invoice number).'
     : '"lot_id", "job_card_id" (number, if printed), "meters_out" (total cut / folded / received meters), "worker_id" (if printed).';

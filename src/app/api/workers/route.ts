@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName } from '@/lib/settings';
@@ -57,7 +58,7 @@ async function requireSection(q: (t: string, p?: unknown[]) => Promise<{ rowCoun
 // POST: add a worker { name, section }
 export async function POST(request: NextRequest) {
   try {
-    const b = await request.json();
+    const b = await readObject(request);
     const name = cleanName(b.name, 'Worker name');
     const worker = await withTransaction(async (q) => {
       const section = await requireSection(q, b.section);
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
 // PATCH: edit a worker { id, name?, section?, active? }
 export async function PATCH(request: NextRequest) {
   try {
-    const b = await request.json();
+    const b = await readObject(request);
     const worker = await withTransaction(async (q) => {
       const cur = await q(`SELECT id FROM workers WHERE id = $1 FOR UPDATE`, [String(b.id ?? '')]);
       if (!cur.rowCount) throw new LedgerError('Worker not found.', 404);

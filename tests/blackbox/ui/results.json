@@ -1,0 +1,452 @@
+[
+ {
+  "id": "D1.1",
+  "spec_rule": "R4.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Orders & inquiries > paste \"Need 1500 m Chiffon by next Friday, rate?\", party QA Surat Traders > Read inquiry",
+  "expected": "Chiffon, 1500 m extracted",
+  "actual": "Chiffon, 1500, needed by 2026-10-02",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f1_inquiry_desktop.png"
+ },
+ {
+  "id": "D1.2",
+  "spec_rule": "R4.2",
+  "viewport": "desktop 1280x800",
+  "steps": "Same inquiry, reply draft",
+  "expected": "Draft states free 1,800 m and ₹85/m",
+  "actual": "\"…Chiffon: 1,800 m ready. Rate ₹85/m. We can dispatch by 30 Sep.\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f1_inquiry_desktop.png"
+ },
+ {
+  "id": "D1.3",
+  "spec_rule": "R4.1",
+  "viewport": "desktop 1280x800",
+  "steps": "\"next Friday\" on Mon 28 Sep",
+  "expected": "Spec does not define which Friday",
+  "actual": "2026-10-02",
+  "verdict": "ambiguous",
+  "screenshot": "/root/bb/ui/f1_inquiry_desktop.png"
+ },
+ {
+  "id": "D1.4",
+  "spec_rule": "R4.3/R5.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Won > Create order",
+  "expected": "Order QA Surat Traders, Chiffon, 1,500 m, open",
+  "actual": "Order #4 QA Surat Traders, Chiffon, 1,500 m, Open",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f1_created_desktop.png"
+ },
+ {
+  "id": "D1.5",
+  "spec_rule": "R4.3",
+  "viewport": "desktop 1280x800",
+  "steps": "Reopen converted inquiry",
+  "expected": "No second conversion possible",
+  "actual": "\"Open order #4\" shown, no Create order button",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f1_inquiry_after_convert.png"
+ },
+ {
+  "id": "D2.1",
+  "spec_rule": "R6.1-R6.3",
+  "viewport": "desktop 1280x800",
+  "steps": "Order #4 > Auto-allocate",
+  "expected": "1,500 m reserved, <= order and free 1,800; oldest lot first",
+  "actual": "QA-C1 1,000 m + QA-C2 500 m reserved",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f2_allocated_desktop.png"
+ },
+ {
+  "id": "D3.1",
+  "spec_rule": "R7.1/R5.2/R7.3",
+  "viewport": "desktop 1280x800",
+  "steps": "New dispatch: QA Surat Traders, order #4, QA-C1 1000 m, 3 pkgs, VRL Logistics, LR-7788, GJ05 QA 1234, GST invoice",
+  "expected": "Dispatch listed with transport; order partly_dispatched; QA-C1 reservation consumed",
+  "actual": "DC-1 listed with transport, INV/2026-27/0007; order #4 \"Part sent\", sent 1,000, reserved 500 (QA-C2)",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f3_order_status.png"
+ },
+ {
+  "id": "D3.2",
+  "spec_rule": "R8.2-R8.4/R8.6",
+  "viewport": "desktop 1280x800",
+  "steps": "Invoice PDF (party state 24 = firm 24)",
+  "expected": "Taxable 85,000; CGST 2,125 + SGST 2,125; no IGST; total 89,250; due 28 Oct",
+  "actual": "Exactly as expected",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f3_dispatched_desktop.png"
+ },
+ {
+  "id": "D3.3",
+  "spec_rule": "R11.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Click Challan/Packing/Invoice links",
+  "expected": "PDFs",
+  "actual": "2945/3099/3910 B, %PDF-",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f3_dispatched_desktop.png"
+ },
+ {
+  "id": "D4.1",
+  "spec_rule": "R9.1/R9.3",
+  "viewport": "desktop 1280x800",
+  "steps": "Setup: Tally invoice TLY-QA-1 ₹10,000 (1 Sep) via API. Money > Record payment QA Surat Traders 15000",
+  "expected": "Outstanding 99,250 -> 84,250",
+  "actual": "99,250 -> 84,250",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f4_after_payment.png"
+ },
+ {
+  "id": "D4.2",
+  "spec_rule": "R9.2 FIFO",
+  "viewport": "desktop 1280x800",
+  "steps": "Dispatch > Invoices",
+  "expected": "TLY-QA-1 paid; INV/0007 gets 5,000",
+  "actual": "TLY-QA-1 Paid; INV/0007 paid 5,000, balance 84,250",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f4_invoices_after.png"
+ },
+ {
+  "id": "D4.3",
+  "spec_rule": "R9.2 status",
+  "viewport": "desktop 1280x800",
+  "steps": "Invoice status after partial payment",
+  "expected": "INV/0007 part-paid",
+  "actual": "\"Part paid\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f4_invoices_after.png"
+ },
+ {
+  "id": "D4.4",
+  "spec_rule": "R9.2/R9.3 status",
+  "viewport": "desktop 1280x800",
+  "steps": "Seeded INV/2026-27/0003 (₹30,000 of ₹67,200 paid, past due)",
+  "expected": "Spec lists part-paid and overdue separately; does not say which label wins",
+  "actual": "\"Overdue\"",
+  "verdict": "ambiguous",
+  "screenshot": "/root/bb/ui/inv_status_d.png"
+ },
+ {
+  "id": "DS.1",
+  "spec_rule": "Access rules (supervisor works on orders)/R6.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Preview as Supervisor > Orders > order #3 > Pick a lot myself > DEMO-103, 400 m > Reserve; then 200 m",
+  "expected": "Reservations created; no money shown",
+  "actual": "Reserved 400 m then 200 m (total 600) on DEMO-103; list shows \"1,100 m free\" after first; no ₹",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/s_d_manual_200.png"
+ },
+ {
+  "id": "DS.2",
+  "spec_rule": "R6 (manual reserve beyond order need)",
+  "viewport": "desktop 1280x800",
+  "steps": "Supervisor, order #3 with 400/600 reserved: reserve 300 m more on DEMO-103",
+  "expected": "Spec does not define manual reservation above remaining need (R6.3 covers auto only)",
+  "actual": "Refused: \"Order #3 needs only 200 m more.\" (browser logs the 400 response as a console error)",
+  "verdict": "ambiguous",
+  "screenshot": "/root/bb/ui/s_d_manual_300more.png"
+ },
+ {
+  "id": "D5.1",
+  "spec_rule": "R13.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Home > Needs your attention",
+  "expected": "Suggestions listed",
+  "actual": "10 suggestions incl. allocation, credit, reports, inquiries",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f5_home_all.png"
+ },
+ {
+  "id": "D5.2",
+  "spec_rule": "R13.3 reject",
+  "viewport": "desktop 1280x800",
+  "steps": "Dismiss \"Yesterday's report\" > reload",
+  "expected": "Gone and stays gone",
+  "actual": "Gone after reload",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f5_after_dismiss.png"
+ },
+ {
+  "id": "D5.3",
+  "spec_rule": "R13.3 accept",
+  "viewport": "desktop 1280x800",
+  "steps": "Allocate on \"Allocate 800 m Georgette to order #1\"",
+  "expected": "Order #1 reserved 800 m",
+  "actual": "Order #1 Reserved 800 m (DEMO-102)",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f5_order1.png"
+ },
+ {
+  "id": "D5.4",
+  "spec_rule": "R1.3/R6.1/R5.3",
+  "viewport": "desktop 1280x800",
+  "steps": "After accept: reload home twice; Reports Day/Week/Month",
+  "expected": "No \"0 m reserved\" alert for order #1; Georgette not called short for open orders",
+  "actual": "Order #1 alert gone; Georgette shown only as \"low: 140 m free\" (below 200 m threshold) / report \"Low\", not Short; reports say not enough free stock only in Poly-Crepe",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/post_d_home.png"
+ },
+ {
+  "id": "D5.5",
+  "spec_rule": "R1.3/R6.1",
+  "viewport": "desktop 1280x800",
+  "steps": "After supervisor reserved 600 m for order #3 and owner dispatch on Chiffon",
+  "expected": "No false shortage for Chiffon/Rayon",
+  "actual": "No Chiffon/Rayon shortage alerts; inventory table shows \"(500 reserved)\" / \"(600 reserved)\" OK",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/post_d_report_Day.png"
+ },
+ {
+  "id": "D6.1",
+  "spec_rule": "Access (supervisor)",
+  "viewport": "desktop 1280x800",
+  "steps": "Preview as Supervisor, nav",
+  "expected": "Orders & Dispatch, no Money/Reports",
+  "actual": "As expected",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f6_d_sup_orders.png"
+ },
+ {
+  "id": "D6.2",
+  "spec_rule": "Access/R4.2/R13.4",
+  "viewport": "desktop 1280x800",
+  "steps": "Supervisor: home suggestions, orders list/detail, inquiries, new inquiry, dispatch list/new",
+  "expected": "No ₹/money; draft without rate",
+  "actual": "No ₹; draft \"Namaste, Chiffon: 1,800 m ready. We can dispatch by 30 Sep.\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f6_d_sup_home.png"
+ },
+ {
+  "id": "D6.3",
+  "spec_rule": "Access (worker)/R13.5",
+  "viewport": "desktop 1280x800",
+  "steps": "Preview as Worker",
+  "expected": "No Phase 2 tabs, no suggestions",
+  "actual": "Capture job card + Settings only",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f6_d_wrk_home.png"
+ },
+ {
+  "id": "D7.1",
+  "spec_rule": "R14.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Chat \"how many workers do I have\"",
+  "expected": "1 (People page)",
+  "actual": "\"You have 1 active worker: Suresh Rathod\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f7_chat_d.png"
+ },
+ {
+  "id": "D7.2",
+  "spec_rule": "R14.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Chat \"how many open orders\"",
+  "expected": "4 (Orders \"4 open\")",
+  "actual": "\"4 open orders: #3, #1, #4, #2\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f7_chat_d.png"
+ },
+ {
+  "id": "D0.1",
+  "spec_rule": "R12.1",
+  "viewport": "desktop 1280x800",
+  "steps": "Reports > Day",
+  "expected": "Today in 3,300 / out 2,200 match ledger",
+  "actual": "Received 3,300, dispatched 2,200, stock 3,220 -> 4,320 (desktop and phone)",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/rep_d.png"
+ },
+ {
+  "id": "D0.2",
+  "spec_rule": "UI hygiene",
+  "viewport": "desktop 1280x800",
+  "steps": "All desktop screens",
+  "expected": "No console errors / bad tokens",
+  "actual": "None",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/explore_home.png"
+ },
+ {
+  "id": "M1.1",
+  "spec_rule": "R4.1/R4.2",
+  "viewport": "phone 390x844 touch",
+  "steps": "Paste \"Need 1200 m Chiffon by next Friday, rate?\", party Kolkata Fashion House",
+  "expected": "Chiffon 1200; draft 1,800 m + ₹85/m",
+  "actual": "As expected",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m1_inquiry.png"
+ },
+ {
+  "id": "M1.2",
+  "spec_rule": "R4.3/R5.1",
+  "viewport": "phone 390x844 touch",
+  "steps": "Won > Create order",
+  "expected": "Order Kolkata, Chiffon, 1,200 m",
+  "actual": "Order #5 as expected",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m1_order_created.png"
+ },
+ {
+  "id": "MS.1",
+  "spec_rule": "Access rules (supervisor works on orders)/R6",
+  "viewport": "phone 390x844 touch",
+  "steps": "Preview as Supervisor > Orders > order #5 > Auto-allocate",
+  "expected": "Reservation <= 1,200 m and <= free; no money",
+  "actual": "Reserved 1,200 m from QA-C3; no ₹",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/s_m_sup_order_after.png"
+ },
+ {
+  "id": "M2.2",
+  "spec_rule": "R6.3",
+  "viewport": "phone 390x844 touch",
+  "steps": "Lot choice for order #5 (QA-C2 300 free older, QA-C3 1,500 newer)",
+  "expected": "Spec does not rank \"oldest\" vs \"fewest\"",
+  "actual": "Single lot QA-C3",
+  "verdict": "ambiguous",
+  "screenshot": "/root/bb/ui/s_m_sup_order_after.png"
+ },
+ {
+  "id": "M3.1",
+  "spec_rule": "R7.1/R5.2",
+  "viewport": "phone 390x844 touch",
+  "steps": "New dispatch Kolkata, order #5, QA-C3 1200 m, Gati, LR-9911, invoice",
+  "expected": "Order dispatched",
+  "actual": "DC-2 + INV/2026-27/0008; order #5 \"Dispatched\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m3_orders.png"
+ },
+ {
+  "id": "M3.2",
+  "spec_rule": "R8.3-R8.6",
+  "viewport": "phone 390x844 touch",
+  "steps": "Invoice PDF (state 19 ≠ 24)",
+  "expected": "IGST 5,100 only; total 1,07,100; consecutive no.; due 28 Oct",
+  "actual": "As expected",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m3_dispatched.png"
+ },
+ {
+  "id": "M3.3",
+  "spec_rule": "R11.1",
+  "viewport": "phone 390x844 touch",
+  "steps": "Tap Challan, Invoice",
+  "expected": "PDFs",
+  "actual": "2960/3851 B, %PDF-",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m3_dispatched.png"
+ },
+ {
+  "id": "M4.1",
+  "spec_rule": "R9.1-R9.3",
+  "viewport": "phone 390x844 touch",
+  "steps": "Money > Record payment Kolkata 7100 UPI",
+  "expected": "Outstanding 1,07,100 -> 1,00,000",
+  "actual": "Money 1.07 L -> 1.00 L; invoice paid 7,100 balance 1,00,000",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m4_invoices.png"
+ },
+ {
+  "id": "M4.2",
+  "spec_rule": "R9.2 status",
+  "viewport": "phone 390x844 touch",
+  "steps": "Invoices after partial payment",
+  "expected": "INV/0008 part-paid",
+  "actual": "\"Part paid\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m4_invoices.png"
+ },
+ {
+  "id": "M5.1",
+  "spec_rule": "R13.3 reject",
+  "viewport": "phone 390x844 touch",
+  "steps": "Dismiss \"Last week's report\" > reload",
+  "expected": "Stays gone",
+  "actual": "Gone after reload",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m5_after_dismiss.png"
+ },
+ {
+  "id": "M5.2",
+  "spec_rule": "R13.3 accept",
+  "viewport": "phone 390x844 touch",
+  "steps": "Allocate on \"Allocate 780 m Poly-Crepe to order #2\"",
+  "expected": "Order #2 reserved 780 m",
+  "actual": "Reserved 780 m (DEMO-101), 720 m still needed",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m5_order2.png"
+ },
+ {
+  "id": "M5.5",
+  "spec_rule": "R1.3/R6.1/R5.3",
+  "viewport": "phone 390x844 touch",
+  "steps": "After accept: home + Reports Day/Week/Month",
+  "expected": "Alert reflects 720 m unreserved, 0 free; no \"0 m reserved\" claim",
+  "actual": "\"open orders need 720 m more, only 0 m free\"; \"1,500 m, of which 720 m is not reserved yet … reserved 780 m. Short by 720 m\" — correct",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/post_m_home.png"
+ },
+ {
+  "id": "M6.1",
+  "spec_rule": "Access (supervisor)",
+  "viewport": "phone 390x844 touch",
+  "steps": "Supervisor nav/More",
+  "expected": "Orders & Dispatch only",
+  "actual": "As expected",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f6_m_more.png"
+ },
+ {
+  "id": "M6.2",
+  "spec_rule": "Access/R4.2/R13.4",
+  "viewport": "phone 390x844 touch",
+  "steps": "Supervisor screens",
+  "expected": "No ₹; no rate in draft",
+  "actual": "No ₹; draft \"Chiffon: 600 m ready\"",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f6_m_sup_home.png"
+ },
+ {
+  "id": "M6.3",
+  "spec_rule": "Access (worker)",
+  "viewport": "phone 390x844 touch",
+  "steps": "Preview as Worker",
+  "expected": "No Phase 2 tabs",
+  "actual": "Capture, Settings only",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f6_m_wrk_home.png"
+ },
+ {
+  "id": "M7.1",
+  "spec_rule": "R14.1",
+  "viewport": "phone 390x844 touch",
+  "steps": "Chat icon > workers",
+  "expected": "1",
+  "actual": "1 active worker",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f7_chat_m.png"
+ },
+ {
+  "id": "M7.2",
+  "spec_rule": "R14.1",
+  "viewport": "phone 390x844 touch",
+  "steps": "Chat > open orders",
+  "expected": "4",
+  "actual": "4 open orders",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/f7_chat_m.png"
+ },
+ {
+  "id": "M0.1",
+  "spec_rule": "UI hygiene",
+  "viewport": "phone 390x844 touch",
+  "steps": "All phone screens",
+  "expected": "No console errors, no overflow, no bad tokens",
+  "actual": "None (scrollWidth 390)",
+  "verdict": "pass",
+  "screenshot": "/root/bb/ui/m_home.png"
+ }
+]

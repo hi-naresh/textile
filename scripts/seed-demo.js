@@ -6,6 +6,8 @@
 //   with challans, 2 job cards (one open for the worker to capture) and 3 knowledge notes for chat.
 // - `npm run db:seed-demo -- --history` also adds ~2 years of sample receipts and dispatches across
 //   several qualities (for the stock-flow charts) plus a few of today's movements.
+// - Phase 2 sample data (once): billing/GST details, party details, selling rates, process costs,
+//   purchase rates, a few orders, inquiries, invoices and payments — so the agents have work to show.
 // - Refuses to run against a non-local database unless ALLOW_DEMO_SEED=1 is set
 //   (so demo data never lands in a firm's live database by accident).
 const { Client } = require('pg');
@@ -127,6 +129,7 @@ async function main() {
     }
 
     if (process.argv.includes('--history')) await seedHistory(c);
+    await seedPhase2(c);
 
     for (const k of KNOWLEDGE) {
       await c.query(`INSERT INTO knowledge_docs (title, body) SELECT $1::varchar, $2::text WHERE NOT EXISTS (SELECT 1 FROM knowledge_docs WHERE lower(title) = lower($1::varchar))`, [k.title, k.body]);
@@ -200,6 +203,104 @@ async function seedHistory(c) {
     }
   }
   console.log(`[seed-demo] History: ${n} lots over ${months} months.`);
+}
+
+// ---------- Phase 2 sample data ----------
+const GST_CH = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+function gstin(stateCode, pan) { // valid check digit (mod 36)
+  const s = `${stateCode}${pan}1Z`;
+  let sum = 0;
+  for (let i = 0; i < 14; i++) { const p = GST_CH.indexOf(s[i]) * (i % 2 === 0 ? 1 : 2); sum += Math.floor(p / 36) + (p % 36); }
+  return s + GST_CH[(36 - (sum % 36)) % 36];
+}
+
+async function seedPhase2(c) {
+  const ready = await c.query(`SELECT to_regclass('public.orders') AS t`);
+  if (!ready.rows[0].t) return; // migration 005 not applied yet
+  const done = await c.query(`SELECT 1 FROM inquiries LIMIT 1`);
+  if (done.rowCount) { console.log('[seed-demo] Phase 2 sample data already added.'); return; }
+
+  await c.query(
+    `UPDATE app_settings SET legal_name = COALESCE(legal_name, firm_name || ' Pvt Ltd'), gstin = COALESCE(gstin, $1),
+       address = COALESCE(address, 'Ring Road, Surat 395002, Gujarat'), state_code = COALESCE(state_code, '24'), phone = COALESCE(phone, '9825000000'),
+       bank_name = COALESCE(bank_name, 'HDFC Bank, Ring Road'), bank_account = COALESCE(bank_account, '50200012345678'), bank_ifsc = COALESCE(bank_ifsc, 'HDFC0001234')
+     WHERE id = 1`,
+    [gstin('24', 'AABCN1234F')],
+  );
+  const PARTIES = [
+    ['Shree Balaji Sarees', '24', 'AAFCS5821K', 'Surat', '9825011111', 300000, 30],
+    ['Mumbai Retailers', '27', 'AAGCM4410L', 'Mumbai', '9820022222', 500000, 45],
+    ['Kolkata Fashion House', '19', 'AAHFK7713P', 'Kolkata', '9830033333', 250000, 30],
+    ['Jaipur Prints', '08', 'AAJFJ2290R', 'Jaipur', '9829044444', 200000, 30],
+    ['Delhi Cloth Store', '07', 'AAKFD6632S', 'Delhi', '9810055555', 150000, 21],
+    ['Chennai Silks', '33', 'AALFC1187T', 'Chennai', '9840066666', 400000, 60],
+  ];
+  for (const [name, st, pan, city, phone, limit, days] of PARTIES) {
+    await c.query(`INSERT INTO parties (name) VALUES ($1) ON CONFLICT (name_key) DO NOTHING`, [name]);
+    await c.query(
+      `UPDATE parties SET gstin = COALESCE(gstin, $2), state_code = COALESCE(state_code, $3), city = COALESCE(city, $4), phone = COALESCE(phone, $5),
+         credit_limit = COALESCE(credit_limit, $6), credit_days = $7 WHERE name_key = regexp_replace(lower($1), '[^a-z0-9]', '', 'g')`,
+      [name, gstin(st, pan), st, city, phone, limit, days],
+    );
+  }
+  // Selling rates ₹/m and grey purchase rates ₹/m by quality
+  const RATES = { 'Poly-Crepe': [68, 41], Georgette: [92, 58], 'Rayon Print': [74, 45], Chiffon: [85, 52], Satin: [110, 70], 'DON-2': [21, 13.5] };
+  for (const [q, [sell, buy]] of Object.entries(RATES)) {
+    await c.query(`INSERT INTO rates (quality, rate_per_m, valid_from) VALUES ($1, $2, CURRENT_DATE - 400)`, [q, sell]);
+    await c.query(
+      `UPDATE stock_movements sm SET purchase_rate = $2 FROM lots l
+       WHERE l.lot_id = sm.lot_id AND sm.direction = 'IN' AND sm.purchase_rate IS NULL AND lower(l.quality) = lower($1)`,
+      [q, buy],
+    );
+  }
+  await c.query(`INSERT INTO rates (quality, party_id, rate_per_m, valid_from) SELECT 'Georgette', id, 89, CURRENT_DATE - 60 FROM parties WHERE name = 'Mumbai Retailers'`);
+  const COSTS = { Weaving: 9, Dyeing: 6.5, Printing: 8, Folding: 1.2 };
+  for (const [sec, cost] of Object.entries(COSTS)) {
+    await c.query(`INSERT INTO process_costs (section, cost_per_m, valid_from) SELECT name, $2, CURRENT_DATE - 400 FROM sections WHERE lower(name) = lower($1)`, [sec, cost]);
+  }
+  // Orders (one due tomorrow, one overdue, one comfortable) + inquiries
+  const pid = async (name) => (await c.query(`SELECT id FROM parties WHERE name = $1`, [name])).rows[0].id;
+  const ORDERS = [
+    ['Shree Balaji Sarees', 'Georgette', 800, 92, 1],
+    ['Mumbai Retailers', 'Poly-Crepe', 1500, 68, 6],
+    ['Jaipur Prints', 'Rayon Print', 600, 74, -1],
+  ];
+  for (const [party, quality, meters, rate, due] of ORDERS) {
+    await c.query(`INSERT INTO orders (party_id, quality, meters, rate_per_m, promise_date, created_by) VALUES ($1, $2, $3, $4, CURRENT_DATE + $5::int, 'usr-owner')`, [await pid(party), quality, meters, rate, due]);
+  }
+  await c.query(
+    `INSERT INTO inquiries (party_id, party_name, source, raw_text, quality, meters, target_rate, needed_by, status, created_at) VALUES
+     ($1, 'Kolkata Fashion House', 'whatsapp', 'Need 1200 mtr Chiffon @82 by next week', 'Chiffon', 1200, 82, CURRENT_DATE + 7, 'new', NOW() - interval '30 hours'),
+     ($2, 'Chennai Silks', 'phone', 'सैटिन 500 मीटर चाहिए, रेट बताइए', 'Satin', 500, NULL, NULL, 'quoted', NOW() - interval '3 hours')`,
+    [await pid('Kolkata Fashion House'), await pid('Chennai Silks')],
+  );
+  // Invoices for past months' dispatches (some paid, some overdue) + payments
+  const INV = [
+    ['Mumbai Retailers', 70, 185000, 45], ['Mumbai Retailers', 25, 96000, 45], ['Shree Balaji Sarees', 50, 64000, 30],
+    ['Jaipur Prints', 40, 52000, 30], ['Chennai Silks', 20, 138000, 60], ['Delhi Cloth Store', 35, 41000, 21],
+  ];
+  let n = (await c.query(`SELECT next_invoice_no FROM app_settings WHERE id = 1`)).rows[0].next_invoice_no;
+  for (const [party, daysAgo, taxable, credit] of INV) {
+    const st = (await c.query(`SELECT state_code FROM parties WHERE name = $1`, [party])).rows[0].state_code;
+    const intra = st === '24';
+    const tax = Math.round(taxable * 0.05 * 100) / 100;
+    const total = Math.round(taxable + tax);
+    await c.query(
+      `INSERT INTO invoices (invoice_no, party_id, invoice_date, due_date, taxable_amount, cgst, sgst, igst, total, lines, created_by)
+       VALUES ($1, $2, CURRENT_DATE - $3::int, CURRENT_DATE - $3::int + $4::int, $5, $6, $6, $7, $8, '[]'::jsonb, 'usr-owner')`,
+      [`INV/2026-27/${String(n).padStart(4, '0')}`, await pid(party), daysAgo, credit, taxable, intra ? tax / 2 : 0, intra ? 0 : tax, total],
+    );
+    n++;
+  }
+  await c.query(`UPDATE app_settings SET next_invoice_no = $1 WHERE id = 1`, [n]);
+  const PAY = [['Mumbai Retailers', 194250, 30, 'bank', 'NEFT 88121'], ['Shree Balaji Sarees', 30000, 10, 'upi', 'UPI 4411'], ['Chennai Silks', 144900, 5, 'cheque', 'CHQ 000512']];
+  for (const [party, amount, daysAgo, mode, ref] of PAY) {
+    await c.query(`INSERT INTO payments (party_id, amount, paid_on, mode, reference, created_by) VALUES ($1, $2, CURRENT_DATE - $3::int, $4, $5, 'usr-owner')`, [await pid(party), amount, daysAgo, mode, ref]);
+  }
+  // Payments cover the oldest invoices first (same rule as the app)
+  await c.query(`UPDATE invoices i SET status = 'paid' WHERE status = 'open' AND total <= (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.party_id = i.party_id)
+    - (SELECT COALESCE(SUM(total), 0) FROM invoices o WHERE o.party_id = i.party_id AND o.status <> 'cancelled' AND (o.invoice_date, o.id) < (i.invoice_date, i.id))`);
+  console.log('[seed-demo] Phase 2 sample data added (billing, parties, rates, costs, 3 orders, 2 inquiries, 6 invoices, 3 payments).');
 }
 
 main().catch((e) => {

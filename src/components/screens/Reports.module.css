@@ -1,0 +1,14 @@
+.narr { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.narr li::marker { color: var(--accent); }
+.stat { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line2); }
+.stat:last-child { border-bottom: 0; }
+.stat.total { font-weight: 600; }
+.bar { cursor: default; }
+.bar:hover { background: transparent; }
+.date { height: 38px; min-width: 150px; }
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+@media (max-width: 760px) {
+  .cols { grid-template-columns: minmax(0, 1fr); }
+  .controls { width: 100%; }
+  .controls > * { flex: 1 1 auto; }
+}

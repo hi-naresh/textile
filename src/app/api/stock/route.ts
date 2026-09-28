@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, recordIncoming, recordOutgoing } from '@/lib/ledger';
 
@@ -64,7 +65,9 @@ export async function GET() {
         ...row,
         balance: parseFloat(row.balance)
       })),
-      ledger: ledgerRes.rows.map(row => ({
+      // No ₹ here: this feed is shared with supervisors (purchase rates live in Money / costing).
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ledger: ledgerRes.rows.map(({ purchase_rate: _pr, ...row }) => ({
         ...row,
         meters: parseFloat(row.meters),
         grey_meters: row.grey_meters !== null ? parseFloat(row.grey_meters) : null,
@@ -93,7 +96,7 @@ export async function GET() {
 // OUT: lot_id, meters, party (destination client, required), source_doc
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await readObject(request);
     const direction = body?.direction;
     if (direction !== 'IN' && direction !== 'OUT') {
       return NextResponse.json({ error: 'direction must be IN or OUT.' }, { status: 400 });

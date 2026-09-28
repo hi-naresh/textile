@@ -1,0 +1,3387 @@
+[
+  {
+    "id": "T1",
+    "spec_rule": "R1.1",
+    "description": "IN 1000 m creates lot with balance 1000",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "lot_id": "BBA-8KAP-L1",
+        "grey_meters": 1000,
+        "finished_meters": 1000
+      }
+    },
+    "expected": "balance 1000",
+    "actual": "{\"status\":200,\"balance\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T2",
+    "spec_rule": "R1.1",
+    "description": "OUT 300 → balance 700",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": 300
+      }
+    },
+    "expected": "balance 700",
+    "actual": "{\"status\":200,\"balance\":700}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T3",
+    "spec_rule": "R1.2",
+    "description": "OUT 800 > balance 700 refused, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": 800
+      }
+    },
+    "expected": "4xx, balance 700",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Insufficient stock. Lot BBA-8KAP-L1 has 700 m, dispatch asks for 800 m.\"},\"balance\":700}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T4",
+    "spec_rule": "R1.2",
+    "description": "OUT 700.01 (just over balance) refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": 700.01
+      }
+    },
+    "expected": "4xx, balance 700",
+    "actual": "{\"status\":400,\"balance\":700}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T5",
+    "spec_rule": "R1.1",
+    "description": "OUT 0.5 fractional → balance 699.5",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": 0.5
+      }
+    },
+    "expected": "balance 699.5",
+    "actual": "{\"status\":200,\"balance\":699.5}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T6",
+    "spec_rule": "R1.1",
+    "description": "Second IN 300.5 on same lot → balance 1000",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "lot_id": "BBA-8KAP-L1",
+        "grey_meters": 300.5,
+        "finished_meters": 300.5
+      }
+    },
+    "expected": "balance 1000",
+    "actual": "{\"status\":200,\"balance\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T7",
+    "spec_rule": "R1.2",
+    "description": "OUT meters=0 refused with 4xx, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": 0
+      }
+    },
+    "expected": "4xx, balance 1000",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"},\"balance\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T8",
+    "spec_rule": "R1.2",
+    "description": "OUT meters=-50 refused with 4xx, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": -50
+      }
+    },
+    "expected": "4xx, balance 1000",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"},\"balance\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T9",
+    "spec_rule": "R1.2",
+    "description": "OUT meters=\"abc\" refused with 4xx, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": "abc"
+      }
+    },
+    "expected": "4xx, balance 1000",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"},\"balance\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T10",
+    "spec_rule": "R1.2",
+    "description": "OUT meters=null refused with 4xx, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": null
+      }
+    },
+    "expected": "4xx, balance 1000",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters are required.\"},\"balance\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T11",
+    "spec_rule": "R1.2",
+    "description": "OUT meters=\"1e999\" refused with 4xx, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": "1e999"
+      }
+    },
+    "expected": "4xx, balance 1000",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"},\"balance\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T12",
+    "spec_rule": "R1.2",
+    "description": "IN grey/finished meters=0 refused with 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "lot_id": "BBA-8KAP-LBAD11",
+        "grey_meters": 0,
+        "finished_meters": 0
+      }
+    },
+    "expected": "4xx, lot not created",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Grey meters must be a positive number.\"},\"balance\":null}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T13",
+    "spec_rule": "R1.2",
+    "description": "IN grey/finished meters=-10 refused with 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "lot_id": "BBA-8KAP-LBAD12",
+        "grey_meters": -10,
+        "finished_meters": -10
+      }
+    },
+    "expected": "4xx, lot not created",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Grey meters must be a positive number.\"},\"balance\":null}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T14",
+    "spec_rule": "R1.2",
+    "description": "IN grey/finished meters=\"xyz\" refused with 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "lot_id": "BBA-8KAP-LBAD13",
+        "grey_meters": "xyz",
+        "finished_meters": "xyz"
+      }
+    },
+    "expected": "4xx, lot not created",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Grey meters must be a positive number.\"},\"balance\":null}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T15",
+    "spec_rule": "Access/bad-input",
+    "description": "IN meters=1e300 must not 500",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "lot_id": "BBA-8KAP-HUGE",
+        "grey_meters": 1e+300,
+        "finished_meters": 1e+300
+      }
+    },
+    "expected": "not 500 (4xx preferred)",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Grey meters looks too large (1e+300). Check the number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T16",
+    "spec_rule": "R1.2",
+    "description": "OUT on unknown lot → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-NOPE",
+        "meters": 10
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Lot BBA-8KAP-NOPE does not exist.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T17",
+    "spec_rule": "Access/bad-input",
+    "description": "IN missing lot_id → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "quality": "BBA-8KAP-Q1",
+        "grey_meters": 10
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Lot number is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T18",
+    "spec_rule": "Access/bad-input",
+    "description": "Unknown direction → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "SIDEWAYS",
+        "lot_id": "BBA-8KAP-L1",
+        "meters": 10
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"direction must be IN or OUT.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T19",
+    "spec_rule": "Access/bad-input",
+    "description": "Malformed JSON body → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": "{not json"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"The request body is not valid JSON.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T20",
+    "spec_rule": "Access/bad-input",
+    "description": "SQL-ish lot_id does not 500 and stock listing still works",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "IN",
+        "lot_id": "BBA-8KAP-x'; DROP TABLE stock_movements;--"
+      }
+    },
+    "expected": "not 500; GET /api/stock 200",
+    "actual": "{\"status\":400,\"list\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T21",
+    "spec_rule": "Access",
+    "description": "Worker OUT movement (stock not listed in worker-refused set)",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "role": "worker"
+      }
+    },
+    "expected": "spec silent",
+    "actual": "{\"status\":200}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T22",
+    "spec_rule": "R2.1",
+    "description": "Duplicate party name (lowercase + spaces) refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "  bba-8kap-p1  "
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":409,\"body\":{\"error\":\"A party named \\\"BBA-8KAP-P1\\\" already exists. Edit that one instead.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T23",
+    "spec_rule": "R2.1",
+    "description": "Duplicate party name (uppercase) refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-P1"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":409,\"body\":{\"error\":\"A party named \\\"BBA-8KAP-P1\\\" already exists. Edit that one instead.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T24",
+    "spec_rule": "R2.2",
+    "description": "Valid GSTIN 24AAACB7646C1Z1 accepted",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-G1",
+        "gstin": "24AAACB7646C1Z1"
+      }
+    },
+    "expected": "2xx",
+    "actual": "{\"status\":200,\"body\":{\"party\":{\"id\":10,\"name\":\"BBA-8KAP-G1\",\"phone\":null,\"gstin\":\"24AAACB7646C1Z1\",\"address\":null,\"city\":null,\"state_code\":\"24\",\"credit_limit\":null,\"credit_days\":30,\"active\":true}}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T25",
+    "spec_rule": "R2.2",
+    "description": "GSTIN with wrong check char refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-G2",
+        "gstin": "24AAACB7646C1ZA"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"GSTIN \\\"24AAACB7646C1ZA\\\" is not valid — the last character does not match. Check for a typo.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T26",
+    "spec_rule": "R2.2",
+    "description": "Invalid GSTIN \"12345\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-G?",
+        "gstin": "12345"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"GSTIN \\\"12345\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T27",
+    "spec_rule": "R2.2",
+    "description": "Invalid GSTIN \"24AAACB1234C1Z\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-G?",
+        "gstin": "24AAACB1234C1Z"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"GSTIN \\\"24AAACB1234C1Z\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T28",
+    "spec_rule": "R2.2",
+    "description": "Invalid GSTIN \"24AAACB1234C1X1\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-G?",
+        "gstin": "24AAACB1234C1X1"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"GSTIN \\\"24AAACB1234C1X1\\\" is not valid — the last character does not match. Check for a typo.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T29",
+    "spec_rule": "R2.2",
+    "description": "Invalid GSTIN \"AAAAACB1234C1Z5\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-G?",
+        "gstin": "AAAAACB1234C1Z5"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"GSTIN \\\"AAAAACB1234C1Z5\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T30",
+    "spec_rule": "R2.2",
+    "description": "Invalid GSTIN \"24'; DROP TABLE parties;--\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-G?",
+        "gstin": "24'; DROP TABLE parties;--"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"GSTIN \\\"24';DROPTABLEPARTIES;--\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T31",
+    "spec_rule": "R2.3",
+    "description": "credit_days defaults to 30",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-CD"
+      }
+    },
+    "expected": "credit_days 30",
+    "actual": "{\"party\":{\"id\":11,\"name\":\"BBA-8KAP-CD\",\"phone\":null,\"gstin\":null,\"address\":null,\"city\":null,\"state_code\":null,\"credit_limit\":null,\"credit_days\":30,\"active\":true}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T32",
+    "spec_rule": "R2.3",
+    "description": "credit_days 45 / credit_limit 50000 stored",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": "BBA-8KAP-CD45",
+        "credit_days": 45,
+        "credit_limit": 50000
+      }
+    },
+    "expected": "45 / 50000",
+    "actual": "{\"party\":{\"id\":12,\"name\":\"BBA-8KAP-CD45\",\"phone\":null,\"gstin\":null,\"address\":null,\"city\":null,\"state_code\":null,\"credit_limit\":50000,\"credit_days\":45,\"active\":true}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T33",
+    "spec_rule": "Access/bad-input",
+    "description": "Empty party name refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "name": ""
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Party name is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T34",
+    "spec_rule": "R2.1",
+    "description": "PATCH rename to existing name (case/space variant) refused",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/parties/8",
+      "body": {
+        "name": " bba-8kap-p1"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":409,\"body\":{\"error\":\"A party named \\\"BBA-8KAP-P1\\\" already exists. Edit that one instead.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T35",
+    "spec_rule": "R2.2",
+    "description": "PATCH invalid GSTIN refused",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/parties/8",
+      "body": {
+        "gstin": "99INVALID"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"GSTIN \\\"99INVALID\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T36",
+    "spec_rule": "Access/bad-input",
+    "description": "PATCH unknown party id → 4xx",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/parties/99999999"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404,\"body\":{\"error\":\"Party not found.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T37",
+    "spec_rule": "Access/bad-input",
+    "description": "PATCH non-numeric party id → 4xx",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/parties/abc"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"A valid party is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T38",
+    "spec_rule": "Access/bad-input",
+    "description": "credit_days=\"abc\" must not 500",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": {
+        "credit_days": "abc"
+      }
+    },
+    "expected": "not 500",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Credit days must be a whole number from 0 to 365.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T39",
+    "spec_rule": "Access",
+    "description": "Supervisor GET /api/parties has no credit limit / money",
+    "request": {
+      "method": "GET",
+      "url": "/api/parties?role=supervisor"
+    },
+    "expected": "no money fields",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T40",
+    "spec_rule": "R3.2",
+    "description": "Rate for party w/o specific rate → latest valid general (110, not future 999)",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-QR&party=BBA-8KAP-P2"
+    },
+    "expected": "110",
+    "actual": "{\"rate\":110}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T41",
+    "spec_rule": "R3.2",
+    "description": "Party-specific rate (90, from Feb) beats later general 110; future 95 ignored",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-QR&party_id=7"
+    },
+    "expected": "90",
+    "actual": "{\"rate\":90}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T42",
+    "spec_rule": "R3.2",
+    "description": "Same lookup by party name",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-QR&party=BBA-8KAP-P1"
+    },
+    "expected": "90",
+    "actual": "{\"rate\":90}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T43",
+    "spec_rule": "R3.2",
+    "description": "Party with only future-dated specific rate falls back to general 110",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-QR&party_id=9"
+    },
+    "expected": "110",
+    "actual": "{\"rate\":110}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T44",
+    "spec_rule": "R3.2",
+    "description": "No party → general 110",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-QR"
+    },
+    "expected": "110",
+    "actual": "{\"rate\":110}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T45",
+    "spec_rule": "R3.2",
+    "description": "Quality with no rate → no rate",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-NORATE"
+    },
+    "expected": "null/absent rate",
+    "actual": "{\"status\":200,\"body\":{\"rate\":null}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T46",
+    "spec_rule": "Access/bad-input",
+    "description": "rate_per_m=-5 refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/rates",
+      "body": {
+        "quality": "BBA-8KAP-QR",
+        "rate_per_m": -5
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Rate ₹/m must be more than 0.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T47",
+    "spec_rule": "Access/bad-input",
+    "description": "rate_per_m=0 refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/rates",
+      "body": {
+        "quality": "BBA-8KAP-QR",
+        "rate_per_m": 0
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Rate ₹/m must be more than 0.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T48",
+    "spec_rule": "Access/bad-input",
+    "description": "rate_per_m=\"abc\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/rates",
+      "body": {
+        "quality": "BBA-8KAP-QR",
+        "rate_per_m": "abc"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Rate ₹/m must be more than 0.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T49",
+    "spec_rule": "Access/bad-input",
+    "description": "valid_from=\"not-a-date\" refused, not 500",
+    "request": {
+      "method": "POST",
+      "url": "/api/rates",
+      "body": {
+        "valid_from": "not-a-date"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Valid from must be a date like 2026-09-28.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T50",
+    "spec_rule": "Access/bad-input",
+    "description": "Rate for unknown party_id → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/rates",
+      "body": {
+        "party_id": 99999999
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404,\"body\":{\"error\":\"Party not found.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T51",
+    "spec_rule": "Access",
+    "description": "Supervisor POST /api/rates → 403",
+    "request": {
+      "method": "POST",
+      "url": "/api/rates",
+      "body": {
+        "role": "supervisor"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T52",
+    "spec_rule": "Access",
+    "description": "Supervisor GET /api/rates → 403",
+    "request": {
+      "method": "GET",
+      "url": "/api/rates?role=supervisor"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T53",
+    "spec_rule": "Access",
+    "description": "Supervisor rate lookup gives no ₹ value",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-QR&role=supervisor"
+    },
+    "expected": "403 or no rate",
+    "actual": "{\"status\":403,\"body\":{\"error\":\"You are not allowed to do this.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T54",
+    "spec_rule": "Access",
+    "description": "Worker rate lookup refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/rate?quality=BBA-8KAP-QR&role=worker"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403,\"body\":{\"error\":\"You are not allowed to do this.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T55",
+    "spec_rule": "Access",
+    "description": "Worker GET /api/rates → 403",
+    "request": {
+      "method": "GET",
+      "url": "/api/rates?role=worker"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T56",
+    "spec_rule": "Access",
+    "description": "Missing role GET /api/rates → 403 (treated as worker)",
+    "request": {
+      "method": "GET",
+      "url": "/api/rates"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T57",
+    "spec_rule": "Access",
+    "description": "GET /api/orders?role=worker  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders?role=worker"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T58",
+    "spec_rule": "Access",
+    "description": "GET /api/orders  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T59",
+    "spec_rule": "Access",
+    "description": "GET /api/orders?role=hacker  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders?role=hacker"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T60",
+    "spec_rule": "Access",
+    "description": "GET /api/inquiries?role=worker  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/inquiries?role=worker"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T61",
+    "spec_rule": "Access",
+    "description": "GET /api/dispatches?role=worker  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/dispatches?role=worker"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T62",
+    "spec_rule": "Access",
+    "description": "POST /api/orders role=worker refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "party": "BBA-8KAP-P1",
+        "quality": "X",
+        "meters": 1,
+        "rate_per_m": 1,
+        "promise_date": "2026-12-01",
+        "role": "worker",
+        "actor": "usr-demo-wrk"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T63",
+    "spec_rule": "Access",
+    "description": "POST /api/inquiries role=worker refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "raw_text": "need 5 m X",
+        "role": "worker",
+        "actor": "usr-demo-wrk"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T64",
+    "spec_rule": "Access",
+    "description": "POST /api/dispatches role=worker refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBA-8KAP-P1",
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-L1",
+            "meters": 1
+          }
+        ],
+        "role": "worker",
+        "actor": "usr-demo-wrk"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T65",
+    "spec_rule": "Access",
+    "description": "POST /api/dispatches role=none refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBA-8KAP-P1",
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-L1",
+            "meters": 1
+          }
+        ]
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T66",
+    "spec_rule": "Access",
+    "description": "GET /api/invoices?role=supervisor  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/invoices?role=supervisor"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T67",
+    "spec_rule": "Access",
+    "description": "GET /api/payments?role=supervisor  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/payments?role=supervisor"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T68",
+    "spec_rule": "Access",
+    "description": "GET /api/costs?role=supervisor  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/costs?role=supervisor"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T69",
+    "spec_rule": "Access",
+    "description": "GET /api/margin?role=supervisor  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/margin?role=supervisor"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T70",
+    "spec_rule": "Access",
+    "description": "GET /api/credit?role=supervisor  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/credit?role=supervisor"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T71",
+    "spec_rule": "Access",
+    "description": "GET /api/settings/billing?role=supervisor  refused",
+    "request": {
+      "method": "GET",
+      "url": "/api/settings/billing?role=supervisor"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T72",
+    "spec_rule": "R6.3",
+    "description": "Auto-allocate 300 m with two 500 m lots → oldest lot A1 only, total 300",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "auto": true
+      }
+    },
+    "expected": "one allocation on BBA-8KAP-A1 of 300",
+    "actual": "{\"status\":200,\"alloc\":[[\"BBA-8KAP-A1\",300]]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T73",
+    "spec_rule": "R1.3",
+    "description": "Free of A1 = 500 − 300 reserved = 200",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/4/candidates"
+    },
+    "expected": "200",
+    "actual": "{\"free\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T74",
+    "spec_rule": "R6.3",
+    "description": "Second auto-allocate on fully allocated order reserves nothing more",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "auto": true
+      }
+    },
+    "expected": "total reserved stays 300",
+    "actual": "{\"status\":200,\"total\":300}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T75",
+    "spec_rule": "R6.4",
+    "description": "Release allocation → A1 free back to 500",
+    "request": {
+      "method": "POST",
+      "url": "/api/allocations/1/release"
+    },
+    "expected": "free 500",
+    "actual": "{\"status\":200,\"free\":500}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T76",
+    "spec_rule": "R6.4",
+    "description": "Releasing same allocation twice does not inflate free (≤ balance)",
+    "request": {
+      "method": "POST",
+      "url": "/api/allocations/1/release"
+    },
+    "expected": "free stays 500",
+    "actual": "{\"status\":400,\"free\":500}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T77",
+    "spec_rule": "Access/bad-input",
+    "description": "Release unknown allocation → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/allocations/99999999/release"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404,\"body\":{\"error\":\"Allocation not found.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T78",
+    "spec_rule": "R6.1/R1.3",
+    "description": "Manual allocate 100 from A2 → A2 free 400",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-A2",
+        "meters": 100
+      }
+    },
+    "expected": "free 400",
+    "actual": "{\"status\":200,\"free\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T79",
+    "spec_rule": "R6.1",
+    "description": "Allocate lot of different quality refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-L1",
+        "meters": 10
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Lot BBA-8KAP-L1 is BBA-8KAP-Q1, but the order is for BBA-8KAP-QA.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T80",
+    "spec_rule": "Access/bad-input",
+    "description": "Allocate meters=0 refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-A2",
+        "meters": 0
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T81",
+    "spec_rule": "Access/bad-input",
+    "description": "Allocate meters=-20 refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-A2",
+        "meters": -20
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T82",
+    "spec_rule": "Access/bad-input",
+    "description": "Allocate meters=\"abc\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-A2",
+        "meters": "abc"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T83",
+    "spec_rule": "Access/bad-input",
+    "description": "Allocate meters=null refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-A2",
+        "meters": null
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T84",
+    "spec_rule": "Access/bad-input",
+    "description": "Allocate unknown lot → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "lot_id": "unknown"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T85",
+    "spec_rule": "Access/bad-input",
+    "description": "Allocate on unknown order → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/99999999/allocate"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T86",
+    "spec_rule": "Access/bad-input",
+    "description": "Allocate on non-numeric order id → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/abc/allocate"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T87",
+    "spec_rule": "R6.2",
+    "description": "Allocate 450 from A2 when only 400 free (other order holds 100) → refused or capped; reserved ≤ balance",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/5/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-A2",
+        "meters": 450
+      }
+    },
+    "expected": "4xx (or capped) and free ≥ 0",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Only 400 m of lot BBA-8KAP-A2 is free (500 m in stock, 100 m already reserved).\"},\"free\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T88",
+    "spec_rule": "Access",
+    "description": "Worker allocate → 403",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "role": "worker"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T89",
+    "spec_rule": "Access",
+    "description": "Supervisor allocate allowed and response has no money",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/4/allocate",
+      "body": {
+        "auto": true,
+        "role": "supervisor"
+      }
+    },
+    "expected": "2xx, no ₹ fields",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T90",
+    "spec_rule": "R6.5/R5.1",
+    "description": "Cancel order → status cancelled, reservation released (free 150 → 400)",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/orders/6",
+      "body": {
+        "status": "cancelled"
+      }
+    },
+    "expected": "status cancelled; free 150→400",
+    "actual": "{\"status\":200,\"before\":150,\"after\":400,\"orderStatus\":\"cancelled\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T91",
+    "spec_rule": "R6.2",
+    "description": "5 parallel manual allocations of 300 on a 1000 m lot → total reserved ≤ 1000",
+    "request": {
+      "method": "POST ×5 parallel",
+      "url": "/api/orders/<id>/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-X1",
+        "meters": 300
+      }
+    },
+    "expected": "reserved ≤ 1000 (≤3 succeed), no 500",
+    "actual": "{\"statuses\":[200,200,400,400,200],\"reserved\":900}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T92",
+    "spec_rule": "R1.3",
+    "description": "Free after concurrent allocations = 1000 − reserved, never negative",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/8/candidates"
+    },
+    "expected": "free = 100, ≥0",
+    "actual": "{\"free\":100,\"reserved\":900}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T93",
+    "spec_rule": "R6.2",
+    "description": "5 parallel AUTO allocations (400 each) on a 1000 m lot → total reserved ≤ 1000",
+    "request": {
+      "method": "POST ×5 parallel",
+      "url": "/api/orders/<id>/allocate",
+      "body": {
+        "auto": true
+      }
+    },
+    "expected": "reserved ≤ 1000, no 500",
+    "actual": "{\"statuses\":[200,200,200,200,200],\"reserved\":1000}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T94",
+    "spec_rule": "R6.2",
+    "description": "5 parallel allocations of 40 m by the same order on a 100 m lot → reserved ≤ 100",
+    "request": {
+      "method": "POST ×5 parallel",
+      "url": "/api/orders/18/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-Z1",
+        "meters": 40
+      }
+    },
+    "expected": "reserved ≤ 100",
+    "actual": "{\"statuses\":[400,200,400,400,200],\"reserved\":80}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T95",
+    "spec_rule": "R6.3",
+    "description": "Auto-alloc never reserves more than order needs (500)",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/19/allocate",
+      "body": {
+        "auto": true
+      }
+    },
+    "expected": "total ≤ 500 and =500 (stock suffices)",
+    "actual": "[[\"BBA-8KAP-F3\",500]]",
+    "verdict": "pass"
+  },
+  {
+    "id": "T96",
+    "spec_rule": "R6.3",
+    "description": "Oldest (100+100+300 over 3 lots) vs fewest (500 from newest lot) conflict — precedence unspecified",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/19/allocate",
+      "body": {
+        "auto": true
+      }
+    },
+    "expected": "unspecified",
+    "actual": "[[\"BBA-8KAP-F3\",500]]",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T97",
+    "spec_rule": "R6.3",
+    "description": "Manual allocation of 500 on 100 m order (R6.3 only covers auto)",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/20/allocate",
+      "body": {
+        "lot_id": "BBA-8KAP-M1",
+        "meters": 500
+      }
+    },
+    "expected": "unspecified",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Order #20 needs only 100 m more.\"}}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T98",
+    "spec_rule": "R5.1",
+    "description": "Create order with meters 0 refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "meters": 0
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T99",
+    "spec_rule": "R5.1",
+    "description": "Create order with meters -5 refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "meters": -5
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T100",
+    "spec_rule": "R5.1",
+    "description": "Create order with meters \"abc\" refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "meters": "abc"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T101",
+    "spec_rule": "R5.1",
+    "description": "Create order with meters missing refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {}
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T102",
+    "spec_rule": "R5.1",
+    "description": "Create order with huge meters 1e400 string refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "meters": "1e400"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T103",
+    "spec_rule": "R5.1",
+    "description": "Create order without party refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "quality": "BBA-8KAP-QO",
+        "meters": 10
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Party is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T104",
+    "spec_rule": "R5.1",
+    "description": "Create order for unknown party_id refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "party_id": 99999999
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404,\"body\":{\"error\":\"Party not found.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T105",
+    "spec_rule": "R5.1",
+    "description": "Create order without quality refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "party": "BBA-8KAP-P1",
+        "meters": 10
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Quality is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T106",
+    "spec_rule": "Access/bad-input",
+    "description": "Create order with invalid promise_date not 500",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "promise_date": "31/31/2026"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Promise date must be a date (YYYY-MM-DD).\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T107",
+    "spec_rule": "Access/bad-input",
+    "description": "Create order with negative rate refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "rate_per_m": -3
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Rate must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T108",
+    "spec_rule": "Access/bad-input",
+    "description": "GET unknown order → 404",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/99999999"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T109",
+    "spec_rule": "Access/bad-input",
+    "description": "GET order with SQL-ish id → 4xx",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/1' OR 1=1--"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T110",
+    "spec_rule": "R5.1",
+    "description": "PATCH order meters -10 refused",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/orders/21",
+      "body": {
+        "meters": -10
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Meters must be a positive number.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T111",
+    "spec_rule": "R5.1",
+    "description": "PATCH order status \"banana\" refused",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/orders/21",
+      "body": {
+        "status": "banana"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Status changes by itself from dispatches. You can only cancel an order.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T112",
+    "spec_rule": "Access",
+    "description": "Supervisor GET /api/orders: 200 with no rate/money",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders?role=supervisor"
+    },
+    "expected": "200, no ₹ fields",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T113",
+    "spec_rule": "Access",
+    "description": "Supervisor GET /api/orders/<id>: no rate/money",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/21?role=supervisor"
+    },
+    "expected": "200, no ₹ fields",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T114",
+    "spec_rule": "Access",
+    "description": "Supervisor POST /api/orders response has no rate",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": {
+        "role": "supervisor",
+        "rate_per_m": 123
+      }
+    },
+    "expected": "no ₹ fields in response",
+    "actual": "{\"status\":403,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T115",
+    "spec_rule": "Access",
+    "description": "Supervisor PATCH order response has no rate",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/orders/21",
+      "body": {
+        "role": "supervisor"
+      }
+    },
+    "expected": "no ₹ fields",
+    "actual": "{\"status\":403,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T116",
+    "spec_rule": "Access",
+    "description": "Worker GET candidates → 403",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/21/candidates?role=worker"
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T117",
+    "spec_rule": "R7.1",
+    "description": "Two-line dispatch drops balances by exactly 100 and 50",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBA-8KAP-P1",
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": 100
+          },
+          {
+            "lot_id": "BBA-8KAP-D2",
+            "meters": 50
+          }
+        ]
+      }
+    },
+    "expected": "D1 400, D2 150",
+    "actual": "{\"status\":201,\"b1\":400,\"b2\":150}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T118",
+    "spec_rule": "R7.1",
+    "description": "Transport details stored (transporter, LR, vehicle, packages)",
+    "request": {
+      "method": "GET",
+      "url": "/api/dispatches/1"
+    },
+    "expected": "BBA Roadways / LR-77 / GJ05AB1234 / 7",
+    "actual": "{\"transporter\":\"BBA Roadways\",\"lr\":\"LR-77\",\"veh\":\"GJ05AB1234\",\"pk\":7}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T119",
+    "spec_rule": "R7.2",
+    "description": "Line 2 exceeds balance → refused, line 1 not recorded (all-or-nothing)",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": 100
+          },
+          {
+            "lot_id": "BBA-8KAP-D2",
+            "meters": 151
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D1 400, D2 150; dispatch count unchanged",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Insufficient stock. Lot BBA-8KAP-D2 has 150 m, dispatch asks for 151 m.\"},\"b1\":400,\"b2\":150}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T120",
+    "spec_rule": "R7.2",
+    "description": "Same lot twice (100+100 > 150) refused, nothing recorded",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D2",
+            "meters": 100
+          },
+          {
+            "lot_id": "BBA-8KAP-D2",
+            "meters": 100
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D2 stays 150",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Insufficient stock. Lot BBA-8KAP-D2 has 50 m, dispatch asks for 100 m.\"},\"b2\":150}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T121",
+    "spec_rule": "R7.2",
+    "description": "Line with unknown lot → refused, first line not recorded",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": 10
+          },
+          {
+            "lot_id": "unknown",
+            "meters": 5
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D1 stays 400",
+    "actual": "{\"status\":400,\"b1\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T122",
+    "spec_rule": "R1.2",
+    "description": "Dispatch line meters=0 refused, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": 0
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D1 400",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Line 1 meters must be a positive number.\"},\"b1\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T123",
+    "spec_rule": "R1.2",
+    "description": "Dispatch line meters=-10 refused, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": -10
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D1 400",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Line 1 meters must be a positive number.\"},\"b1\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T124",
+    "spec_rule": "R1.2",
+    "description": "Dispatch line meters=\"abc\" refused, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": "abc"
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D1 400",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Line 1 meters must be a positive number.\"},\"b1\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T125",
+    "spec_rule": "R1.2",
+    "description": "Dispatch line meters=null refused, balance unchanged",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": null
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D1 400",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Line 1: meters are required.\"},\"b1\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T126",
+    "spec_rule": "R7.2",
+    "description": "Mixed valid + negative line refused, nothing recorded",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": 10
+          },
+          {
+            "lot_id": "BBA-8KAP-D2",
+            "meters": -10
+          }
+        ]
+      }
+    },
+    "expected": "4xx; D1 400, D2 150",
+    "actual": "{\"status\":400,\"b1\":400,\"b2\":150}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T127",
+    "spec_rule": "Access/bad-input",
+    "description": "Dispatch with empty lines refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": []
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Add at least one lot with meters.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T128",
+    "spec_rule": "Access/bad-input",
+    "description": "Dispatch with lines=\"nope\" refused (no 500)",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": "nope"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Add at least one lot with meters.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T129",
+    "spec_rule": "Access/bad-input",
+    "description": "Dispatch without party refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-D1",
+            "meters": 1
+          }
+        ]
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Party (the client receiving the goods) is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T130",
+    "spec_rule": "Access/bad-input",
+    "description": "Dispatch against unknown order_id refused, nothing recorded",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "order_id": 99999999
+      }
+    },
+    "expected": "4xx; D1 400",
+    "actual": "{\"status\":404,\"body\":{\"error\":\"Order #99999999 not found.\"},\"b1\":400}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T131",
+    "spec_rule": "Access/bad-input",
+    "description": "GET unknown dispatch → 4xx",
+    "request": {
+      "method": "GET",
+      "url": "/api/dispatches/99999999"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T132",
+    "spec_rule": "R7.1",
+    "description": "Dispatch to a party name that does not exist",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBA-8KAP-GHOST-PARTY"
+      }
+    },
+    "expected": "unspecified (4xx or auto-create)",
+    "actual": "{\"status\":201,\"body\":\"ok\"}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T133",
+    "spec_rule": "R5.2/R7.3",
+    "description": "Dispatch 100 of 300 → order partly_dispatched",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "order_id": 22,
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-E1",
+            "meters": 100
+          }
+        ]
+      }
+    },
+    "expected": "partly_dispatched",
+    "actual": "{\"status\":201,\"orderStatus\":\"partly_dispatched\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T134",
+    "spec_rule": "R7.3/R1.3",
+    "description": "Reservation consumed: balance 400, remaining reserved 200 → free 200",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/22/candidates"
+    },
+    "expected": "free 200",
+    "actual": "{\"free\":200,\"balance\":400,\"order_reserved_m\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T135",
+    "spec_rule": "R5.2",
+    "description": "Dispatch remaining 200 → order dispatched",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "order_id": 22,
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-E1",
+            "meters": 200
+          }
+        ]
+      }
+    },
+    "expected": "dispatched",
+    "actual": "{\"status\":201,\"orderStatus\":\"dispatched\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T136",
+    "spec_rule": "R7.3/R1.3",
+    "description": "After full dispatch, no reservation remains: free = balance 200",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/23/candidates"
+    },
+    "expected": "free 200",
+    "actual": "{\"free\":200,\"balance\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T137",
+    "spec_rule": "R5.2",
+    "description": "Dispatch 60 against 50 m order (no allocation) → dispatched",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "order_id": 24,
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-E1",
+            "meters": 60
+          }
+        ]
+      }
+    },
+    "expected": "dispatched",
+    "actual": "{\"status\":201,\"orderStatus\":\"dispatched\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T138",
+    "spec_rule": "R7.2/R1.2",
+    "description": "5 parallel dispatches of 30 m on 100 m lot → ≤3 succeed, balance = 100 − 30×successes ≥ 0",
+    "request": {
+      "method": "POST ×5 parallel",
+      "url": "/api/dispatches",
+      "body": {
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-K1",
+            "meters": 30
+          }
+        ]
+      }
+    },
+    "expected": "balance ≥ 0 and consistent, no 500",
+    "actual": "{\"statuses\":[201,400,201,201,400],\"balance\":10}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T139",
+    "spec_rule": "R1.2",
+    "description": "5 parallel stock OUTs of 30 m on 100 m lot → balance never negative",
+    "request": {
+      "method": "POST ×5 parallel",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-K2",
+        "meters": 30
+      }
+    },
+    "expected": "balance ≥ 0 and =100−30×successes",
+    "actual": "{\"statuses\":[200,400,200,200,400],\"balance\":10}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T140",
+    "spec_rule": "Access",
+    "description": "Supervisor can dispatch; response has no money",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "role": "supervisor"
+      }
+    },
+    "expected": "2xx, no ₹",
+    "actual": "{\"status\":201,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T141",
+    "spec_rule": "Access",
+    "description": "Supervisor GET /api/dispatches: no money",
+    "request": {
+      "method": "GET",
+      "url": "/api/dispatches?role=supervisor"
+    },
+    "expected": "200, no ₹",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T142",
+    "spec_rule": "Access",
+    "description": "Supervisor dispatch with create_invoice:true must not create an invoice / return money",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "create_invoice": true,
+        "role": "supervisor"
+      }
+    },
+    "expected": "403, or no invoice created and no ₹",
+    "actual": "{\"status\":403,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T143",
+    "spec_rule": "R6.2/R7.2",
+    "description": "Dispatch 50 m (no order) from a lot fully reserved for another order",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBA-8KAP-P2",
+        "lines": [
+          {
+            "lot_id": "BBA-8KAP-W1",
+            "meters": 50
+          }
+        ]
+      }
+    },
+    "expected": "unspecified; but R6.2 requires reserved ≤ balance afterwards",
+    "actual": "{\"status\":409,\"free\":0,\"balance\":100}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T144",
+    "spec_rule": "R7.3",
+    "description": "Plain stock OUT (no order_id, party = order party) on reserved lot — does it touch the order?",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-W2",
+        "meters": 60,
+        "party": "BBA-8KAP-P1"
+      }
+    },
+    "expected": "unspecified (not a dispatch against the order)",
+    "actual": "{\"orderStatus\":\"partly_dispatched\",\"order_reserved_m\":40}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T145",
+    "spec_rule": "R6.2",
+    "description": "After stock OUT 60 on a lot with 100 reserved, reserved must be ≤ balance (free ≥ 0)",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBA-8KAP-W2",
+        "meters": 60
+      }
+    },
+    "expected": "refused, or balance − reserved ≥ 0",
+    "actual": "{\"status\":200,\"balance_minus_reserved\":0,\"balance\":40}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T146",
+    "spec_rule": "R4.1",
+    "description": "English text: extracts quality, meters 2000, needed_by the 10th",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "raw_text": "need 2000 m BBA-8KAP-DON2 by 10th, rate?"
+      }
+    },
+    "expected": "quality BBA-8KAP-DON2, meters 2000, needed_by YYYY-MM-10",
+    "actual": "{\"quality\":\"BBA-8KAP-DON2\",\"meters\":2000,\"needed_by\":\"2026-10-10\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T147",
+    "spec_rule": "R4.2",
+    "description": "Owner draft states available 1500 m and includes rate 88",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries"
+    },
+    "expected": "reply mentions 1500 and 88",
+    "actual": "{\"reply\":\"Namaste BBA-8KAP-P1, BBA-8KAP-DON2: 1,500 m ready now (you need 2,000 m). The other 500 m after the next receipt. Rate ₹88/m.\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T148",
+    "spec_rule": "R4.2",
+    "description": "Supervisor view of inquiry has no rate",
+    "request": {
+      "method": "GET",
+      "url": "/api/inquiries/3?role=supervisor"
+    },
+    "expected": "no 88 / no rate fields",
+    "actual": "{\"status\":200,\"leaks\":[],\"reply\":\"Namaste BBA-8KAP-P1, BBA-8KAP-DON2: 1,500 m ready now (you need 2,000 m). The other 500 m after the next receipt.\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T149",
+    "spec_rule": "R4.2",
+    "description": "Supervisor inquiry list has no rates",
+    "request": {
+      "method": "GET",
+      "url": "/api/inquiries?role=supervisor"
+    },
+    "expected": "no rate fields",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T150",
+    "spec_rule": "R4.2",
+    "description": "Supervisor-created inquiry response & draft contain no rate",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "role": "supervisor"
+      }
+    },
+    "expected": "no rate",
+    "actual": "{\"status\":200,\"leaks\":[],\"reply\":\"Namaste BBA-8KAP-P2, BBA-8KAP-DON2: 1,500 m ready. We can dispatch by 30 Sep.\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T151",
+    "spec_rule": "R4.1",
+    "description": "Hindi text: meters 500 and quality extracted",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "raw_text": "मुझे 500 मीटर BBA-8KAP-DON2 चाहिए"
+      }
+    },
+    "expected": "meters 500, quality BBA-8KAP-DON2",
+    "actual": "{\"status\":200,\"meters\":500,\"quality\":\"BBA-8KAP-DON2\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T152",
+    "spec_rule": "R4.1",
+    "description": "Gujarati text: meters 700 and quality extracted",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "raw_text": "BBA-8KAP-DON2 700 મીટર જોઈએ"
+      }
+    },
+    "expected": "meters 700, quality BBA-8KAP-DON2",
+    "actual": "{\"status\":200,\"meters\":700,\"quality\":\"BBA-8KAP-DON2\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T153",
+    "spec_rule": "Access/bad-input",
+    "description": "Empty raw_text refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "raw_text": ""
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Paste or type the inquiry first.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T154",
+    "spec_rule": "Access/bad-input",
+    "description": "SQL-ish raw_text stored without 500",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "raw_text": "'; DELETE FROM inquiries; --"
+      }
+    },
+    "expected": "not 500",
+    "actual": "{\"status\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T155",
+    "spec_rule": "Access/bad-input",
+    "description": "GET unknown inquiry → 4xx",
+    "request": {
+      "method": "GET",
+      "url": "/api/inquiries/99999999"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T156",
+    "spec_rule": "R4.3",
+    "description": "PATCH inquiry status \"banana\" refused",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/inquiries/3",
+      "body": {
+        "status": "banana"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Status must be new, quoted, won or lost.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T157",
+    "spec_rule": "R4.3",
+    "description": "Convert an inquiry still in status \"new\"",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries/3/convert"
+    },
+    "expected": "unspecified",
+    "actual": "{\"status\":200,\"body\":27}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T158",
+    "spec_rule": "R4.3",
+    "description": "new → quoted",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/inquiries/8",
+      "body": {
+        "status": "quoted"
+      }
+    },
+    "expected": "status quoted",
+    "actual": "{\"status\":200,\"s\":\"quoted\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T159",
+    "spec_rule": "R4.3",
+    "description": "quoted → won",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/inquiries/8",
+      "body": {
+        "status": "won"
+      }
+    },
+    "expected": "status won",
+    "actual": "{\"status\":200,\"s\":\"won\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T160",
+    "spec_rule": "R4.3",
+    "description": "Won inquiry converted (3 parallel convert calls) → exactly one order with party, quality, 400 m",
+    "request": {
+      "method": "POST ×3 parallel",
+      "url": "/api/inquiries/8/convert"
+    },
+    "expected": "1 order, party BBA-8KAP-P3, meters 400",
+    "actual": "{\"statuses\":[200,400,400],\"orders\":[[28,\"BBA-8KAP-P3\",400]]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T161",
+    "spec_rule": "R4.3",
+    "description": "Converting again (sequential) does not create a second order",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries/8/convert"
+    },
+    "expected": "still 1 order",
+    "actual": "{\"status\":400,\"count\":1}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T162",
+    "spec_rule": "Access/bad-input",
+    "description": "Convert unknown inquiry → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries/99999999/convert"
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T163",
+    "spec_rule": "R4.3",
+    "description": "quoted → lost",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/inquiries/9",
+      "body": {
+        "status": "lost"
+      }
+    },
+    "expected": "lost",
+    "actual": "{\"status\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T164",
+    "spec_rule": "R4.3",
+    "description": "Convert a LOST inquiry",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries/9/convert"
+    },
+    "expected": "unspecified (only won is said to convert)",
+    "actual": "{\"status\":400,\"body\":\"This inquiry is marked lost. Change its status first.\"}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T165",
+    "spec_rule": "R4.1",
+    "description": "Text with no quality/meters",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": {
+        "raw_text": "hello, any stock?"
+      }
+    },
+    "expected": "stored; nothing extracted",
+    "actual": "{\"status\":200,\"q\":null,\"m\":null}",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T166",
+    "spec_rule": "R5.3",
+    "description": "Order due tomorrow with 0 allocated (stock available) raises suggestion targeting it",
+    "request": {
+      "method": "GET",
+      "url": "/api/agents/suggestions?role=owner"
+    },
+    "expected": "≥1 suggestion for order 29",
+    "actual": "[[6,\"allocate_order\",\"Allocate 300 m BBA-8KAP-QU to order #29 (BBA-8KAP-P1)?\",\"Allocate\"],[3,\"order_due\",\"Order #29 for BBA-8KAP-P1 due tomorrow — 300 m not ready\",null]]",
+    "verdict": "pass"
+  },
+  {
+    "id": "T167",
+    "spec_rule": "R13.2",
+    "description": "Running scan 3× produces no duplicate open suggestion (same agent/kind/target)",
+    "request": {
+      "method": "POST ×2 /api/agents/run then GET",
+      "url": "/api/agents/suggestions?role=owner"
+    },
+    "expected": "no duplicates",
+    "actual": "[]",
+    "verdict": "pass"
+  },
+  {
+    "id": "T168",
+    "spec_rule": "R13.3",
+    "description": "Accept allocation suggestion creates reservation (300 m for order)",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 6,
+        "action": "accept"
+      }
+    },
+    "expected": "order reserved 300",
+    "actual": "{\"status\":200,\"reserved\":300,\"sugg\":\"Allocate 300 m BBA-8KAP-QU to order #29 (BBA-8KAP-P1)?\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T169",
+    "spec_rule": "R13.3/R6.3",
+    "description": "Accepting the same suggestion again does not double-reserve",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 6,
+        "action": "accept"
+      }
+    },
+    "expected": "reserved stays 300",
+    "actual": "{\"status\":400,\"reserved\":300}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T170",
+    "spec_rule": "R13.3",
+    "description": "Rejected suggestion does not reappear after re-scan",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 131,
+        "action": "reject"
+      }
+    },
+    "expected": "not in list after rescan",
+    "actual": "{\"status\":200,\"back\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T171",
+    "spec_rule": "Access/bad-input",
+    "description": "Accept unknown suggestion id → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 99999999,
+        "action": "accept"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":404,\"body\":{\"error\":\"Suggestion not found.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T172",
+    "spec_rule": "Access/bad-input",
+    "description": "Invalid suggestion action → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "action": "explode"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"action must be accept or reject.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T173",
+    "spec_rule": "Access/bad-input",
+    "description": "Missing suggestion id → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "action": "accept"
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"A valid suggestion id is required.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T174",
+    "spec_rule": "R13.4",
+    "description": "Supervisor suggestions contain no money-related items / ₹ values",
+    "request": {
+      "method": "GET",
+      "url": "/api/agents/suggestions?role=supervisor"
+    },
+    "expected": "no owner_only items, no ₹",
+    "actual": "{\"count\":31,\"leaks\":[],\"ownerOnly\":0,\"agents\":[\"inventory\",\"orders\",\"allocation\",\"reports\",\"inquiry\"]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T175",
+    "spec_rule": "R13.4",
+    "description": "Supervisor cannot act on an owner-only (money) suggestion",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 34,
+        "action": "reject",
+        "role": "supervisor"
+      }
+    },
+    "expected": "403/4xx",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T176",
+    "spec_rule": "R13.5",
+    "description": "Worker sees no suggestions",
+    "request": {
+      "method": "GET",
+      "url": "/api/agents/suggestions?role=worker"
+    },
+    "expected": "403 or empty list",
+    "actual": "{\"status\":200,\"n\":0}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T177",
+    "spec_rule": "R13.5",
+    "description": "No role (=worker) sees no suggestions",
+    "request": {
+      "method": "GET",
+      "url": "/api/agents/suggestions"
+    },
+    "expected": "403 or empty",
+    "actual": "{\"status\":200,\"n\":0}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T178",
+    "spec_rule": "R13.5",
+    "description": "Worker cannot accept/reject suggestions",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "role": "worker",
+        "action": "reject"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T179",
+    "spec_rule": "Access",
+    "description": "Worker cannot force agent scan",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/run",
+      "body": {
+        "role": "worker"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T180",
+    "spec_rule": "R14.1",
+    "description": "\"how many workers do I have\" = active workers from /api/workers (1)",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {
+        "question": "how many workers do I have"
+      }
+    },
+    "expected": "1",
+    "actual": "You have 1 active worker: Suresh Rathod (Folding).",
+    "verdict": "pass"
+  },
+  {
+    "id": "T181",
+    "spec_rule": "R14.1",
+    "description": "\"how many supervisors\" — no API lists supervisors; SPEC demo users imply 1",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {
+        "question": "how many supervisors"
+      }
+    },
+    "expected": "1 (demo users) — unverifiable",
+    "actual": "You have 1 supervisor: Ramesh Patel (Folding).",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T182",
+    "spec_rule": "R14.1",
+    "description": "\"how many open orders\" = count of status open from /api/orders (26; open+partly=27)",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {
+        "question": "how many open orders"
+      }
+    },
+    "expected": "26",
+    "actual": "27 open orders.",
+    "verdict": "ambiguous"
+  },
+  {
+    "id": "T183",
+    "spec_rule": "R14.1",
+    "description": "Owner \"outstanding amount\" = Σ invoice totals − Σ payments (235650)",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {
+        "question": "what is the total outstanding amount"
+      }
+    },
+    "expected": "235650",
+    "actual": "{\"answer\":\"Outstanding: ₹2,35,650.\",\"invoices\":6,\"payments\":3}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T184",
+    "spec_rule": "R14.2",
+    "description": "Supervisor money question → no ₹ figure",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {
+        "question": "what is the total outstanding amount",
+        "role": "supervisor"
+      }
+    },
+    "expected": "no ₹ and no outstanding number",
+    "actual": "{\"status\":200,\"body\":\"{\\\"success\\\":true,\\\"answer\\\":\\\"That figure is only available to the owner.\\\",\\\"rows\\\":[],\\\"route\\\":\\\"query\\\",\\\"spec\\\":{\\\"metric\\\":\\\"outstanding\\\",\\\"groupBy\\\":null,\\\"filters\\\":{},\\\"period\\\":null,\\\"top\\\":null},\\\"via\\\":\\\"rules\\\",\\\"lang\\\":\\\"en\\\"}\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T185",
+    "spec_rule": "R14.2",
+    "description": "Supervisor rate question → no ₹ figure",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {
+        "question": "what rate do we charge for Georgette",
+        "role": "supervisor"
+      }
+    },
+    "expected": "no ₹",
+    "actual": "{\"status\":200,\"body\":\"{\\\"success\\\":true,\\\"answer\\\":\\\"From “Shortage policy”: Folding shortage above the firm limit (Settings → Rules) is checked by the section supervisor the same day. Repeat shortage on the same worker for 3 days is reported to the owner.\\\",\\\"rows\\\":[],\\\"route\\\":\\\"\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T186",
+    "spec_rule": "Access/bad-input",
+    "description": "Empty chat question → 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {
+        "question": ""
+      }
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Type a question.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "T187",
+    "spec_rule": "Access/bad-input",
+    "description": "Missing chat question → 4xx (not 500)",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": {}
+    },
+    "expected": "4xx",
+    "actual": "{\"status\":400,\"body\":{\"error\":\"Type a question.\"}}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N1",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/stock with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N2",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/parties with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/parties",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N3",
+    "spec_rule": "Access/bad-input",
+    "description": "PATCH /api/parties/14 with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/parties/14",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N4",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/rates with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/rates",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N5",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/costs with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/costs",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N6",
+    "spec_rule": "Access/bad-input",
+    "description": "PUT /api/settings/billing with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "PUT",
+      "url": "/api/settings/billing",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N7",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/inquiries with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N8",
+    "spec_rule": "Access/bad-input",
+    "description": "PATCH /api/inquiries/11 with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/inquiries/11",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N9",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/inquiries/11/convert with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/inquiries/11/convert",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N10",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/orders with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N11",
+    "spec_rule": "Access/bad-input",
+    "description": "PATCH /api/orders/31 with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/orders/31",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N12",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/orders/31/allocate with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/31/allocate",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N13",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/allocations/17/release with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/allocations/17/release",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N14",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/dispatches with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N15",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/invoices with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/invoices",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N16",
+    "spec_rule": "Access/bad-input",
+    "description": "PATCH /api/invoices/1 with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/invoices/1",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N17",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/payments with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/payments",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N18",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/agents/suggestions with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N19",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/agents/run with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/run",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N20",
+    "spec_rule": "Access/bad-input",
+    "description": "POST /api/chat with bodies {bad json | empty | [] | null | \"str\" | [{role:owner}] → all 4xx",
+    "request": {
+      "method": "POST",
+      "url": "/api/chat",
+      "body": "6 malformed variants"
+    },
+    "expected": "all 4xx, no 500",
+    "actual": "{\"statuses\":[400,400,400,400,400,400]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N21",
+    "spec_rule": "R6.4",
+    "description": "Garbage bodies on release/PATCH did not release or change the allocation",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/31"
+    },
+    "expected": "reserved 5, order meters 10",
+    "actual": "{\"reserved\":5,\"meters\":10}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N22",
+    "spec_rule": "R6.2",
+    "description": "Dispatch without order (party P2) from lot fully reserved for P1 order",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBN-8NSI-P2",
+        "lines": [
+          {
+            "lot_id": "BBN-8NSI-R1",
+            "meters": 50
+          }
+        ]
+      }
+    },
+    "expected": "reserved ≤ balance afterwards (refuse or reduce reservation)",
+    "actual": "{\"balance\":100,\"reserved\":100,\"status\":409,\"err\":\"Lot BBN-8NSI-R1: only 0 m can go — 100 m is reserved for order #32. Release it first or dispatch against that order.\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N23",
+    "spec_rule": "R6.2",
+    "description": "Dispatch for another party's order from lot fully reserved for P1 order",
+    "request": {
+      "method": "POST",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBN-8NSI-P2",
+        "order_id": 34,
+        "lines": [
+          {
+            "lot_id": "BBN-8NSI-R2",
+            "meters": 60
+          }
+        ]
+      }
+    },
+    "expected": "reserved ≤ balance afterwards (refuse or reduce reservation)",
+    "actual": "{\"balance\":100,\"reserved\":100,\"status\":409,\"err\":\"Lot BBN-8NSI-R2: only 0 m can go — 100 m is reserved for order #33. Release it first or dispatch against that order.\"}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N24",
+    "spec_rule": "R6.2",
+    "description": "Plain /api/stock OUT 70 (party P3) on lot fully reserved for P1 order",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBN-8NSI-R3",
+        "meters": 70,
+        "party": "BBN-8NSI-P3"
+      }
+    },
+    "expected": "reserved ≤ balance afterwards (refuse or reduce reservation)",
+    "actual": "{\"balance\":30,\"reserved\":30,\"status\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N25",
+    "spec_rule": "R6.2",
+    "description": "Partial: lot 100 with 60 reserved, plain OUT 50 (exceeds free 40)",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBN-8NSI-R4",
+        "meters": 50,
+        "party": "BBN-8NSI-P3"
+      }
+    },
+    "expected": "reserved ≤ balance afterwards (refuse or reduce reservation)",
+    "actual": "{\"balance\":50,\"reserved\":50,\"status\":200}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N26",
+    "spec_rule": "R1.2/R6.2",
+    "description": "OUT 40 within free 40 (lot 100, 60 reserved) allowed; reservation intact",
+    "request": {
+      "method": "POST",
+      "url": "/api/stock",
+      "body": {
+        "direction": "OUT",
+        "lot_id": "BBN-8NSI-R5",
+        "meters": 40,
+        "party": "BBN-8NSI-P3"
+      }
+    },
+    "expected": "2xx, balance 60, reserved 60",
+    "actual": "{\"status\":200,\"balance\":60,\"reserved\":60}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N27",
+    "spec_rule": "R6.2",
+    "description": "3 parallel non-order dispatches of 40 on lot 100 with 50 reserved",
+    "request": {
+      "method": "POST ×3 parallel",
+      "url": "/api/dispatches",
+      "body": {
+        "party": "BBN-8NSI-P3",
+        "lines": [
+          {
+            "lot_id": "BBN-8NSI-R6",
+            "meters": 40
+          }
+        ]
+      }
+    },
+    "expected": "reserved ≤ balance afterwards (refuse or reduce reservation)",
+    "actual": "{\"balance\":20,\"reserved\":20,\"statuses\":[201,400,201]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N28",
+    "spec_rule": "Access/R6.1",
+    "description": "Supervisor manual allocate 80 → 2xx, no ₹ in response",
+    "request": {
+      "method": "POST",
+      "url": "/api/orders/39/allocate",
+      "body": {
+        "lot_id": "BBN-8NSI-S1",
+        "meters": 80,
+        "role": "supervisor"
+      }
+    },
+    "expected": "2xx, no money",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N29",
+    "spec_rule": "Access",
+    "description": "Worker release allocation → 403",
+    "request": {
+      "method": "POST",
+      "url": "/api/allocations/24/release",
+      "body": {
+        "role": "worker"
+      }
+    },
+    "expected": "403",
+    "actual": "{\"status\":403}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N30",
+    "spec_rule": "Access/R6.4",
+    "description": "Supervisor release → 2xx, reservation gone, no ₹ in response",
+    "request": {
+      "method": "POST",
+      "url": "/api/allocations/24/release",
+      "body": {
+        "role": "supervisor"
+      }
+    },
+    "expected": "2xx, reserved 0, no money",
+    "actual": "{\"status\":200,\"reserved\":0,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N31",
+    "spec_rule": "Access",
+    "description": "Supervisor candidates list has no money",
+    "request": {
+      "method": "GET",
+      "url": "/api/orders/39/candidates?role=supervisor"
+    },
+    "expected": "200, no money",
+    "actual": "{\"status\":200,\"leaks\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N32",
+    "spec_rule": "R13.1/R5.3",
+    "description": "With ≥55 other alerts, order due tomorrow (0 allocated, 500 m free) has an actionable suggestion in the listing",
+    "request": {
+      "method": "GET",
+      "url": "/api/agents/suggestions?role=owner"
+    },
+    "expected": "suggestion for order with action_label",
+    "actual": "{\"total\":127,\"forOrder\":[[\"allocate_order\",\"Allocate\",\"Allocate 300 m BBN-8NSI-QT to order #80 (BBN-8NSI-P1)?\"],[\"order_due\",null,\"Order #80 for BBN-8NSI-P1 due tomorrow — 300 m not ready\"]]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N33",
+    "spec_rule": "R13.3",
+    "description": "Accepting it reserves 300 m for the order",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 182,
+        "action": "accept"
+      }
+    },
+    "expected": "reserved 300",
+    "actual": "{\"status\":200,\"reserved\":300}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N34",
+    "spec_rule": "R13.1",
+    "description": "Right after fully allocating the order, listing no longer claims 0 m reserved / offers allocation",
+    "request": {
+      "method": "GET",
+      "url": "/api/agents/suggestions?role=owner (after allocate)"
+    },
+    "expected": "no stale \"0 m reserved\"/allocate suggestion for order",
+    "actual": "{\"before\":[\"Allocate 300 m BBN-8NSI-QF to order #81 (BBN-8NSI-P1)?\",\"Order #81 for BBN-8NSI-P1 due tomorrow — 300 m not ready\"],\"after\":[]}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N35",
+    "spec_rule": "R13.1",
+    "description": "After forced re-scan, no stale 0-reserved alert for the allocated order",
+    "request": {
+      "method": "POST /api/agents/run then GET",
+      "url": "/api/agents/suggestions"
+    },
+    "expected": "none",
+    "actual": "[]",
+    "verdict": "pass"
+  },
+  {
+    "id": "N36",
+    "spec_rule": "R6.3/R13.3",
+    "description": "Accepting an allocate suggestion after the order was manually fully allocated does not over-reserve",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 658,
+        "action": "accept"
+      }
+    },
+    "expected": "reserved stays 300",
+    "actual": "{\"status\":400,\"reserved\":300}",
+    "verdict": "pass"
+  },
+  {
+    "id": "N37",
+    "spec_rule": "R13.3",
+    "description": "Rejected order suggestion not back after re-scan",
+    "request": {
+      "method": "POST",
+      "url": "/api/agents/suggestions",
+      "body": {
+        "id": 778,
+        "action": "reject"
+      }
+    },
+    "expected": "absent",
+    "actual": "[]",
+    "verdict": "pass"
+  },
+  {
+    "id": "N38",
+    "spec_rule": "R13.4",
+    "description": "Supervisor suggestion list (with many items) has no money",
+    "request": {
+      "method": "GET",
+      "url": "/api/agents/suggestions?role=supervisor"
+    },
+    "expected": "no ₹, no owner_only",
+    "actual": "{\"n\":122,\"leaks\":[]}",
+    "verdict": "pass"
+  }
+]

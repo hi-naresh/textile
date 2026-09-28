@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { withTransaction } from '@/lib/db';
 import { LIMITS } from '@/lib/config';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
@@ -18,7 +19,7 @@ export async function GET() {
 // { firm_name?, firm_city?, shortage_limit_pct?, efficiency_target_pct?, ai_auto_confirm_pct?, location_presets? }
 export async function PUT(request: NextRequest) {
   try {
-    const b = await request.json();
+    const b = await readObject(request);
     const sets: string[] = [];
     const vals: unknown[] = [];
     const add = (col: string, v: unknown) => { vals.push(v); sets.push(`${col} = $${vals.length}`); };

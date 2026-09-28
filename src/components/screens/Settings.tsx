@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Icon from '../Icon';
 import { PageHead, Pill, Segmented } from '../ui';
 import type { KnowledgeDoc } from '@/lib/useTextileData';
+import { MasterData } from './MasterData';
 import type { Ctx } from '../ctx';
 import { LIMITS } from '@/lib/config';
 import { ROLE_LABEL, activeSupervisors, sectionName, type Role } from '@/lib/access';
@@ -197,6 +198,11 @@ function OwnerSettings({ ctx }: { ctx: Ctx }) {
         </section>
 
         <Knowledge ctx={ctx} />
+      </div>
+
+      <MasterData ctx={ctx} />
+
+      <div className="settings-grid">
 
         {/* Sections */}
         <section className="card pad stack-16">

@@ -95,7 +95,7 @@ export function parseCuttingReport(lines: string[], ocrConfidence: number, type:
   let data: ParsedRead['data'];
   let required: (string | number | null)[];
   if (type === 'incoming_stock') {
-    data = { lot_id: lotNo, quality, design: null, grey_meters: grey, finished_meters: rec, mill_name: mill, weaver_name: weaver, source_doc: chlnNo ?? billNo };
+    data = { lot_id: lotNo, quality, design: null, grey_meters: grey, finished_meters: rec, mill_name: mill, weaver_name: weaver, source_doc: chlnNo ?? billNo, purchase_rate: puRate };
     required = [lotNo, grey, mill];
   } else if (type === 'job_card_folding') {
     data = { lot_id: lotNo, job_card_id: null, meters_out: rec, worker_id: null };

@@ -37,6 +37,11 @@ For a **test** database (e.g. staging), `npm run db:seed-demo` adds test account
 - `DEV_ACCESS_TOKEN` — optional, 16+ characters. Enables the developer usage/cost log: `curl -H "x-dev-token: <token>" https://<site>/api/dev/usage?days=30`.
 - If a key is missing/rejected or a model is retired, the app shows a warning banner and Settings → **Connections** explains what to fix. Workers can't capture only when neither OCR nor AI works.
 
+### 3b. Agents (Phase 2)
+- The agents scan every few minutes while the app is open, and once a day via Vercel Cron (`vercel.json` → `/api/agents/run`, 07:00 IST).
+- Set `CRON_SECRET` (any long random string) so only Vercel can call the daily run.
+- Owner → Settings: fill **Billing & GST** (legal name, GSTIN, address, bank) before making invoices, then **Selling rates** and **Process costs**.
+
 ### 4. Server region
 - `vercel.json` pins the app to Mumbai (`bom1`), next to the database.
 
@@ -72,6 +77,6 @@ Voice engines: Chrome / Android / Safari tabs use the phone's built-in speech re
 
 ## Local development
 - Local Postgres + `npm run db:init` (demo data) → `npm run db:seed-demo` (test accounts) → `npm run dev`
-- After pulling this version run `npm install` (adds `exceljs` and `sharp`).
+- After pulling this version run `npm install` (adds `exceljs`, `sharp` and `pdf-lib`).
 - Migrations also apply automatically when the local dev server starts.
 - Copy `.env.example` to `.env.local` if you want to point at another database or storage.

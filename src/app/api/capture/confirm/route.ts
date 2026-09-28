@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { withTransaction } from '@/lib/db';
 import { LedgerError, applyCaptureRead, errorResponseBody } from '@/lib/ledger';
 
@@ -6,7 +7,7 @@ import { LedgerError, applyCaptureRead, errorResponseBody } from '@/lib/ledger';
 // Confirm/correct writes to the ledger through the same rules as manual entry.
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await readObject(request);
     const { event_id, confirmed_by, status, corrected_data } = body;
     const rs = parseFloat(body.review_seconds);
     const reviewSeconds = Number.isFinite(rs) && rs >= 0 ? Math.min(rs, 3600) : null;

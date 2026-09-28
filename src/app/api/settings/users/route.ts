@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { withTransaction, type Q } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName, getFirmConfig, invalidateSettings } from '@/lib/settings';
@@ -18,7 +19,7 @@ async function setSections(q: Q, userId: string, sections: unknown) {
 // POST: add a supervisor { name, sections: number[] }
 export async function POST(request: NextRequest) {
   try {
-    const b = await request.json();
+    const b = await readObject(request);
     const name = cleanName(b.name, 'Name');
     await withTransaction(async (q) => {
       const id = `usr-sup-${Date.now().toString(36)}`;
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
 // PATCH: update the owner or a supervisor { id, name?, active?, sections? }
 export async function PATCH(request: NextRequest) {
   try {
-    const b = await request.json();
+    const b = await readObject(request);
     const id = typeof b.id === 'string' ? b.id : '';
     await withTransaction(async (q) => {
       const u = await q(`SELECT role FROM users WHERE id = $1 FOR UPDATE`, [id]);

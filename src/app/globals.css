@@ -760,3 +760,13 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
 @media (prefers-reduced-motion: reduce) {
   .vorb-blob, .live-dot, .typing i, .cbtn.rec, .chat-pop { animation: none !important; }
 }
+
+/* ---------- Phase 2: agent alerts ---------- */
+.attn-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.agent-tag { font-size: 10px; padding: 1px 7px; margin-right: 4px; vertical-align: 1px; }
+.dot-sm.info { background: var(--accent); }
+.agent-card-wrap:has(.attn) { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; box-shadow: var(--shadow); }
+@media (max-width: 760px) {
+  .attn { flex-wrap: wrap; }
+  .attn-actions { width: 100%; justify-content: flex-end; }
+}

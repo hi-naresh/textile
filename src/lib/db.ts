@@ -42,7 +42,7 @@ export async function query(text: string, params?: unknown[]) {
   try {
     const res = await pool.query(text, params);
     const duration = Date.now() - start;
-    console.log(`[DB Query] executed query`, { text, duration, rowsCount: res.rowCount });
+    if (process.env.DB_QUIET !== "1") console.log(`[DB Query] executed query`, { text, duration, rowsCount: res.rowCount });
     return res;
   } catch (error) {
     console.error(`[DB Query Error]`, { text, error });

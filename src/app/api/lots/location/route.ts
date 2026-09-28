@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, moveLotManually } from '@/lib/ledger';
 
@@ -26,8 +27,8 @@ export async function GET(request: NextRequest) {
 // POST { lot_id, location, note?, moved_by? } → move a lot (e.g. godown → shop)
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const entry = await withTransaction((q) => moveLotManually(q, body));
+    const body = await readObject(request);
+    const entry = await withTransaction((q) => moveLotManually(q, { lot_id: body.lot_id, location: body.location, note: body.note, moved_by: body.moved_by }));
     return NextResponse.json({ success: true, entry });
   } catch (error) {
     const { status, body } = errorResponseBody(error);

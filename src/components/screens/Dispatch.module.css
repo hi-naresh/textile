@@ -1,0 +1,21 @@
+/* Dispatch & documents screen */
+.lines { display: flex; flex-direction: column; gap: 8px; }
+.line { display: grid; grid-template-columns: minmax(0, 1fr) 110px 36px; gap: 8px; align-items: start; }
+.line select, .line input { width: 100%; height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px; }
+.line input { font-family: var(--font-mono); text-align: right; }
+.line .over { border-color: var(--bad); }
+.sub { grid-column: 1 / -1; margin-top: -4px; }
+.docs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.lotChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.bad { color: var(--bad); }
+.exportRow { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.exportRow .fld { min-width: 150px; }
+.cardBody { padding: 16px 22px 20px; }
+@media (max-width: 720px) {
+  .line { grid-template-columns: minmax(0, 1fr) 96px 36px; }
+  .docs { justify-content: flex-end; }
+  .rates { grid-template-columns: minmax(0, 1fr); }
+  .exportRow .fld { min-width: 0; flex: 1 1 140px; }
+  .cardBody { padding: 14px 16px 16px; }
+}

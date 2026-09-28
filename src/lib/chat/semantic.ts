@@ -7,6 +7,7 @@
 import { query } from '../db';
 import { nameKey } from '../normalize';
 import type { Scope } from './templates';
+import { EXTRA_METRICS } from './metrics-phase2';
 
 // ---------- catalog ----------
 export const DIMS = ['worker', 'section', 'quality', 'design', 'party', 'mill', 'lot', 'location', 'day', 'month'] as const;
@@ -14,10 +15,10 @@ export type Dim = (typeof DIMS)[number];
 export const FILTERS = ['section', 'worker', 'quality', 'party', 'mill', 'lot', 'location'] as const;
 export type FilterKey = (typeof FILTERS)[number];
 
-interface MetricDef {
+export interface MetricDef {
   describe: string; // for the LLM catalog
   title: string; // answer wording: counts → noun ("active workers"), measures → label ("Dispatched")
-  unit: 'm' | '%' | 'count' | 'min';
+  unit: 'm' | '%' | 'count' | 'min' | 'inr';
   from: string;
   where?: string;
   agg?: string; // aggregate expression (ignored when ratio is set)
@@ -28,6 +29,7 @@ interface MetricDef {
   list?: string; // expression listing names (for small counts)
   sectionScoped?: string; // supervisor scope: expression holding the section
   allTimeByDefault?: boolean; // no period asked → all time (e.g. "how many parties do we have")
+  ownerOnly?: boolean; // ₹ metrics — supervisors get a polite refusal
 }
 
 const SEC = (col: string) => `lower(btrim(regexp_replace(${col}, '\\s*section\\s*$', '', 'i')))`;
@@ -138,6 +140,8 @@ export const METRICS: Record<string, MetricDef> = {
     agg: 'COUNT(DISTINCT sm.mill_name)', time: 'sm.ts', allTimeByDefault: true, dims: {}, filters: {}, list: `string_agg(DISTINCT sm.mill_name, ', ')`,
   },
 };
+// Phase 2 agents add their metrics (orders, outstanding, margin …) here.
+Object.assign(METRICS, EXTRA_METRICS);
 export type MetricKey = keyof typeof METRICS;
 
 /** Days back from the database's today (so "today" matches every other today-figure). Inclusive. */
@@ -189,10 +193,11 @@ export function cleanSpec(raw: unknown): Spec | null {
 }
 
 const fmt = (n: number) => (Math.round(n * 100) / 100).toLocaleString('en-IN', { maximumFractionDigits: 1 });
-const unitText = (v: number, u: MetricDef['unit']) => (u === 'm' ? `${fmt(v)} m` : u === '%' ? `${fmt(v)}%` : u === 'min' ? `${fmt(v)} min` : fmt(v));
+const unitText = (v: number, u: MetricDef['unit']) => (u === 'm' ? `${fmt(v)} m` : u === '%' ? `${fmt(v)}%` : u === 'min' ? `${fmt(v)} min` : u === 'inr' ? `₹${Math.round(v).toLocaleString('en-IN')}` : fmt(v));
 
 export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult> {
   const def = METRICS[spec.metric];
+  if (def.ownerOnly && scope.role !== 'owner') return { answer: 'That figure is only available to the owner.', rows: [] };
   const params: unknown[] = [];
   const P = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const where: string[] = def.where ? [def.where] : [];
@@ -244,7 +249,7 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
   if (!rows.length) return { answer: `No ${isCount ? measure : measure.toLowerCase()}${when}${scopeNote}.`, rows: [] };
   const shown = rows.slice(0, top);
   const parts = shown.map((x) => `${x[spec.groupBy!]} ${x.value == null ? '—' : unitText(x.value, def.unit)}`);
-  const total = def.unit === 'm' || def.unit === 'count' || def.unit === 'min' ? shown.reduce((s, x) => s + (x.value ?? 0), 0) : null;
+  const total = def.unit === 'm' || def.unit === 'count' || def.unit === 'min' || def.unit === 'inr' ? shown.reduce((s, x) => s + (x.value ?? 0), 0) : null;
   const head = isCount ? `${cap(measure)}${when}${scopeNote}, by ${spec.groupBy}` : `${cap(measure)}${when}${scopeNote}, by ${spec.groupBy}`;
   const totalText = total != null && shown.length > 1 ? ` Total ${unitText(total, def.unit)}${rows.length > top ? ` for the top ${top}` : ''}.` : '';
   return { answer: `${head}: ${parts.join(', ')}.${totalText}`, rows: shown };
@@ -292,6 +297,25 @@ const GROUP_WORDS: [RegExp, Dim][] = [
   [/\b(monthly|month ?wise|each month|per month|by month)\b/, 'month'],
 ];
 
+/** Phase 2 metrics (orders, inquiries, free stock, ₹). Checked before the Phase 1 ones. */
+function phase2Metric(q: string, howMany: boolean): MetricKey | null {
+  const order = /\borders?\b/.test(q);
+  const money = /(payment|paisa|paise|money|amount|₹|\brs\b|rupee)/.test(q);
+  if (/\b(outstanding|udhaar|udhar|lena hai|dues|due amount)\b|baa?ki paisa/.test(q)) return 'outstanding';
+  if (/\boverdue\b|late payment|mudat/.test(q) && (money || !order)) return 'overdue';
+  if (/\b(invoiced|billed|billing|revenue)\b|bill banaya|sales amount/.test(q)) return 'invoiced';
+  if (/\b(collected|collection|jama|vasuli)\b|payments? (received|aaya|aayi|came)/.test(q)) return 'collected';
+  if (order && /\b(overdue|late|delayed)\b/.test(q)) return 'orders_overdue';
+  if (order && /\b(open|pending|baaki|baki|remaining|left)\b/.test(q)) return howMany && !/\b(meters?|mtrs?|m)\b/.test(q) ? 'open_orders' : 'orders_open';
+  if (order && /\b(new|received|aaya|aaye|got|came|placed|booked)\b/.test(q)) return 'orders';
+  if (/\bmeters? ordered\b|\bordered\b/.test(q)) return 'ordered';
+  if (/\b(reserved|allocated)\b/.test(q)) return 'reserved';
+  if (/\b(win rate|conversion)\b/.test(q)) return 'win_rate';
+  if (/\b(inquir|enquir|puchh)/.test(q)) return /\b(open|pending|new|waiting)\b/.test(q) ? 'inquiries_open' : /\b(won|converted)\b/.test(q) ? 'inquiries_won' : 'inquiries';
+  if (/\b(free stock|free maal|khali maal)\b|\bavailable\b/.test(q)) return 'free_stock';
+  return null;
+}
+
 /** Reads a question into a spec using keywords + the firm's own names. Returns null when unsure. */
 export function parseSemantic(question: string, v: Vocab): Spec | null {
   const q = question.toLowerCase();
@@ -320,8 +344,9 @@ export function parseSemantic(question: string, v: Vocab): Spec | null {
   let groupBy: Dim | null = null;
   const groupCue = /\b(by|per|each|every|which|who|kaun|kon|top|wise|breakdown|split|list)\b/.test(q) || /-wise|\bwise\b/.test(q);
 
-  let metric: MetricKey | null = null;
-  if (/\bsupervisors?\b/.test(q)) metric = 'supervisors';
+  let metric: MetricKey | null = phase2Metric(q, howMany);
+  if (metric) { /* orders / inquiries / money — see phase2Metric */ }
+  else if (/\bsupervisors?\b/.test(q)) metric = 'supervisors';
   else if (outputWord) metric = /\b(cards?)\b/.test(q) && howMany ? 'cards_closed' : 'output';
   else if (/\ballot\w*/.test(q)) metric = 'allotted';
   else if (/\b(efficien\w*|performance|productivity)\b/.test(q)) metric = 'efficiency';

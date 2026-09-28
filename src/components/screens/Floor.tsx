@@ -3,6 +3,7 @@
 import React from 'react';
 import Icon from '../Icon';
 import { Kpi, PageHead, Pill, Track, effTone, fmt, fmtM } from '../ui';
+import AgentInbox from '../AgentInbox';
 import type { Ctx } from '../ctx';
 import { captureInScope, jobInScope, activeSupervisor, rules } from '@/lib/access';
 import { avg, camStatus } from '@/lib/derive';
@@ -26,6 +27,8 @@ export function Floor({ ctx }: { ctx: Ctx }) {
         <button className="btn" onClick={() => go('allot')}>Allot work</button>
         <button className="btn primary" onClick={() => go('review')}>Review <span className="num">{pending}</span> read{pending === 1 ? '' : 's'}</button>
       </PageHead>
+
+      <AgentCard ctx={ctx} />
 
       <div className="grid-4">
         <Kpi label="Allotted today" value={fmtM(allot)} sub={`across ${crew.filter((x) => x.allotted > 0).length} workers`} />
@@ -81,6 +84,15 @@ export function Floor({ ctx }: { ctx: Ctx }) {
           {!over.length && !idle.length && <p className="muted small" style={{ margin: 0 }}><Icon name="check" size={14} /> No shortage or idle alerts.</p>}
         </section>
       </div>
+    </div>
+  );
+}
+
+/** Agent alerts for the supervisor (orders due, dispatch matches, stock) — hidden when there are none. */
+function AgentCard({ ctx }: { ctx: Ctx }) {
+  return (
+    <div className="agent-card-wrap">
+      <AgentInbox ctx={ctx} limit={4} />
     </div>
   );
 }

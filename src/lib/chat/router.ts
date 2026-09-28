@@ -98,7 +98,7 @@ export function matchRules(question: string, names: Awaited<ReturnType<typeof kn
 
   if (challan && /\d/.test(challan)) return { template: 'challan_lookup', params: { challan } };
   if (/time\s*saved|saving|roi|kitna\s*samay/.test(q)) return { template: 'time_saved', params: { days } };
-  if (/review|pending|waiting|confirm/.test(q)) return { template: 'pending_reviews', params: {} };
+  if (/review|pending|waiting|confirm/.test(q) && !/order|inquir|enquir|payment|paisa|invoice|bill/.test(q)) return { template: 'pending_reviews', params: {} };
   if (/shortage|short\b|ghat|kami/.test(q)) return { template: 'shortage_report', params: { days } };
   if (/efficien|slow|performance|output/.test(q) || (worker && !lot)) return { template: 'worker_efficiency', params: { worker, days } };
   if (/open\s*(job)?\s*cards?|on the floor|running|in process|chal rah/.test(q)) return { template: 'open_job_cards', params: {} };

@@ -1,0 +1,4575 @@
+[
+ {
+  "id": "M001",
+  "spec_rule": "R2.2",
+  "description": "Create party with valid GSTIN (state 24)",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-Intra-4ICLD",
+    "gstin": "24FGLPX9507R1Z5",
+    "state_code": "24",
+    "credit_limit": 100000,
+    "credit_days": 15,
+    "city": "Surat"
+   }
+  },
+  "expected": "2xx, party created",
+  "actual": "200",
+  "verdict": "pass"
+ },
+ {
+  "id": "M002",
+  "spec_rule": "R2.3",
+  "description": "credit_days defaults to 30 when not given",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-Inter-4ICLD",
+    "gstin": "27ZNGTC9052W1Z8",
+    "state_code": "27",
+    "credit_limit": 200000
+   }
+  },
+  "expected": "credit_days=30",
+  "actual": 30,
+  "verdict": "pass"
+ },
+ {
+  "id": "M003",
+  "spec_rule": "R2.2",
+  "description": "GSTIN with wrong check character refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-BadChk-4ICLD",
+    "gstin": "24DAQHL0872Y1ZA"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"GSTIN \\\"24DAQHL0872Y1ZA\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M004",
+  "spec_rule": "R2.2",
+  "description": "GSTIN of 14 characters refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-Short-4ICLD",
+    "gstin": "24DAQHL0872Y1Z"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"GSTIN \\\"24DAQHL0872Y1Z\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M005",
+  "spec_rule": "R2.2",
+  "description": "GSTIN whose 14th char is not Z (valid checksum) refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-NoZ-4ICLD",
+    "gstin": "24IOSVP8580J1YL"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"GSTIN \\\"24IOSVP8580J1YL\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M006",
+  "spec_rule": "R2.2",
+  "description": "GSTIN with malformed PAN (valid checksum) refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-BadPan-4ICLD",
+    "gstin": "2412345ABCDE1ZH"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"GSTIN \\\"2412345ABCDE1ZH\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M007",
+  "spec_rule": "R2.2",
+  "description": "GSTIN with non-numeric state code refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-BadSt-4ICLD",
+    "gstin": "ABUCFHF7744H1ZZ"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"GSTIN \\\"ABUCFHF7744H1ZZ\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M008",
+  "spec_rule": "R2.2",
+  "description": "PATCH party with invalid GSTIN refused",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/parties/41",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "gstin": "24DAQHL0872Y1ZA"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"GSTIN \\\"24DAQHL0872Y1ZA\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M009",
+  "spec_rule": "R2.1",
+  "description": "Duplicate party name (exact) refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-Intra-4ICLD"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "409 {\"error\":\"A party named \\\"BBM-Intra-4ICLD\\\" already exists. Edit that one instead.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M010",
+  "spec_rule": "R2.1",
+  "description": "Duplicate party name differing in case + surrounding spaces refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "  bbm-intra-4icld  "
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "409 {\"error\":\"A party named \\\"BBM-Intra-4ICLD\\\" already exists. Edit that one instead.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M011",
+  "spec_rule": "R2.1",
+  "description": "PATCH rename party to existing name (different case) refused",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/parties/41",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-INTER-4ICLD "
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "409 {\"error\":\"A party named \\\"BBM-Inter-4ICLD\\\" already exists. Edit that one instead.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M012",
+  "spec_rule": "R2.1",
+  "description": "Only one party with the Intra name exists after duplicate attempts",
+  "request": {
+   "method": "GET",
+   "url": "/api/parties?q=..."
+  },
+  "expected": 1,
+  "actual": 1,
+  "verdict": "pass"
+ },
+ {
+  "id": "M013",
+  "spec_rule": "R3.2",
+  "description": "General rate: latest valid_from <= today wins, future (2027) rate ignored",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/rate?quality=BBM-Q-4ICLD&party_id=40"
+  },
+  "expected": 110,
+  "actual": 110,
+  "verdict": "pass"
+ },
+ {
+  "id": "M014",
+  "spec_rule": "R3.2",
+  "description": "Party-specific rate (90, from 2026-02-01) beats newer general rate (110); future party rate ignored",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/rate?quality=BBM-Q-4ICLD&party_id=39"
+  },
+  "expected": 90,
+  "actual": 90,
+  "verdict": "pass"
+ },
+ {
+  "id": "M015",
+  "spec_rule": "R3.2",
+  "description": "Rate lookup by party name gives same party-specific rate",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/rate?quality=BBM-Q-4ICLD&party=BBM-Intra-4ICLD"
+  },
+  "expected": 90,
+  "actual": 90,
+  "verdict": "pass"
+ },
+ {
+  "id": "M016",
+  "spec_rule": "R3.2",
+  "description": "Quality with only a future-dated rate has no rate today",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/rate?quality=BBM-Q3-4ICLD&party_id=40"
+  },
+  "expected": "no rate (null/absent)",
+  "actual": {
+   "rate": null
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M017",
+  "spec_rule": "R3.1",
+  "description": "Negative rate refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/rates",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "quality": "BBM-Q-4ICLD",
+    "rate_per_m": -5,
+    "valid_from": "2026-01-01"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Rate ₹/m must be more than 0.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M018",
+  "spec_rule": "R3.1",
+  "description": "Non-numeric rate refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/rates",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "quality": "BBM-Q-4ICLD",
+    "rate_per_m": "abc",
+    "valid_from": "2026-01-01"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Rate ₹/m must be more than 0.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M019",
+  "spec_rule": "R3.1",
+  "description": "Invalid valid_from date refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/rates",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "quality": "BBM-Q-4ICLD",
+    "rate_per_m": 10,
+    "valid_from": "2026-13-45"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Valid from must be a date like 2026-09-28.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M020",
+  "spec_rule": "R3.3",
+  "description": "Process cost for section Folding: latest valid_from <= today (1.75) is current; future 9.5 not used",
+  "request": {
+   "method": "POST",
+   "url": "/api/costs",
+   "body": {
+    "section": "Folding",
+    "cost_per_m": "1.75 @2026-09-01, 9.5 @2027-02-01"
+   }
+  },
+  "expected": 1.75,
+  "actual": {
+   "post1": 200,
+   "post2": 200,
+   "current": 1.75
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M021",
+  "spec_rule": "R3.3",
+  "description": "Negative process cost refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/costs",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "section": "Folding",
+    "cost_per_m": -1,
+    "valid_from": "2026-09-01"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Cost ₹/m must be 0 or more.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M022",
+  "spec_rule": "R3.3",
+  "description": "Non-numeric process cost refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/costs",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "section": "Folding",
+    "cost_per_m": "x",
+    "valid_from": "2026-09-01"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Cost ₹/m must be 0 or more.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M023",
+  "spec_rule": "R10.1",
+  "description": "No-shortage lot: cost/m = purchase 40 + its process costs",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-LN-4ICLD"
+  },
+  "expected": "40 + process_total(0) = 40",
+  "actual": {
+   "lot_id": "BBM-LN-4ICLD",
+   "quality": "BBM-Q2-4ICLD",
+   "purchase": 40,
+   "process": [],
+   "process_total": 0,
+   "shortage": 0,
+   "total": 40,
+   "complete": true,
+   "missing": []
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M024",
+  "spec_rule": "R10.1",
+  "description": "Shortage lot (grey 200, finished 160) costs more per finished m than identical no-shortage lot",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-LS-4ICLD"
+  },
+  "expected": "> 40 (e.g. 40*200/160=50 + process)",
+  "actual": {
+   "lot_id": "BBM-LS-4ICLD",
+   "quality": "BBM-Q2-4ICLD",
+   "purchase": 40,
+   "process": [],
+   "process_total": 0,
+   "shortage": 10,
+   "total": 50,
+   "complete": true,
+   "missing": []
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M025",
+  "spec_rule": "R10.1",
+  "description": "Shortage lot exact cost (formula combination not fully specified)",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-LS-4ICLD"
+  },
+  "expected": "~50 if purchase scaled by grey/finished",
+  "actual": 50,
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M026",
+  "spec_rule": "R10.1",
+  "description": "Which process costs are \"applicable\" to a lot with no job cards",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-LN-4ICLD"
+  },
+  "expected": "unspecified",
+  "actual": {
+   "process": [],
+   "process_total": 0
+  },
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M027",
+  "spec_rule": "R8.1",
+  "description": "Create invoice from dispatch (intra-state party)",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 49
+   }
+  },
+  "expected": "2xx",
+  "actual": 201,
+  "verdict": "pass"
+ },
+ {
+  "id": "M028",
+  "spec_rule": "R8.2",
+  "description": "Taxable = 123.45 m x party rate 90",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 49
+   }
+  },
+  "expected": 11110.5,
+  "actual": 11110.5,
+  "verdict": "pass"
+ },
+ {
+  "id": "M029",
+  "spec_rule": "R8.3",
+  "description": "Intra-state: CGST = SGST = 6% of taxable, IGST = 0",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 49
+   }
+  },
+  "expected": {
+   "cgst": 666.63,
+   "sgst": 666.63,
+   "igst": 0
+  },
+  "actual": {
+   "cgst": 666.63,
+   "sgst": 666.63,
+   "igst": 0
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M030",
+  "spec_rule": "R8.4",
+  "description": "Total = taxable + taxes (±0.50)",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 49
+   }
+  },
+  "expected": 12443.76,
+  "actual": 12444,
+  "verdict": "pass"
+ },
+ {
+  "id": "M031",
+  "spec_rule": "R8.6",
+  "description": "Due date = invoice date + 15 credit days",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 49
+   }
+  },
+  "expected": "2026-10-13",
+  "actual": "2026-10-13",
+  "verdict": "pass"
+ },
+ {
+  "id": "M032",
+  "spec_rule": "R8.5",
+  "description": "First invoice number uses configured next_invoice_no",
+  "request": {
+   "method": "GET",
+   "url": "/api/settings/billing"
+  },
+  "expected": 55,
+  "actual": "BBM/2026-27/0055",
+  "verdict": "pass"
+ },
+ {
+  "id": "M033",
+  "spec_rule": "R8.7",
+  "description": "Invoicing the same dispatch twice refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 49
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "409 {\"error\":\"Dispatch #49 already has invoice BBM/2026-27/0055.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M034",
+  "spec_rule": "R8.2",
+  "description": "Inter-state taxable = 77.7 m x general rate 110",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 50
+   }
+  },
+  "expected": 8547,
+  "actual": 8547,
+  "verdict": "pass"
+ },
+ {
+  "id": "M035",
+  "spec_rule": "R8.3",
+  "description": "Inter-state (27 vs 24): IGST = 12%, CGST = SGST = 0",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 50
+   }
+  },
+  "expected": {
+   "igst": 1025.64,
+   "cgst": 0,
+   "sgst": 0
+  },
+  "actual": {
+   "igst": 1025.64,
+   "cgst": 0,
+   "sgst": 0
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M036",
+  "spec_rule": "R8.4",
+  "description": "Inter-state total = taxable + IGST (±0.50)",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 50
+   }
+  },
+  "expected": 9572.64,
+  "actual": 9573,
+  "verdict": "pass"
+ },
+ {
+  "id": "M037",
+  "spec_rule": "R8.6",
+  "description": "Due date = date + default 30 credit days",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 50
+   }
+  },
+  "expected": "2026-10-28",
+  "actual": "2026-10-28",
+  "verdict": "pass"
+ },
+ {
+  "id": "M038",
+  "spec_rule": "R8.5",
+  "description": "Second invoice number = first + 1",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 50
+   }
+  },
+  "expected": 56,
+  "actual": "BBM/2026-27/0056",
+  "verdict": "pass"
+ },
+ {
+  "id": "M039",
+  "spec_rule": "R8.1",
+  "description": "Record Tally invoice (source=tally)",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-T-4ICLD",
+    "party": "BBM-Inter-4ICLD",
+    "invoice_date": "2026-09-20",
+    "taxable_amount": 1000,
+    "total": 1180,
+    "lines": [
+     {
+      "quality": "BBM-Q-4ICLD",
+      "meters": 10,
+      "rate": 100
+     }
+    ]
+   }
+  },
+  "expected": "2xx, source tally, number kept",
+  "actual": "201 tally BBM-T-4ICLD",
+  "verdict": "pass"
+ },
+ {
+  "id": "M040",
+  "spec_rule": "R8.1",
+  "description": "Tally invoice listed under source=tally filter",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?source=tally&party_id=40"
+  },
+  "expected": true,
+  "actual": true,
+  "verdict": "pass"
+ },
+ {
+  "id": "M041",
+  "spec_rule": "R8.6",
+  "description": "Tally invoice without due_date: due = date + 30 days (party default)",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-T-4ICLD",
+    "party": "BBM-Inter-4ICLD",
+    "invoice_date": "2026-09-20",
+    "taxable_amount": 1000,
+    "total": 1180,
+    "lines": [
+     {
+      "quality": "BBM-Q-4ICLD",
+      "meters": 10,
+      "rate": 100
+     }
+    ]
+   }
+  },
+  "expected": "2026-10-20",
+  "actual": "2026-10-20",
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M042",
+  "spec_rule": "R8.5",
+  "description": "Tally invoice with an already-used invoice_no",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-T-4ICLD",
+    "party": "BBM-Inter-4ICLD",
+    "invoice_date": "2026-09-20",
+    "taxable_amount": 1000,
+    "total": 1180,
+    "lines": [
+     {
+      "quality": "BBM-Q-4ICLD",
+      "meters": 10,
+      "rate": 100
+     }
+    ]
+   }
+  },
+  "expected": "unspecified (made-here uniqueness only)",
+  "actual": "409 {\"error\":\"Invoice BBM-T-4ICLD is already recorded.\"}",
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M043",
+  "spec_rule": "R8.1",
+  "description": "Tally invoice with non-numeric total refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-T-4ICLDX",
+    "party": "BBM-Inter-4ICLD",
+    "invoice_date": "2026-09-20",
+    "taxable_amount": 1000,
+    "total": "abc",
+    "lines": [
+     {
+      "quality": "BBM-Q-4ICLD",
+      "meters": 10,
+      "rate": 100
+     }
+    ]
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Invoice total must be a positive amount.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M044",
+  "spec_rule": "R8.1",
+  "description": "Tally invoice with invalid date refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-T-4ICLDY",
+    "party": "BBM-Inter-4ICLD",
+    "invoice_date": "2026-02-30",
+    "taxable_amount": 1000,
+    "total": 1180,
+    "lines": [
+     {
+      "quality": "BBM-Q-4ICLD",
+      "meters": 10,
+      "rate": 100
+     }
+    ]
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Invoice date must be YYYY-MM-DD.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M045",
+  "spec_rule": "R8.1",
+  "description": "Dispatch with create_invoice=true and rate override creates invoice",
+  "request": {
+   "method": "POST",
+   "url": "/api/dispatches",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party": "BBM-Intra-4ICLD",
+    "lines": [
+     {
+      "lot_id": "BBM-L2-4ICLD",
+      "meters": 10
+     }
+    ],
+    "transporter": "BBM Trans",
+    "lr_no": "LR1",
+    "vehicle_no": "GJ05AB1234",
+    "packages": 2,
+    "create_invoice": true,
+    "rates": {
+     "BBM-Q-4ICLD": 95.55
+    }
+   }
+  },
+  "expected": "2xx + invoice",
+  "actual": "201 inv=BBM/2026-27/0057",
+  "verdict": "pass"
+ },
+ {
+  "id": "M046",
+  "spec_rule": "R8.2",
+  "description": "Rate override rates:{quality:95.55} on dispatch (override semantics not in spec; lookup rate would be 90)",
+  "request": {
+   "method": "POST",
+   "url": "/api/dispatches",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party": "BBM-Intra-4ICLD",
+    "lines": [
+     {
+      "lot_id": "BBM-L2-4ICLD",
+      "meters": 10
+     }
+    ],
+    "transporter": "BBM Trans",
+    "lr_no": "LR1",
+    "vehicle_no": "GJ05AB1234",
+    "packages": 2,
+    "create_invoice": true,
+    "rates": {
+     "BBM-Q-4ICLD": 95.55
+    }
+   }
+  },
+  "expected": "955.50 if override honoured, 900 if lookup",
+  "actual": 900,
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M047",
+  "spec_rule": "R8.3/8.4",
+  "description": "Invoice C: CGST=SGST=6% of its taxable, total = taxable+taxes",
+  "request": {
+   "method": "POST",
+   "url": "/api/dispatches",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party": "BBM-Intra-4ICLD",
+    "lines": [
+     {
+      "lot_id": "BBM-L2-4ICLD",
+      "meters": 10
+     }
+    ],
+    "transporter": "BBM Trans",
+    "lr_no": "LR1",
+    "vehicle_no": "GJ05AB1234",
+    "packages": 2,
+    "create_invoice": true,
+    "rates": {
+     "BBM-Q-4ICLD": 95.55
+    }
+   }
+  },
+  "expected": {
+   "cgst": 54,
+   "sgst": 54,
+   "total": 1008
+  },
+  "actual": {
+   "cgst": 54,
+   "sgst": 54,
+   "total": 1008
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M048",
+  "spec_rule": "R8.5",
+  "description": "Next made-here invoice consecutive after Tally invoice recorded (B+1)",
+  "request": {
+   "method": "POST",
+   "url": "/api/dispatches",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party": "BBM-Intra-4ICLD",
+    "lines": [
+     {
+      "lot_id": "BBM-L2-4ICLD",
+      "meters": 10
+     }
+    ],
+    "transporter": "BBM Trans",
+    "lr_no": "LR1",
+    "vehicle_no": "GJ05AB1234",
+    "packages": 2,
+    "create_invoice": true,
+    "rates": {
+     "BBM-Q-4ICLD": 95.55
+    }
+   }
+  },
+  "expected": 57,
+  "actual": "BBM/2026-27/0057",
+  "verdict": "pass"
+ },
+ {
+  "id": "M049",
+  "spec_rule": "R8.7",
+  "description": "Dispatch already invoiced via create_invoice cannot be invoiced again",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 51
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "409 {\"error\":\"Dispatch #51 already has invoice BBM/2026-27/0057.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M050",
+  "spec_rule": "R8.1",
+  "description": "Invoice for non-existent dispatch refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 99999999
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "404 {\"error\":\"Dispatch #99999999 not found.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M051",
+  "spec_rule": "R8.1",
+  "description": "Invoice with invalid invoice_date refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 52,
+    "invoice_date": "not-a-date"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Invoice date must be YYYY-MM-DD.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M052",
+  "spec_rule": "R8.2",
+  "description": "Invoice with negative rate override (lot key)",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 52,
+    "rates": {
+     "BBM-L2-4ICLD": -10
+    }
+   }
+  },
+  "expected": "4xx or override ignored (semantics unspecified)",
+  "actual": "201 taxable=450",
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M053",
+  "spec_rule": "R8.7",
+  "description": "3 concurrent invoice requests for one dispatch -> exactly one succeeds",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "dispatch_id": 53,
+    "x3": "parallel"
+   }
+  },
+  "expected": 1,
+  "actual": [
+   201,
+   409,
+   409
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "M054",
+  "spec_rule": "R8.5",
+  "description": "Concurrent invoice creation yields unique consecutive numbers",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": "3 parallel dispatch invoices"
+  },
+  "expected": [
+   59,
+   60,
+   61
+  ],
+  "actual": [
+   59,
+   60,
+   61
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "M055",
+  "spec_rule": "R8.1",
+  "description": "Cancel invoice via PATCH status=cancelled",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/invoices/69",
+   "body": {
+    "status": "cancelled"
+   }
+  },
+  "expected": "status cancelled",
+  "actual": "200 cancelled",
+  "verdict": "pass"
+ },
+ {
+  "id": "M056",
+  "spec_rule": "R9.3",
+  "description": "Outstanding after cancelling the party's only invoice",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?party_id=41"
+  },
+  "expected": "0 (cancelled not owed) - not stated in spec",
+  "actual": {
+   "before": 2464,
+   "after": 0
+  },
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M057",
+  "spec_rule": "R9.1",
+  "description": "Payment against a cancelled invoice",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "party_id": 41,
+    "amount": 100,
+    "invoice_id": 69
+   }
+  },
+  "expected": "unspecified",
+  "actual": "400 {\"error\":\"Invoice BBM/2026-27/0062 is cancelled.\"}",
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M058",
+  "spec_rule": "R8.6",
+  "description": "Back-dated invoice 2026-07-01, credit days 10 -> due 2026-07-11",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "invoice_date": "2026-07-01"
+   }
+  },
+  "expected": "2026-07-11",
+  "actual": "2026-07-11",
+  "verdict": "pass"
+ },
+ {
+  "id": "M059",
+  "spec_rule": "R8.2",
+  "description": "FIFO invoices each 10 m x general rate 100 = 1000 + 12% = 1120",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": "x3"
+  },
+  "expected": [
+   1120,
+   1120,
+   1120
+  ],
+  "actual": [
+   1120,
+   1120,
+   1120
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "M060",
+  "spec_rule": "R9.3",
+  "description": "Outstanding = 3 x 1120 = 3360 before payments",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?party_id=42"
+  },
+  "expected": 3360,
+  "actual": 3360,
+  "verdict": "pass"
+ },
+ {
+  "id": "M061",
+  "spec_rule": "R9.3",
+  "description": "Overdue = invoices past due (Jul, Aug) = 2240",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?party_id=42"
+  },
+  "expected": 2240,
+  "actual": 2240,
+  "verdict": "pass"
+ },
+ {
+  "id": "M062",
+  "spec_rule": "R9.5",
+  "description": "Reminder text mentions amount due (2,240 overdue or 3,360 outstanding)",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/reminder?party_id=42&lang=en"
+  },
+  "expected": "text contains 2,240 or 3,360",
+  "actual": "Namaste BBM-Fifo-4ICLD ji,\n\nThis is a gentle reminder from BBM Firm 4ICLD. The following bills are pending:\n• BBM/2026-27/0063 — ₹1,120 (79 days overdue)\n• BBM/2026-27/0064 — ₹1,120 (48 days overdue)\n",
+  "verdict": "pass"
+ },
+ {
+  "id": "M063",
+  "spec_rule": "R9.5",
+  "description": "Reminder (hi) mentions amount due",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/reminder?party_id=42&lang=hi"
+  },
+  "expected": "contains 2,240 or 3,360 (any digit script)",
+  "actual": "200 नमस्ते BBM-Fifo-4ICLD जी,\n\nBBM Firm 4ICLD की ओर से विनम्र स्मरण। नीचे दिए बिलों का भुगतान बाकी है:\n• BBM/2026-27/0063 — ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M064",
+  "spec_rule": "R9.5",
+  "description": "Reminder (gu) mentions amount due",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/reminder?party_id=42&lang=gu"
+  },
+  "expected": "contains 2,240 or 3,360 (any digit script)",
+  "actual": "200 નમસ્તે BBM-Fifo-4ICLD,\n\nBBM Firm 4ICLD તરફથી નમ્ર યાદી. નીચેના બિલની ચુકવણી બાકી છે:\n• BBM/2026-27/0063 — ₹1,120 (79 દિવ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M065",
+  "spec_rule": "R9.4",
+  "description": "Credit check 3360+40000 <= 50000 limit -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=42&amount=40000"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": "BBM-Fifo-4ICLD has ₹2,240 overdue for 79 days.",
+   "outstanding": 3360,
+   "limit": 50000,
+   "overdue": 2240,
+   "available": 46640
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M066",
+  "spec_rule": "R9.4",
+  "description": "Credit check exactly at limit (3360+46640=50000) -> ok (not exceeding)",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=42&amount=46640"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": "BBM-Fifo-4ICLD has ₹2,240 overdue for 79 days.",
+   "outstanding": 3360,
+   "limit": 50000,
+   "overdue": 2240,
+   "available": 46640
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M067",
+  "spec_rule": "R9.4",
+  "description": "Credit check 3360+46641 > 50000 -> not ok / warn",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=42&amount=46641"
+  },
+  "expected": "ok false or warn",
+  "actual": {
+   "ok": false,
+   "warn": "BBM-Fifo-4ICLD has ₹2,240 overdue for 79 days; this would take BBM-Fifo-4ICLD to ₹50,001, over the credit limit of ₹50,000.",
+   "outstanding": 3360,
+   "limit": 50000,
+   "overdue": 2240,
+   "available": 46640
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M068",
+  "spec_rule": "R9.4",
+  "description": "Credit check by party name over limit -> not ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party=BBM-Fifo-4ICLD&amount=47000"
+  },
+  "expected": "ok false",
+  "actual": {
+   "ok": false,
+   "warn": "BBM-Fifo-4ICLD has ₹2,240 overdue for 79 days; this would take BBM-Fifo-4ICLD to ₹50,360, over the credit limit of ₹50,000.",
+   "outstanding": 3360,
+   "limit": 50000,
+   "overdue": 2240,
+   "available": 46640
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M069",
+  "spec_rule": "R9.4",
+  "description": "No-overdue party: 1120 outstanding + 3880 = 5000 limit -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=43&amount=3880"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": null,
+   "outstanding": 1120,
+   "limit": 5000,
+   "overdue": 0,
+   "available": 3880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M070",
+  "spec_rule": "R9.4",
+  "description": "No-overdue party: 1120 + 3881 > 5000 -> not ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=43&amount=3881"
+  },
+  "expected": "ok false or warn",
+  "actual": {
+   "ok": false,
+   "warn": "This would take BBM-Lim-4ICLD to ₹5,001, over the credit limit of ₹5,000.",
+   "outstanding": 1120,
+   "limit": 5000,
+   "overdue": 0,
+   "available": 3880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M071",
+  "spec_rule": "R9.4",
+  "description": "Credit check with no limit set -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=41&amount=99999999"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": null,
+   "outstanding": 0,
+   "limit": null,
+   "overdue": 0,
+   "available": null
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M072",
+  "spec_rule": "Access/bad input",
+  "description": "Credit check with non-numeric amount -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=42&amount=abc"
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"Amount must be 0 or more.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M073",
+  "spec_rule": "R9.1",
+  "description": "Payment amount 0 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "2026-09-28",
+    "mode": "bank",
+    "amount": 0
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Amount must be more than 0.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M074",
+  "spec_rule": "R9.1",
+  "description": "Payment amount negative refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "2026-09-28",
+    "mode": "bank",
+    "amount": -500
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Amount must be more than 0.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M075",
+  "spec_rule": "R9.1",
+  "description": "Payment amount non-numeric refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "2026-09-28",
+    "mode": "bank",
+    "amount": "abc"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Amount must be more than 0.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M076",
+  "spec_rule": "R9.1",
+  "description": "Payment amount missing refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "2026-09-28",
+    "mode": "bank"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Amount is required.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M077",
+  "spec_rule": "R9.1",
+  "description": "Payment date 2026-02-30 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "2026-02-30",
+    "mode": "bank",
+    "amount": 10
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Payment date must be a date like 2026-09-28.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M078",
+  "spec_rule": "R9.1",
+  "description": "Payment date not-a-date refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "yesterday-ish",
+    "mode": "bank",
+    "amount": 10
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Payment date must be a date like 2026-09-28.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M079",
+  "spec_rule": "R9.1",
+  "description": "Payment for unknown party refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "paid_on": "2026-09-28",
+    "mode": "bank",
+    "party": "BBM-NoSuchParty-4ICLD",
+    "amount": 10
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "404 {\"error\":\"Party \\\"BBM-NoSuchParty-4ICLD\\\" not found. Add it in Settings → Parties first.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M080",
+  "spec_rule": "R9.1",
+  "description": "Payment amount Infinity-like string refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "2026-09-28",
+    "mode": "bank",
+    "amount": "1e400"
+   }
+  },
+  "expected": "4xx with {error}",
+  "actual": "400 {\"error\":\"Amount must be more than 0.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M081",
+  "spec_rule": "R9.1",
+  "description": "Refused payments recorded nothing (outstanding still 3360)",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?party_id=42"
+  },
+  "expected": 3360,
+  "actual": 3360,
+  "verdict": "pass"
+ },
+ {
+  "id": "M082",
+  "spec_rule": "R9.1",
+  "description": "Record payment 1500",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 42,
+    "paid_on": "2026-09-28",
+    "mode": "bank",
+    "amount": 1500
+   }
+  },
+  "expected": "2xx",
+  "actual": 200,
+  "verdict": "pass"
+ },
+ {
+  "id": "M083",
+  "spec_rule": "R9.2",
+  "description": "After 1500: Jul paid, Aug part-paid, Sep unpaid (FIFO)",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 1500
+   }
+  },
+  "expected": [
+   "paid",
+   "part-paid",
+   "unpaid/open"
+  ],
+  "actual": [
+   "paid",
+   "part_paid",
+   "open"
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "M084",
+  "spec_rule": "R9.2",
+  "description": "After 1500: Aug invoice balance 740",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices"
+  },
+  "expected": 740,
+  "actual": 740,
+  "verdict": "pass"
+ },
+ {
+  "id": "M085",
+  "spec_rule": "R9.3",
+  "description": "After 1500: outstanding 1860",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit"
+  },
+  "expected": 1860,
+  "actual": 1860,
+  "verdict": "pass"
+ },
+ {
+  "id": "M086",
+  "spec_rule": "R9.3",
+  "description": "After 1500: overdue 740 (remaining Aug)",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit"
+  },
+  "expected": 740,
+  "actual": 740,
+  "verdict": "pass"
+ },
+ {
+  "id": "M087",
+  "spec_rule": "R9.2",
+  "description": "After +1000: Jul paid, Aug paid, Sep part-paid",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 1000
+   }
+  },
+  "expected": [
+   "paid",
+   "paid",
+   "part-paid"
+  ],
+  "actual": [
+   "paid",
+   "paid",
+   "part_paid"
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "M088",
+  "spec_rule": "R9.2",
+  "description": "After +1000: Sep balance 860",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices"
+  },
+  "expected": 860,
+  "actual": 860,
+  "verdict": "pass"
+ },
+ {
+  "id": "M089",
+  "spec_rule": "R9.3",
+  "description": "After +1000: outstanding 860, overdue 0",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit"
+  },
+  "expected": {
+   "outstanding": 860,
+   "overdue": 0
+  },
+  "actual": {
+   "outstanding": 860,
+   "overdue": 0
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M090",
+  "spec_rule": "R9.2",
+  "description": "After +860: all three paid",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 860
+   }
+  },
+  "expected": [
+   "paid",
+   "paid",
+   "paid"
+  ],
+  "actual": [
+   "paid",
+   "paid",
+   "paid"
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "M091",
+  "spec_rule": "R9.3",
+  "description": "After +860: outstanding 0",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit"
+  },
+  "expected": 0,
+  "actual": 0,
+  "verdict": "pass"
+ },
+ {
+  "id": "M092",
+  "spec_rule": "R9.1",
+  "description": "Payments list shows exactly 3 payments totalling 3360",
+  "request": {
+   "method": "GET",
+   "url": "/api/payments?party_id=42"
+  },
+  "expected": {
+   "count": 3,
+   "sum": 3360
+  },
+  "actual": {
+   "count": 3,
+   "sum": 3360
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M093",
+  "spec_rule": "R9.2",
+  "description": "FIFO by invoice date: invoice dated Jul-15 (created second) is settled first",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "party_id": 44,
+    "amount": 1120
+   }
+  },
+  "expected": {
+   "jul": "paid",
+   "aug": "unpaid/open"
+  },
+  "actual": {
+   "jul": "paid",
+   "aug": "open"
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M094",
+  "spec_rule": "R10.2",
+  "description": "Margin per party = 100 m x rate 80 - 100 m x lot cost (from /api/costs/lot)",
+  "request": {
+   "method": "GET",
+   "url": "/api/margin?by=party&days=30"
+  },
+  "expected": {
+   "revenue": 8000,
+   "margin": 4000
+  },
+  "actual": {
+   "revenue": 8000,
+   "cost": 4000,
+   "margin": 4000
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M095",
+  "spec_rule": "R10.2",
+  "description": "Margin by order endpoint available",
+  "request": {
+   "method": "GET",
+   "url": "/api/margin?by=order"
+  },
+  "expected": "200 with rows",
+  "actual": 200,
+  "verdict": "pass"
+ },
+ {
+  "id": "M096",
+  "spec_rule": "R8.8",
+  "description": "XML export parses as XML",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&from=2026-09-01&to=2026-09-30"
+  },
+  "expected": "well-formed XML",
+  "actual": "200 application/xml; charset=utf-8 parses=true",
+  "verdict": "pass"
+ },
+ {
+  "id": "M097",
+  "spec_rule": "R8.8",
+  "description": "XML export contains my invoice numbers",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml..."
+  },
+  "expected": [
+   "BBM/2026-27/0055",
+   "BBM/2026-27/0056",
+   "BBM/2026-27/0057"
+  ],
+  "actual": {
+   "missing": []
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M098",
+  "spec_rule": "R8.8",
+  "description": "XLSX export is a valid zip starting with PK",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xlsx..."
+  },
+  "expected": "PK header, zip test OK",
+  "actual": "200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet pk=true zip=true bytes=9605",
+  "verdict": "pass"
+ },
+ {
+  "id": "M099",
+  "spec_rule": "R8.8",
+  "description": "XLSX export contains my invoice numbers",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xlsx..."
+  },
+  "expected": [
+   "BBM/2026-27/0055",
+   "BBM/2026-27/0056",
+   "BBM/2026-27/0057"
+  ],
+  "actual": true,
+  "verdict": "pass"
+ },
+ {
+  "id": "M100",
+  "spec_rule": "R8.8",
+  "description": "Export with unknown format -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=pdfx"
+  },
+  "expected": "4xx",
+  "actual": 400,
+  "verdict": "pass"
+ },
+ {
+  "id": "M101",
+  "spec_rule": "Bad input",
+  "description": "Export with invalid from date -> 4xx (not 500)",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&from=garbage"
+  },
+  "expected": "4xx",
+  "actual": 400,
+  "verdict": "pass"
+ },
+ {
+  "id": "M102",
+  "spec_rule": "R11.1",
+  "description": "Challan PDF",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/challan?dispatch_id=49&role=owner&actor=usr-owner"
+  },
+  "expected": "%PDF, >1000 bytes",
+  "actual": "200 application/pdf %PDF- 2839B",
+  "verdict": "pass"
+ },
+ {
+  "id": "M103",
+  "spec_rule": "R11.1",
+  "description": "Packing list PDF",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/packing-list?dispatch_id=49&role=owner&actor=usr-owner"
+  },
+  "expected": "%PDF, >1000 bytes",
+  "actual": "200 application/pdf %PDF- 3042B",
+  "verdict": "pass"
+ },
+ {
+  "id": "M104",
+  "spec_rule": "R11.1",
+  "description": "Invoice PDF",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/invoice?id=61&role=owner&actor=usr-owner"
+  },
+  "expected": "%PDF, >1000 bytes",
+  "actual": "200 application/pdf %PDF- 3755B",
+  "verdict": "pass"
+ },
+ {
+  "id": "M105",
+  "spec_rule": "R11.1",
+  "description": "Party statement PDF",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=42&from=2026-04-01&to=2026-09-30&role=owner&actor=usr-owner"
+  },
+  "expected": "%PDF, >1000 bytes",
+  "actual": "200 application/pdf %PDF- 4082B",
+  "verdict": "pass"
+ },
+ {
+  "id": "M106",
+  "spec_rule": "R11.1",
+  "description": "Invoice PDF for non-existent id -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/invoice?id=99999999"
+  },
+  "expected": "4xx",
+  "actual": 404,
+  "verdict": "pass"
+ },
+ {
+  "id": "M107",
+  "spec_rule": "Bad input",
+  "description": "Statement with invalid from date -> not 500",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=42&from=bad"
+  },
+  "expected": "4xx",
+  "actual": 400,
+  "verdict": "pass"
+ },
+ {
+  "id": "M108",
+  "spec_rule": "R12.1",
+  "description": "day report: stock in/out grew by exactly what I recorded today",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=2026-09-28"
+  },
+  "expected": {
+   "in": 2100,
+   "out": 411.15
+  },
+  "actual": {
+   "in": 2100,
+   "out": 411.15
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M109",
+  "spec_rule": "R12.1",
+  "description": "Day report closing = opening + in - out",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=2026-09-28"
+  },
+  "expected": 14424.55,
+  "actual": 14424.55,
+  "verdict": "pass"
+ },
+ {
+  "id": "M110",
+  "spec_rule": "R12.1",
+  "description": "week report: stock in/out grew by exactly what I recorded today",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=week&date=2026-09-28"
+  },
+  "expected": {
+   "in": 2100,
+   "out": 411.15
+  },
+  "actual": {
+   "in": 2100,
+   "out": 411.15
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M111",
+  "spec_rule": "R12.1",
+  "description": "month report: stock in/out grew by exactly what I recorded today",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=month&date=2026-09-28"
+  },
+  "expected": {
+   "in": 2100,
+   "out": 411.15
+  },
+  "actual": {
+   "in": 2100,
+   "out": 411.15
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M112",
+  "spec_rule": "R12.2",
+  "description": "Report export is xlsx (PK zip)",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports/export?period=day&date=2026-09-28"
+  },
+  "expected": "PK header",
+  "actual": "200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet PK 17003B",
+  "verdict": "pass"
+ },
+ {
+  "id": "M113",
+  "spec_rule": "Bad input",
+  "description": "Report with invalid date 2026-02-31 -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=2026-02-31"
+  },
+  "expected": "4xx",
+  "actual": 400,
+  "verdict": "pass"
+ },
+ {
+  "id": "M114",
+  "spec_rule": "Bad input",
+  "description": "Report with non-date string -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=nonsense"
+  },
+  "expected": "4xx",
+  "actual": 400,
+  "verdict": "pass"
+ },
+ {
+  "id": "M115",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/invoices",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M116",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/invoices/61",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/61?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M117",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint PATCH /api/invoices/62",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/invoices/62",
+   "body": {
+    "status": "cancelled",
+    "role": "supervisor",
+    "actor": "usr-demo-sup"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M118",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint POST /api/invoices",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "dispatch_id": 49,
+    "role": "supervisor",
+    "actor": "usr-demo-sup"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M119",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint POST /api/invoices",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "source": "tally",
+    "invoice_no": "BBM-ACL-4ICLD",
+    "party": "BBM-Inter-4ICLD",
+    "invoice_date": "2026-09-28",
+    "taxable_amount": 1,
+    "total": 1.12,
+    "role": "supervisor",
+    "actor": "usr-demo-sup"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M120",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/invoices/export",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M121",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/invoices/export",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xlsx&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M122",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/payments",
+  "request": {
+   "method": "GET",
+   "url": "/api/payments?party_id=42&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M123",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint POST /api/payments",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "party_id": 39,
+    "amount": 1,
+    "paid_on": "2026-09-28",
+    "mode": "cash",
+    "role": "supervisor",
+    "actor": "usr-demo-sup"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M124",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/credit",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M125",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/credit/check",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=42&amount=10&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "200 {\"ok\":true,\"warn\":null}",
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M126",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/credit/reminder",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/reminder?party_id=42&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M127",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/margin",
+  "request": {
+   "method": "GET",
+   "url": "/api/margin?by=party&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M128",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/margin",
+  "request": {
+   "method": "GET",
+   "url": "/api/margin?by=order&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M129",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/costs",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M130",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/costs/lot",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-LN-4ICLD&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M131",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint POST /api/costs",
+  "request": {
+   "method": "POST",
+   "url": "/api/costs",
+   "body": {
+    "section": "Folding",
+    "cost_per_m": 0.01,
+    "valid_from": "2026-09-02",
+    "role": "supervisor",
+    "actor": "usr-demo-sup"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M132",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/rates",
+  "request": {
+   "method": "GET",
+   "url": "/api/rates?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M133",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint POST /api/rates",
+  "request": {
+   "method": "POST",
+   "url": "/api/rates",
+   "body": {
+    "quality": "BBM-Q-4ICLD",
+    "rate_per_m": 1,
+    "valid_from": "2026-09-27",
+    "role": "supervisor",
+    "actor": "usr-demo-sup"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M134",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/orders/rate",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/rate?quality=BBM-Q-4ICLD&party_id=39&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M135",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/settings/billing",
+  "request": {
+   "method": "GET",
+   "url": "/api/settings/billing?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M136",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint PUT /api/settings/billing",
+  "request": {
+   "method": "PUT",
+   "url": "/api/settings/billing",
+   "body": {
+    "gst_rate_pct": 0,
+    "legal_name": "HACK",
+    "state_code": "27",
+    "role": "supervisor",
+    "actor": "usr-demo-sup"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M137",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/docs/invoice",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/invoice?id=61&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M138",
+  "spec_rule": "Access",
+  "description": "supervisor on money endpoint GET /api/docs/statement",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=42&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M139",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/invoices",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M140",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/invoices/61",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/61?role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M141",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint PATCH /api/invoices/62",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/invoices/62",
+   "body": {
+    "status": "cancelled",
+    "role": "worker",
+    "actor": "usr-demo-wrk"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M142",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint POST /api/invoices",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "dispatch_id": 49,
+    "role": "worker",
+    "actor": "usr-demo-wrk"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M143",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint POST /api/invoices",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "source": "tally",
+    "invoice_no": "BBM-ACL-4ICLD",
+    "party": "BBM-Inter-4ICLD",
+    "invoice_date": "2026-09-28",
+    "taxable_amount": 1,
+    "total": 1.12,
+    "role": "worker",
+    "actor": "usr-demo-wrk"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M144",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/invoices/export",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M145",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/invoices/export",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xlsx&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M146",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/payments",
+  "request": {
+   "method": "GET",
+   "url": "/api/payments?party_id=42&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M147",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint POST /api/payments",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "party_id": 39,
+    "amount": 1,
+    "paid_on": "2026-09-28",
+    "mode": "cash",
+    "role": "worker",
+    "actor": "usr-demo-wrk"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M148",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/credit",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M149",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/credit/check",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=42&amount=10&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M150",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/credit/reminder",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/reminder?party_id=42&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M151",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/margin",
+  "request": {
+   "method": "GET",
+   "url": "/api/margin?by=party&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M152",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/margin",
+  "request": {
+   "method": "GET",
+   "url": "/api/margin?by=order&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M153",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/costs",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs?role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M154",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/costs/lot",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-LN-4ICLD&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M155",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint POST /api/costs",
+  "request": {
+   "method": "POST",
+   "url": "/api/costs",
+   "body": {
+    "section": "Folding",
+    "cost_per_m": 0.01,
+    "valid_from": "2026-09-02",
+    "role": "worker",
+    "actor": "usr-demo-wrk"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M156",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/rates",
+  "request": {
+   "method": "GET",
+   "url": "/api/rates?role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M157",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint POST /api/rates",
+  "request": {
+   "method": "POST",
+   "url": "/api/rates",
+   "body": {
+    "quality": "BBM-Q-4ICLD",
+    "rate_per_m": 1,
+    "valid_from": "2026-09-27",
+    "role": "worker",
+    "actor": "usr-demo-wrk"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M158",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/orders/rate",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/rate?quality=BBM-Q-4ICLD&party_id=39&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M159",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/settings/billing",
+  "request": {
+   "method": "GET",
+   "url": "/api/settings/billing?role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M160",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint PUT /api/settings/billing",
+  "request": {
+   "method": "PUT",
+   "url": "/api/settings/billing",
+   "body": {
+    "gst_rate_pct": 0,
+    "legal_name": "HACK",
+    "state_code": "27",
+    "role": "worker",
+    "actor": "usr-demo-wrk"
+   }
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M161",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/docs/invoice",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/invoice?id=61&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M162",
+  "spec_rule": "Access",
+  "description": "worker on money endpoint GET /api/docs/statement",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=42&role=worker&actor=usr-demo-wrk"
+  },
+  "expected": "403 (or no money values)",
+  "actual": "403 {\"error\":\"You are not allowed to do this.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "M163",
+  "spec_rule": "Access",
+  "description": "Billing settings unchanged after supervisor/worker PUT attempts",
+  "request": {
+   "method": "GET",
+   "url": "/api/settings/billing"
+  },
+  "expected": {
+   "gst_rate_pct": 12,
+   "state_code": "24"
+  },
+  "actual": {
+   "gst_rate_pct": 12,
+   "state_code": "24"
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "M164",
+  "spec_rule": "Access",
+  "description": "Invoice B not cancelled by supervisor/worker PATCH",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/62"
+  },
+  "expected": "status != cancelled",
+  "actual": "open",
+  "verdict": "pass"
+ },
+ {
+  "id": "M165",
+  "spec_rule": "Access",
+  "description": "No payment recorded for Intra party by supervisor/worker",
+  "request": {
+   "method": "GET",
+   "url": "/api/payments?party_id=39"
+  },
+  "expected": 0,
+  "actual": 0,
+  "verdict": "pass"
+ },
+ {
+  "id": "M166",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/orders has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M167",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/orders/12 has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/12?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M168",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/orders/12/candidates has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/12/candidates?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M169",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/inquiries has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/inquiries?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M170",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/dispatches has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/dispatches?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M171",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/dispatches/49 has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/dispatches/49?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M172",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/reports day has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=2026-09-28&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M173",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/reports week has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=week&date=2026-09-28&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M174",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/reports month has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=month&date=2026-09-28&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M175",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/agents/suggestions has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/agents/suggestions?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M176",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/parties has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/parties?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M177",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/parties has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/parties?all=1&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M178",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/inventory has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/inventory?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M179",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/stock has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/stock?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M180",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/stock/flow has no money fields",
+  "request": {
+   "method": "GET",
+   "url": "/api/stock/flow?range=all&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "M181",
+  "spec_rule": "Access/R14.2",
+  "description": "Supervisor chat money question returns no ₹ figure",
+  "request": {
+   "method": "POST",
+   "url": "/api/chat",
+   "body": {
+    "question": "what is the total outstanding amount?",
+    "role": "supervisor"
+   }
+  },
+  "expected": "no ₹ figure",
+  "actual": "200 {\"success\":true,\"answer\":\"That figure is only available to the owner.\",\"rows\":[],\"route\":\"query\",\"spec\":{\"metric\":\"outstanding\",\"groupBy\":null,\"filters\":{},\"per",
+  "verdict": "pass"
+ },
+ {
+  "id": "M182",
+  "spec_rule": "Access",
+  "description": "Worker refused challan PDF (dispatches)",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/challan?dispatch_id=49&role=worker"
+  },
+  "expected": 403,
+  "actual": 403,
+  "verdict": "pass"
+ },
+ {
+  "id": "M183",
+  "spec_rule": "Access",
+  "description": "Supervisor challan PDF (money content not checked; compressed PDF)",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/challan?dispatch_id=49&role=supervisor"
+  },
+  "expected": "allowed without ₹ (unspecified)",
+  "actual": 200,
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "M184",
+  "spec_rule": "Access",
+  "description": "Missing role treated as worker -> invoices 403",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices"
+  },
+  "expected": 403,
+  "actual": 403,
+  "verdict": "pass"
+ },
+ {
+  "id": "M185",
+  "spec_rule": "Access",
+  "description": "Unknown role treated as worker -> invoices 403",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?role=admin"
+  },
+  "expected": 403,
+  "actual": 403,
+  "verdict": "pass"
+ },
+ {
+  "id": "N001",
+  "spec_rule": "R2.2",
+  "description": "GSTIN valid: 24 + PAN + 1 Z chk",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G1-NIEAF",
+    "gstin": "24XOEIG7400J1Z0"
+   }
+  },
+  "expected": "2xx",
+  "actual": "200 {\"party\":{\"id\":46,\"name\":\"BBM-G1-NIEAF\",\"phone\":null,\"gstin\":\"24XOEIG7400J1Z0\",\"address\":null,\"city\":null,\"state_code\":\"",
+  "verdict": "pass"
+ },
+ {
+  "id": "N002",
+  "spec_rule": "R2.2",
+  "description": "GSTIN state code not 2 digits (2A)",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G2-NIEAF",
+    "gstin": "2AXOEIG7400J1ZO"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"2AXOEIG7400J1ZO\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N003",
+  "spec_rule": "R2.2",
+  "description": "GSTIN PAN 5th char digit",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G3-NIEAF",
+    "gstin": "24XOEI17400J1ZF"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"24XOEI17400J1ZF\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N004",
+  "spec_rule": "R2.2",
+  "description": "GSTIN PAN digit block has a letter",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G4-NIEAF",
+    "gstin": "24XOEIG74X0J1Z5"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"24XOEIG74X0J1Z5\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N005",
+  "spec_rule": "R2.2",
+  "description": "GSTIN PAN 10th char digit (last must be letter)",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G5-NIEAF",
+    "gstin": "24XOEIG740051ZT"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"24XOEIG740051ZT\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N006",
+  "spec_rule": "R2.2",
+  "description": "GSTIN entity char not alphanumeric (-)",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G6-NIEAF",
+    "gstin": "24XOEIG7400J-ZA"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"24XOEIG7400J-ZA\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N007",
+  "spec_rule": "R2.2",
+  "description": "GSTIN 14th char Y instead of Z",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G7-NIEAF",
+    "gstin": "24XOEIG7400J1Y2"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"24XOEIG7400J1Y2\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N008",
+  "spec_rule": "R2.2",
+  "description": "GSTIN wrong check char",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G8-NIEAF",
+    "gstin": "24XOEIG7400J1Z1"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"24XOEIG7400J1Z1\\\" is not valid — the last character does not match. Check for a typo.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N009",
+  "spec_rule": "R2.2",
+  "description": "GSTIN 16 characters",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G9-NIEAF",
+    "gstin": "24XOEIG7400J2ZZA"
+   }
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"GSTIN \\\"24XOEIG7400J2ZZA\\\" should be 15 characters: 2 digits then 13 letters/digits.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N010",
+  "spec_rule": "R2.2",
+  "description": "GSTIN lower-case otherwise valid (fresh entity 3)",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G10-NIEAF",
+    "gstin": "24xoeig7400j3zy"
+   }
+  },
+  "expected": "unspecified",
+  "actual": "200 {\"party\":{\"id\":47,\"name\":\"BBM-G10-NIEAF\",\"phone\":null,\"gstin\":\"24XOEIG7400J3ZY\",\"address\":null,\"city\":null,\"state_code\":",
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "N011",
+  "spec_rule": "R2.2",
+  "description": "GSTIN state code 00",
+  "request": {
+   "method": "POST",
+   "url": "/api/parties",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "name": "BBM-G11-NIEAF",
+    "gstin": "00XOEIG7400J1ZA"
+   }
+  },
+  "expected": "unspecified",
+  "actual": "400 {\"error\":\"GSTIN \\\"00XOEIG7400J1ZA\\\" starts with an unknown state code (00).\"}",
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "N012",
+  "spec_rule": "Bad input",
+  "description": "rates.valid_from: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/rates",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "quality": "BBM-QF-NIEAF",
+    "party_id": 48,
+    "rate_per_m": 101,
+    "valid_from": "<bad>"
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N013",
+  "spec_rule": "Bad input",
+  "description": "rates.valid_from: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "POST",
+   "url": "/api/rates",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "quality": "BBM-QF-NIEAF",
+    "party_id": 48,
+    "rate_per_m": 101,
+    "valid_from": "2028-02-29"
+   }
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N014",
+  "spec_rule": "Bad input",
+  "description": "costs.valid_from: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/costs",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "section": "Folding",
+    "cost_per_m": 1.2,
+    "valid_from": "<bad>"
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N015",
+  "spec_rule": "Bad input",
+  "description": "costs.valid_from: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "POST",
+   "url": "/api/costs",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "section": "Folding",
+    "cost_per_m": 1.2,
+    "valid_from": "2028-02-29"
+   }
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N016",
+  "spec_rule": "Bad input",
+  "description": "orders.promise_date: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/orders",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 48,
+    "quality": "BBM-QF-NIEAF",
+    "meters": 5,
+    "rate_per_m": 100,
+    "promise_date": "<bad>"
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N017",
+  "spec_rule": "Bad input",
+  "description": "orders.promise_date: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "POST",
+   "url": "/api/orders",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 48,
+    "quality": "BBM-QF-NIEAF",
+    "meters": 5,
+    "rate_per_m": 100,
+    "promise_date": "2028-02-29"
+   }
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N018",
+  "spec_rule": "Bad input",
+  "description": "PATCH orders.promise_date: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/orders/13",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "promise_date": "<bad>"
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N019",
+  "spec_rule": "Bad input",
+  "description": "PATCH orders.promise_date: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/orders/13",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "promise_date": "2028-02-29"
+   }
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N020",
+  "spec_rule": "Bad input",
+  "description": "PATCH inquiries.needed_by: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/inquiries/10",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "needed_by": "<bad>"
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N021",
+  "spec_rule": "Bad input",
+  "description": "PATCH inquiries.needed_by: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/inquiries/10",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "needed_by": "2028-02-29"
+   }
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N022",
+  "spec_rule": "Bad input",
+  "description": "invoice (from dispatch).invoice_date: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 64,
+    "invoice_date": "<bad>"
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N023",
+  "spec_rule": "Bad input",
+  "description": "invoice (from dispatch).invoice_date: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "dispatch_id": 64,
+    "invoice_date": "2024-02-29"
+   }
+  },
+  "expected": "2xx",
+  "actual": "201 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N024",
+  "spec_rule": "Bad input",
+  "description": "tally invoice_date: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-T-NIEAF<bad>",
+    "party": "BBM-Dates-NIEAF",
+    "invoice_date": "<bad>",
+    "taxable_amount": 100,
+    "total": 112
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N025",
+  "spec_rule": "Bad input",
+  "description": "tally invoice_date: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-T-NIEAF2024-02-29",
+    "party": "BBM-Dates-NIEAF",
+    "invoice_date": "2024-02-29",
+    "taxable_amount": 100,
+    "total": 112
+   }
+  },
+  "expected": "2xx",
+  "actual": "201 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N026",
+  "spec_rule": "Bad input",
+  "description": "tally due_date: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-TD-NIEAF<bad>",
+    "party": "BBM-Dates-NIEAF",
+    "invoice_date": "2026-09-01",
+    "due_date": "<bad>",
+    "taxable_amount": 100,
+    "total": 112
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N027",
+  "spec_rule": "Bad input",
+  "description": "tally due_date: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "POST",
+   "url": "/api/invoices",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "source": "tally",
+    "invoice_no": "BBM-TD-NIEAF2028-02-29",
+    "party": "BBM-Dates-NIEAF",
+    "invoice_date": "2026-09-01",
+    "due_date": "2028-02-29",
+    "taxable_amount": 100,
+    "total": 112
+   }
+  },
+  "expected": "2xx",
+  "actual": "201 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N028",
+  "spec_rule": "Bad input",
+  "description": "payments.paid_on: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 48,
+    "amount": 1,
+    "paid_on": "<bad>",
+    "mode": "cash",
+    "reference": "BBM-R-NIEAF<bad>"
+   }
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N029",
+  "spec_rule": "Bad input",
+  "description": "payments.paid_on: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "role": "owner",
+    "actor": "usr-owner",
+    "party_id": 48,
+    "amount": 1,
+    "paid_on": "2024-02-29",
+    "mode": "cash",
+    "reference": "BBM-R-NIEAF2024-02-29"
+   }
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N030",
+  "spec_rule": "Bad input",
+  "description": "reports.date: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=<bad>&role=owner"
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N031",
+  "spec_rule": "Bad input",
+  "description": "reports.date: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=2024-02-29&role=owner"
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N032",
+  "spec_rule": "Bad input",
+  "description": "reports/export.date: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports/export?period=day&date=<bad>&role=owner"
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N033",
+  "spec_rule": "Bad input",
+  "description": "reports/export.date: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports/export?period=day&date=2024-02-29&role=owner"
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N034",
+  "spec_rule": "Bad input",
+  "description": "invoices/export from: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&from=<bad>&to=2026-09-30&role=owner"
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N035",
+  "spec_rule": "Bad input",
+  "description": "invoices/export from: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&from=2024-02-29&to=2026-09-30&role=owner"
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N036",
+  "spec_rule": "Bad input",
+  "description": "invoices/export to: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xlsx&from=2026-04-01&to=<bad>&role=owner"
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N037",
+  "spec_rule": "Bad input",
+  "description": "invoices/export to: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xlsx&from=2026-04-01&to=2028-02-29&role=owner"
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N038",
+  "spec_rule": "Bad input",
+  "description": "invoices list from: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?from=<bad>&role=owner"
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N039",
+  "spec_rule": "Bad input",
+  "description": "invoices list from: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?from=2024-02-29&role=owner"
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N040",
+  "spec_rule": "Bad input",
+  "description": "docs/statement from: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=48&from=<bad>&to=2026-09-30&role=owner"
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N041",
+  "spec_rule": "Bad input",
+  "description": "docs/statement from: leap day 2024-02-29 accepted",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=48&from=2024-02-29&to=2026-09-30&role=owner"
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N042",
+  "spec_rule": "Bad input",
+  "description": "docs/statement to: Feb 30 / Apr 31 / 2027-02-29 refused",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=48&from=2026-04-01&to=<bad>&role=owner"
+  },
+  "expected": "all 4xx",
+  "actual": "2026-02-30:400 2026-04-31:400 2027-02-29:400",
+  "verdict": "pass"
+ },
+ {
+  "id": "N043",
+  "spec_rule": "Bad input",
+  "description": "docs/statement to: leap day 2028-02-29 accepted",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=48&from=2026-04-01&to=2028-02-29&role=owner"
+  },
+  "expected": "2xx",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N044",
+  "spec_rule": "R10.1",
+  "description": "No-shortage lot cost = purchase 40 + process_total",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-S0-NIEAF"
+  },
+  "expected": 40,
+  "actual": 40,
+  "verdict": "pass"
+ },
+ {
+  "id": "N045",
+  "spec_rule": "R10.1",
+  "description": "25% shortage lot (250 grey -> 200 finished) cost > purchase + process",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-S1-NIEAF"
+  },
+  "expected": "> 40",
+  "actual": {
+   "lot_id": "BBM-S1-NIEAF",
+   "quality": "BBM-QS-NIEAF",
+   "purchase": 40,
+   "process": [],
+   "process_total": 0,
+   "shortage": 10,
+   "total": 50,
+   "complete": true,
+   "missing": []
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N046",
+  "spec_rule": "R10.1",
+  "description": "Larger shortage (300->200) costs more than smaller (250->200)",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-S2-NIEAF"
+  },
+  "expected": "> 50",
+  "actual": 60,
+  "verdict": "pass"
+ },
+ {
+  "id": "N047",
+  "spec_rule": "R10.1",
+  "description": "Exact shortage-lot cost 40*250/200 + process (combination of process with shortage unspecified)",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-S1-NIEAF"
+  },
+  "expected": 50,
+  "actual": 50,
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "N048",
+  "spec_rule": "R10.1",
+  "description": "Process cost combined with purchase for a lot (no way to attach job cards via documented API)",
+  "request": {
+   "method": "GET",
+   "url": "/api/costs/lot?lot_id=BBM-S1-NIEAF"
+  },
+  "expected": "purchase + applicable process",
+  "actual": {
+   "process": [],
+   "process_total": 0
+  },
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "N049",
+  "spec_rule": "R9.4",
+  "description": "Credit check no overdue: 1120 + 5000 vs 10000 -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=49&amount=5000&role=owner"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": null,
+   "outstanding": 1120,
+   "limit": 10000,
+   "overdue": 0,
+   "available": 8880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N050",
+  "spec_rule": "R9.4",
+  "description": "Credit check no overdue: 1120 + 8880 vs 10000 -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=49&amount=8880&role=owner"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": null,
+   "outstanding": 1120,
+   "limit": 10000,
+   "overdue": 0,
+   "available": 8880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N051",
+  "spec_rule": "R9.4",
+  "description": "Credit check no overdue: 1120 + 8881 vs 10000 -> not ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=49&amount=8881&role=owner"
+  },
+  "expected": "ok false/warn",
+  "actual": {
+   "ok": false,
+   "warn": "This would take BBM-CrNo-NIEAF to ₹10,001, over the credit limit of ₹10,000.",
+   "outstanding": 1120,
+   "limit": 10000,
+   "overdue": 0,
+   "available": 8880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N052",
+  "spec_rule": "R9.4",
+  "description": "Credit check with overdue: 1120 + 5000 vs 10000 -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=50&amount=5000&role=owner"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": "BBM-CrOd-NIEAF has ₹1,120 overdue for 109 days.",
+   "outstanding": 1120,
+   "limit": 10000,
+   "overdue": 1120,
+   "available": 8880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N053",
+  "spec_rule": "R9.4",
+  "description": "Credit check with overdue: 1120 + 8880 vs 10000 -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=50&amount=8880&role=owner"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": "BBM-CrOd-NIEAF has ₹1,120 overdue for 109 days.",
+   "outstanding": 1120,
+   "limit": 10000,
+   "overdue": 1120,
+   "available": 8880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N054",
+  "spec_rule": "R9.4",
+  "description": "Credit check with overdue: 1120 + 8881 vs 10000 -> not ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=50&amount=8881&role=owner"
+  },
+  "expected": "ok false/warn",
+  "actual": {
+   "ok": false,
+   "warn": "BBM-CrOd-NIEAF has ₹1,120 overdue for 109 days; this would take BBM-CrOd-NIEAF to ₹10,001, over the credit limit of ₹10,000.",
+   "outstanding": 1120,
+   "limit": 10000,
+   "overdue": 1120,
+   "available": 8880
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N055",
+  "spec_rule": "R9.4",
+  "description": "Credit check no limit + overdue: 1120 + 9999999 vs no limit -> ok",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit/check?party_id=51&amount=9999999&role=owner"
+  },
+  "expected": "ok true",
+  "actual": {
+   "ok": true,
+   "warn": "BBM-CrNoLim-NIEAF has ₹1,120 overdue for 109 days.",
+   "outstanding": 1120,
+   "limit": null,
+   "overdue": 1120,
+   "available": null
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N056",
+  "spec_rule": "R9.2",
+  "description": "Pay 100: oldest invoice part-paid (bal 1020), newer unpaid",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 100
+   }
+  },
+  "expected": {
+   "I1": [
+    "part-paid",
+    1020
+   ],
+   "I2": [
+    "unpaid",
+    1120
+   ]
+  },
+  "actual": {
+   "I1": [
+    "part_paid",
+    1020
+   ],
+   "I2": [
+    "open",
+    1120
+   ]
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N057",
+  "spec_rule": "R9.2",
+  "description": "Status filter part-paid returns exactly the part-paid invoice",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?party_id=52&status=part-paid"
+  },
+  "expected": [
+   83
+  ],
+  "actual": "200 [83]",
+  "verdict": "pass"
+ },
+ {
+  "id": "N058",
+  "spec_rule": "R9.2",
+  "description": "Pay exactly the remaining 1020: I1 paid (bal 0), I2 still unpaid (not part-paid)",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 1020
+   }
+  },
+  "expected": {
+   "I1": [
+    "paid",
+    0
+   ],
+   "I2": [
+    "unpaid",
+    1120
+   ]
+  },
+  "actual": {
+   "I1": [
+    "paid",
+    0
+   ],
+   "I2": [
+    "open",
+    1120
+   ]
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N059",
+  "spec_rule": "R9.2",
+  "description": "Pay 1119.99: I2 part-paid with balance 0.01",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 1119.99
+   }
+  },
+  "expected": [
+   "part-paid",
+   0.01
+  ],
+  "actual": [
+   "part_paid",
+   0.01
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "N060",
+  "spec_rule": "R9.2/9.3",
+  "description": "Pay final 0.01: both paid, outstanding 0",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 0.01
+   }
+  },
+  "expected": {
+   "s": [
+    "paid",
+    "paid"
+   ],
+   "outstanding": 0
+  },
+  "actual": {
+   "s": [
+    "paid",
+    "paid"
+   ],
+   "outstanding": 0
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N061",
+  "spec_rule": "R9.2",
+  "description": "Status filter paid returns both invoices",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?party_id=52&status=paid"
+  },
+  "expected": [
+   83,
+   84
+  ],
+  "actual": [
+   83,
+   84
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "N062",
+  "spec_rule": "R9.1",
+  "description": "Overpayment 500 with nothing due: no 500 error; invoices stay paid with balance 0",
+  "request": {
+   "method": "POST",
+   "url": "/api/payments",
+   "body": {
+    "amount": 500
+   }
+  },
+  "expected": "2xx or 4xx; balances 0",
+  "actual": {
+   "status": 200,
+   "bal": [
+    0,
+    0
+   ],
+   "st": [
+    "paid",
+    "paid"
+   ]
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N063",
+  "spec_rule": "R9.3",
+  "description": "Outstanding after overpayment (invoiced 2240 - payments 2740 = -500 per R9.3 formula; advance handling unspecified)",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?party_id=52"
+  },
+  "expected": -500,
+  "actual": {
+   "outstanding": -500
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N064",
+  "spec_rule": "R9.2",
+  "description": "New invoice after 500 overpayment: outstanding = 2240+1120 - 2740 = 620 (if overpayment was accepted)",
+  "request": {
+   "method": "GET",
+   "url": "/api/credit?party_id=52"
+  },
+  "expected": 620,
+  "actual": {
+   "outstanding": 620,
+   "status": "part_paid"
+  },
+  "verdict": "pass"
+ },
+ {
+  "id": "N065",
+  "spec_rule": "R8.1",
+  "description": "Status filter cancelled returns only the cancelled invoice",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?party_id=53&status=cancelled"
+  },
+  "expected": [
+   87
+  ],
+  "actual": [
+   87
+  ],
+  "verdict": "pass"
+ },
+ {
+  "id": "N066",
+  "spec_rule": "R9.3",
+  "description": "Status filter overdue returns only the past-due invoice",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?party_id=53&status=overdue"
+  },
+  "expected": [
+   86
+  ],
+  "actual": "200 [86]",
+  "verdict": "pass"
+ },
+ {
+  "id": "N067",
+  "spec_rule": "Bad input",
+  "description": "Unknown status filter -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices?status=bogus"
+  },
+  "expected": "4xx",
+  "actual": 400,
+  "verdict": "pass"
+ },
+ {
+  "id": "N068",
+  "spec_rule": "Bad input",
+  "description": "Invalid from/to -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&from=garbage&to=2026-09-30&role=owner"
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"\\\"from\\\" must be a date like 2026-09-28.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N069",
+  "spec_rule": "Bad input",
+  "description": "Invalid from/to -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xlsx&from=2026-04-01&to=31-12-2026x&role=owner"
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"\\\"to\\\" must be a date like 2026-09-28.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N070",
+  "spec_rule": "Bad input",
+  "description": "Invalid from/to -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=53&from=abc&to=2026-09-30&role=owner"
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"\\\"from\\\" must be a date like 2026-09-28.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N071",
+  "spec_rule": "Bad input",
+  "description": "Invalid from/to -> 4xx",
+  "request": {
+   "method": "GET",
+   "url": "/api/docs/statement?party_id=53&from=2026-04-01&to=zzz&role=owner"
+  },
+  "expected": "4xx",
+  "actual": "400 {\"error\":\"\\\"to\\\" must be a date like 2026-09-28.\"}",
+  "verdict": "pass"
+ },
+ {
+  "id": "N072",
+  "spec_rule": "Bad input",
+  "description": "Export with from > to",
+  "request": {
+   "method": "GET",
+   "url": "/api/invoices/export?format=xml&from=2026-09-30&to=2026-04-01"
+  },
+  "expected": "4xx or empty (unspecified)",
+  "actual": 400,
+  "verdict": "ambiguous"
+ },
+ {
+  "id": "N073",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/orders contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N074",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/orders/15 contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/15?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N075",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/orders/15/candidates contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/orders/15/candidates?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N076",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/inquiries contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/inquiries?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N077",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/dispatches contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/dispatches?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N078",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/dispatches?days=30& contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/dispatches?days=30&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N079",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/parties contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/parties?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N080",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/parties?all=1&q=BBM& contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/parties?all=1&q=BBM&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N081",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/stock contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/stock?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N082",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/stock/flow?range=day& contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/stock/flow?range=day&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N083",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/stock/flow?range=all& contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/stock/flow?range=all&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N084",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/inventory contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/inventory?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N085",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/status contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/status?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N086",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/workers contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/workers?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N087",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/reports?period=day&date=2026-09-28& contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=day&date=2026-09-28&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N088",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/reports?period=week&date=2026-09-28& contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=week&date=2026-09-28&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N089",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/reports?period=month&date=2026-09-28& contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports?period=month&date=2026-09-28&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N090",
+  "spec_rule": "Access/R12.4",
+  "description": "supervisor GET /api/agents/suggestions contains no money",
+  "request": {
+   "method": "GET",
+   "url": "/api/agents/suggestions?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money keys/₹",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N091",
+  "spec_rule": "R12.4",
+  "description": "supervisor report export (xlsx) has no ₹ / invoiced / collected / margin",
+  "request": {
+   "method": "GET",
+   "url": "/api/reports/export?period=month&date=2026-09-28&role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money content",
+  "actual": "200 moneyWords=false",
+  "verdict": "pass"
+ },
+ {
+  "id": "N092",
+  "spec_rule": "R4.2/Access",
+  "description": "supervisor POST /api/inquiries response has no rate/₹",
+  "request": {
+   "method": "POST",
+   "url": "/api/inquiries",
+   "body": {
+    "role": "supervisor",
+    "actor": "usr-demo-sup",
+    "raw_text": "need 40 m BBM-QF-NIEAF by 5th rate?",
+    "party_name": "BBM-Sup-NIEAF"
+   }
+  },
+  "expected": "2xx, no money",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N093",
+  "spec_rule": "R4.2/Access",
+  "description": "supervisor GET /api/inquiries/<id> has no rate/₹",
+  "request": {
+   "method": "GET",
+   "url": "/api/inquiries/11?role=supervisor&actor=usr-demo-sup"
+  },
+  "expected": "no money",
+  "actual": "200 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N094",
+  "spec_rule": "Access",
+  "description": "supervisor dispatch with create_invoice=true: response has no money and no invoice is created",
+  "request": {
+   "method": "POST",
+   "url": "/api/dispatches",
+   "body": {
+    "role": "supervisor",
+    "actor": "usr-demo-sup",
+    "party": "BBM-Sup-NIEAF",
+    "order_id": 15,
+    "lines": [
+     {
+      "lot_id": "BBM-LF-NIEAF",
+      "meters": 5
+     }
+    ],
+    "transporter": "t",
+    "create_invoice": true
+   }
+  },
+  "expected": "dispatch ok or 403; 0 invoices; no money",
+  "actual": "403 invoices=0 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N095",
+  "spec_rule": "Access",
+  "description": "supervisor PATCH /api/orders/<id> response has no rate",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/orders/15",
+   "body": {
+    "role": "supervisor",
+    "actor": "usr-demo-sup",
+    "meters": 25
+   }
+  },
+  "expected": "no money",
+  "actual": "403 ",
+  "verdict": "pass"
+ },
+ {
+  "id": "N096",
+  "spec_rule": "Access",
+  "description": "supervisor cannot change an order rate (money)",
+  "request": {
+   "method": "PATCH",
+   "url": "/api/orders/15",
+   "body": {
+    "rate_per_m": 1,
+    "role": "supervisor"
+   }
+  },
+  "expected": "rate stays 100",
+  "actual": "403 rate=100",
+  "verdict": "pass"
+ },
+ {
+  "id": "N097",
+  "spec_rule": "R14.2",
+  "description": "supervisor chat money question has no ₹ figure",
+  "request": {
+   "method": "POST",
+   "url": "/api/chat",
+   "body": {
+    "question": "what is the rate of BBM-QF-NIEAF?",
+    "role": "supervisor"
+   }
+  },
+  "expected": "no ₹",
+  "actual": "200 From “Shortage policy”: Folding shortage above the firm limit (Settings → Rules) is checked by the section supervisor th",
+  "verdict": "pass"
+ },
+ {
+  "id": "N098",
+  "spec_rule": "R14.2",
+  "description": "supervisor chat money question has no ₹ figure",
+  "request": {
+   "method": "POST",
+   "url": "/api/chat",
+   "body": {
+    "question": "how much does BBM-Sup-NIEAF owe?",
+    "role": "supervisor"
+   }
+  },
+  "expected": "no ₹",
+  "actual": "200 Try: \"what's happening today?\", \"how many workers do I have?\", \"who folded how much today?\", \"dispatch by party this mon",
+  "verdict": "pass"
+ },
+ {
+  "id": "N099",
+  "spec_rule": "R14.2",
+  "description": "supervisor chat money question has no ₹ figure",
+  "request": {
+   "method": "POST",
+   "url": "/api/chat",
+   "body": {
+    "question": "total sales this month?",
+    "role": "supervisor"
+   }
+  },
+  "expected": "no ₹",
+  "actual": "200 Try: \"what's happening today?\", \"how many workers do I have?\", \"who folded how much today?\", \"dispatch by party this mon",
+  "verdict": "pass"
+ }
+]

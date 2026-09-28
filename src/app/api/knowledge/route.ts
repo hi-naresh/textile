@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { query } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName } from '@/lib/settings';
@@ -25,7 +26,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const b = await req.json();
+    const b = await readObject(req);
     const r = await query(`INSERT INTO knowledge_docs (title, body) VALUES ($1, $2) RETURNING id, title, body, active, updated_at`, [cleanName(b.title, 'Title', 150), cleanBody(b.body)]);
     return NextResponse.json({ doc: r.rows[0] });
   } catch (error) {
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const b = await req.json();
+    const b = await readObject(req);
     const id = Number(b.id);
     if (!Number.isInteger(id) || id <= 0) throw new LedgerError('A valid note id is required.');
     const sets: string[] = [];

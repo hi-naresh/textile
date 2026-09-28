@@ -62,10 +62,23 @@ Last updated: 27 Sep 2026
 - [ ] Voice mode on iPhone: speech recognition needs Safari 14.5+ and mic permission each session; test on the owner's phone
 - [ ] Gujarati speech: Chrome/Android support gu-IN recognition and voices; iPhone has no Gujarati text-to-speech voice (reply shows on screen, spoken voice may fall back). Consider Google Cloud TTS for Gujarati if needed
 
-### Phase 2 — agents (spec only: `docs/AGENTS_PHASE2.md`)
-- [ ] Approved: Inquiry Handling, Order Management, Fabric Inventory, Fabric Allocation, Logistics & Dispatch, Costing & Margin, Document Generation, Analytics & Reporting, Credit & Payment
+### Phase 2 — agents (built 28 Sep 2026)
+- [x] Master data: parties (GSTIN checked), selling rates (per quality, party overrides), process costs, billing & GST, agent thresholds — Settings
+- [x] Inquiry agent: reads pasted/typed inquiries (en/hi/gu, rule-based; AI only if fields missing), checks free stock + rate, drafts the reply (WhatsApp link)
+- [x] Order agent: orders, due/overdue alerts; Allocation agent: reserves lots (FIFO), one-tap "Allocate" suggestions
+- [x] Logistics agent: every dispatch (manual, photo, import, dispatch screen) links to its order automatically, or asks which order
+- [x] Documents: delivery challan, packing list, GST tax invoice, party statement (PDF); Tally export (Excel + TallyPrime XML); record invoices made in Tally
+- [x] Credit agent: outstanding, ageing, overdue / over-limit alerts, reminders (en/hi/gu), credit warning before dispatch
+- [x] Costing agent: lot cost (purchase + process + shortage), margin by order/party/quality/lot, low-margin & missing-rate alerts
+- [x] Inventory agent: low stock, short for orders, ageing stock, missing location, mill loss; days of cover
+- [x] Reports agent: day/week/month report with comparisons + Excel; daily/weekly "report ready"
+- [x] Alerts + one-tap actions in "Needs your attention" (owner) and on the Floor screen (supervisor); chat answers orders / outstanding / invoiced / collected / free stock
+- [ ] Owner to fill Billing & GST, rates and process costs with real values; check the first real invoice against Tally
+- [ ] PDFs use a Latin font: Gujarati/Hindi party names print as "?" — add a Noto font if needed
+- [ ] Tally XML is accounting-only (no stock items); ledger names fixed (Sales, CGST/SGST/IGST Output, Round Off) — confirm with the accountant
+- [ ] Duplicate challan numbers are checked in code only; add a unique index if two people dispatch at the same moment
+- [ ] Reports "overdue orders" for past periods use today's status (no status history)
 - [ ] Not doing: supply-chain visibility, quality/inspection, production agents
-
 ---
 
 ## Review — 26 Sep 2026 (field & workflow gap review)

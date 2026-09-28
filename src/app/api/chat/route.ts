@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { LedgerError } from '@/lib/ledger-error';
+import { readObject } from '@/lib/apiAuth';
 import { query } from '@/lib/db';
 import { answerQuestion } from '@/lib/chat/router';
 import { sectionKey } from '@/lib/settings';
@@ -8,7 +10,7 @@ import { sectionKey } from '@/lib/settings';
 // TODO(auth): take user and role from the session instead of the request body.
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await readObject(request);
     const question = typeof body.question === 'string' ? body.question.trim().slice(0, 500) : '';
     if (!question) return NextResponse.json({ error: 'Type a question.' }, { status: 400 });
     const role = body.role === 'supervisor' ? 'supervisor' : body.role === 'owner' ? 'owner' : null;
@@ -39,6 +41,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, ...result, rows: result.rows.slice(0, 50) });
   } catch (error) {
+    if (error instanceof LedgerError) return NextResponse.json({ error: error.message }, { status: error.status });
     console.error('[chat] failed', error);
     return NextResponse.json({ error: 'Could not answer right now. Try again.' }, { status: 500 });
   }

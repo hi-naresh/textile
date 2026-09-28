@@ -66,20 +66,21 @@ export const CAPTURE_LABEL = { incoming_stock: 'Incoming challan', outgoing_stoc
 export const ENGINE_LABEL: Record<string, string> = { ocr: 'read by OCR', llm_text: 'OCR + AI check', llm_vision: 'read by AI', mock: 'demo read' };
 
 export const FIELD_LABEL: Record<string, string> = {
+  purchase_rate: 'Purchase rate (₹/m)',
   lot_id: 'Lot', quality: 'Quality', design: 'Design', meters: 'Meters', party: 'Party (client)', source_doc: 'Challan',
   grey_meters: 'Grey meters', finished_meters: 'Finished meters', mill_name: 'Mill', weaver_name: 'Weaver',
   job_card_id: 'Job card', meters_out: 'Meters out', worker_id: 'Worker',
 };
 
 export const FIELDS_FOR = {
-  incoming_stock: ['lot_id', 'grey_meters', 'finished_meters', 'mill_name', 'weaver_name', 'source_doc', 'quality', 'design'],
+  incoming_stock: ['lot_id', 'grey_meters', 'finished_meters', 'mill_name', 'weaver_name', 'source_doc', 'quality', 'design', 'purchase_rate'],
   outgoing_stock: ['lot_id', 'meters', 'party', 'source_doc'],
   job_card_folding: ['lot_id', 'job_card_id', 'meters_out', 'worker_id'],
 } as const;
 
 /** Fields where an empty value is fine (only one of grey/finished is needed; weaver may be unknown). */
-export const OPTIONAL_FIELDS = new Set(['grey_meters', 'finished_meters', 'weaver_name', 'quality', 'design', 'job_card_id', 'worker_id']);
-export const NUMERIC_FIELDS = new Set(['meters', 'meters_out', 'job_card_id', 'grey_meters', 'finished_meters']);
+export const OPTIONAL_FIELDS = new Set(['purchase_rate', 'grey_meters', 'finished_meters', 'weaver_name', 'quality', 'design', 'job_card_id', 'worker_id']);
+export const NUMERIC_FIELDS = new Set(['purchase_rate', 'meters', 'meters_out', 'job_card_id', 'grey_meters', 'finished_meters']);
 
 export const STAGE_LABEL: Record<string, string> = {
   arrival: 'Arrived', job_card: 'On job card', returned: 'Back from job', dispatch: 'Dispatch', moved: 'Moved',

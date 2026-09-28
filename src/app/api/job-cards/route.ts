@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readObject } from '@/lib/apiAuth';
 import { query, withTransaction } from '@/lib/db';
 import { closeJobCard, createJobCard, errorResponseBody } from '@/lib/ledger';
 import { readRules } from '@/lib/settings';
@@ -69,7 +70,7 @@ export async function GET() {
 // POST: Create a job card, allot it to the worker, and move the lot to the floor.
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await readObject(request);
     const jobCard = await withTransaction((q) => createJobCard(q, { ...body, moved_by: body.moved_by ?? null }));
     return NextResponse.json({ success: true, jobCard });
   } catch (error) {
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
 // PATCH: Close a job card with meters_out (updates worker efficiency; lot returns to godown when its last card closes).
 export async function PATCH(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await readObject(request);
     const jobCard = await withTransaction((q) => closeJobCard(q, { id: body.id, meters_out: body.meters_out, moved_by: body.moved_by ?? null }));
     const { shortageLimitPct } = await readRules();
     return NextResponse.json({ success: true, jobCard: { ...jobCard, flagged: jobCard.shortage_pct > shortageLimitPct } });

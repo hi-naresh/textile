@@ -5,6 +5,7 @@ import Icon from '../Icon';
 import { Kpi, PageHead, Pill, Segmented, Sheet, Track, dayTime, effTone, fmt, fmtM, inr, initials, time } from '../ui';
 import { LotLocationPanel } from './Shared';
 import { LiveNow, StockFlow } from './Today';
+import AgentInbox from '../AgentInbox';
 import type { LedgerEntry } from '@/lib/types';
 import type { Ctx } from '../ctx';
 import { MATRIX, ROLE_LABEL, levelTone, supervisorFor, type Role, rules, activeSupervisors, owner, withFirm } from '@/lib/access';
@@ -63,7 +64,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
         <LiveNow ctx={ctx} />
         <section className="card pad stack-14">
           <div className="card-head"><h2>Needs your attention</h2>{attention.length > 0 && <Pill tone="bad"><span className="num">{attention.length}</span></Pill>}</div>
-          {attention.length === 0 && <p className="muted" style={{ margin: 0 }}>All clear. Nothing needs you right now.</p>}
+
           {attention.map((a, i) => (
             <div className="attn" key={i}>
               <span className={`dot-sm ${a.tone}`} />
@@ -74,6 +75,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
               <button className="btn sm" onClick={a.onClick}>{a.action}</button>
             </div>
           ))}
+          <AgentInbox ctx={ctx} empty={attention.length === 0 ? <p className="muted" style={{ margin: 0 }}>All clear. Nothing needs you right now.</p> : null} />
         </section>
       </div>
 

@@ -3,11 +3,14 @@
 //   /api/job-cards (create / close) and /api/lots/location (manual move).
 // Every function takes the transaction's `q` so callers control the transaction.
 
+import { markAgentsStale } from './agents/stale';
+import { trimReservations } from './stock';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, lotCode, metersValue, nameValue, SYSTEM_LOCATIONS } from './normalize';
 
 export { LedgerError };
+import { afterOutgoing } from './agents/hooks';
 
 export const DISPATCHED = SYSTEM_LOCATIONS.dispatched;
 export type LocationStage = 'arrival' | 'job_card' | 'returned' | 'dispatch' | 'moved';
@@ -77,6 +80,7 @@ export interface IncomingInput {
   weaver_name?: unknown;
   source_doc?: unknown;
   location?: unknown;
+  purchase_rate?: unknown; // ₹/m grey purchase rate (Pu.Rate), for costing
   capture_event_id?: number | null;
   moved_by?: string | null;
 }
@@ -86,6 +90,7 @@ export interface IncomingInput {
  * `requireLotDetails`: manual entry must name quality + design for a new lot; photo reads fall back to "Unknown".
  */
 export async function recordIncoming(q: Q, input: IncomingInput, opts: { requireLotDetails: boolean }) {
+  await markAgentsStale(q);
   const lotId = lotCode(input.lot_id)!;
   const grey = metersValue(input.grey_meters, 'Grey meters');
   const finished = metersValue(input.finished_meters, 'Finished meters');
@@ -107,9 +112,9 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   }
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id)
-     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8) RETURNING *`,
-    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null],
+    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id, purchase_rate)
+     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8, $9) RETURNING *`,
+    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null, metersValue(input.purchase_rate, 'Purchase rate')],
   );
   const movement = mv.rows[0];
   // No location given (e.g. a photo read): a new lot lands in the godown; an existing lot stays where it is.
@@ -134,10 +139,13 @@ export interface OutgoingInput {
   source_doc?: unknown;
   capture_event_id?: number | null;
   moved_by?: string | null;
+  order_id?: number | null; // set when dispatched against a known order (Logistics agent)
+  dispatch_id?: number | null; // truck / parcel grouping
 }
 
 /** Record a dispatch. Party (destination client) is required. */
 export async function recordOutgoing(q: Q, input: OutgoingInput) {
+  await markAgentsStale(q);
   const lotId = lotCode(input.lot_id)!;
   const meters = metersValue(input.meters, 'Meters');
   if (meters == null) throw new LedgerError('Meters are required.');
@@ -150,11 +158,15 @@ export async function recordOutgoing(q: Q, input: OutgoingInput) {
   if (balance < meters) throw new LedgerError(`Insufficient stock. Lot ${lotId} has ${balance} m, dispatch asks for ${meters} m.`);
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id)
-     VALUES ($1, 'OUT', $2, $3, $4, $5) RETURNING *`,
-    [lotId, meters, party, challan, input.capture_event_id ?? null],
+    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id)
+     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null],
   );
   const movement = mv.rows[0];
+  // Logistics agent: link the dispatch to its order / allocation, update order status (same transaction).
+  await afterOutgoing(q, movement, input.moved_by ?? null);
+  // Stock that was reserved for an order but went out another way: shrink those reservations.
+  await trimReservations(q, lotId);
   const remaining = Math.round((balance - meters) * 100) / 100;
   const here = (await currentLocation(q, lotId)) ?? 'Godown';
   await moveLot(q, {
@@ -199,6 +211,7 @@ export async function createJobCard(
 
 /** Close a job card with meters out, roll up the worker's day, and send the lot back to the godown when its last open card closes. */
 export async function closeJobCard(q: Q, input: { id?: unknown; meters_out?: unknown; moved_by?: string | null }) {
+  await markAgentsStale(q);
   const id = Number(input.id);
   if (!Number.isInteger(id) || id <= 0) throw new LedgerError('A valid job card id is required.');
   const metersOut = metersValue(input.meters_out, 'Meters out', { allowZero: true });
@@ -277,6 +290,7 @@ export async function applyCaptureRead(q: Q, type: CaptureType, data: Record<str
 
 export function errorResponseBody(err: unknown): { status: number; body: { error: string } } {
   if (err instanceof LedgerError) return { status: err.status, body: { error: err.message } };
+  if (err instanceof SyntaxError) return { status: 400, body: { error: 'The request body is not valid JSON.' } };
   console.error('[Ledger] Unexpected error', err);
   return { status: 500, body: { error: 'Something went wrong while saving. Nothing was changed.' } };
 }
