@@ -7,8 +7,9 @@ import type { KnowledgeDoc } from '@/lib/useTextileData';
 import { MasterData } from './MasterData';
 import type { Ctx } from '../ctx';
 import { LIMITS } from '@/lib/config';
-import { ROLE_LABEL, activeSupervisors, sectionName, type Role } from '@/lib/access';
+import { sectionName } from '@/lib/access';
 import type { Worker } from '@/lib/types';
+import { AccountCard } from './Account';
 
 type WorkerRow = Worker & { active: boolean };
 
@@ -54,46 +55,17 @@ function AddRow({ placeholder, button, onAdd, children }: { placeholder: string;
   );
 }
 
-/** Preview role (until login exists) + owner screen density. Stored on this device. */
-function ViewSettings({ ctx }: { ctx: Ctx }) {
-  const { role, d } = ctx;
-  const sups = activeSupervisors();
+/** Theme + language (every role) and screen density (owner), stored on this device. */
+function Preferences({ ctx }: { ctx: Ctx }) {
   return (
     <section className="card pad stack-16">
-      <h2 className="h2">View</h2>
-      <div className="fld">Preview as
-        <Segmented label="Preview as role" value={role} onChange={ctx.setRole} className="fit" options={(['owner', 'supervisor', 'worker'] as Role[]).map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
-        <span className="muted small">Until login is added, this decides what the app shows.</span>
-      </div>
-      {role === 'supervisor' && sups.length > 0 && (
-        <label className="fld">Supervisor
-          <select value={ctx.supervisorId ?? sups[0].id} onChange={(e) => ctx.setSupervisorId(e.target.value)}>
-            {sups.map((s) => <option key={s.id} value={s.id}>{s.name}{s.sections.length ? ` · ${s.sections.join(', ')}` : ''}</option>)}
-          </select>
-        </label>
-      )}
-      {role === 'worker' && d.workers.length > 0 && (
-        <label className="fld">Worker
-          <select value={ctx.workerId ?? ''} onChange={(e) => ctx.setWorkerId(e.target.value)}>
-            {d.workers.map((w) => <option key={w.id} value={w.id}>{w.name} · {sectionName(w.section)}</option>)}
-          </select>
-        </label>
-      )}
-      {role === 'owner' && (
+      <h2 className="h2">Preferences</h2>
+      {ctx.role === 'owner' && (
         <div className="fld">Screen density
           <Segmented label="Screen density" value={ctx.density} onChange={ctx.setDensity} className="fit" options={[{ value: 'compact', label: 'Compact' }, { value: 'detailed', label: 'Detailed' }]} />
           <span className="muted small">Compact hides charts, the sections table and detail columns.</span>
         </div>
       )}
-    </section>
-  );
-}
-
-/** Theme + language: every role, stored on this device. */
-function Preferences({ ctx }: { ctx: Ctx }) {
-  return (
-    <section className="card pad stack-16">
-      <h2 className="h2">Preferences</h2>
       <div className="fld">Theme
         <Segmented label="Theme" value={ctx.theme} onChange={ctx.setTheme} className="fit" options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]} />
       </div>
@@ -110,7 +82,7 @@ export function Settings({ ctx }: { ctx: Ctx }) {
     return (
       <div className="page fade settings">
         <PageHead title="Settings" />
-        <div className="settings-grid"><ViewSettings ctx={ctx} /><Preferences ctx={ctx} /></div>
+        <div className="settings-grid">{ctx.session.kind === 'client' && <AccountCard me={ctx.session} />}<Preferences ctx={ctx} /></div>
       </div>
     );
   }
@@ -154,9 +126,8 @@ function OwnerSettings({ ctx }: { ctx: Ctx }) {
       <PageHead title="Settings" sub="Firm settings apply for everyone straight away" />
 
       <div className="settings-grid">
-        <ViewSettings ctx={ctx} />
+        {ctx.session.kind === 'client' && <AccountCard me={ctx.session} />}
         <Preferences ctx={ctx} />
-        <Connections ctx={ctx} />
         {/* Firm */}
         <section className="card pad stack-16">
           <div className="stack-4"><h2 className="h2">Firm</h2><span className="muted small">Shown in the header and the browser tab.</span></div>
@@ -289,62 +260,6 @@ function OwnerSettings({ ctx }: { ctx: Ctx }) {
         </AddRow>
       </section>
     </div>
-  );
-}
-
-const AI_LABEL: Record<string, { label: string; tone: 'good' | 'warn' | 'bad' | 'info' }> = {
-  connected: { label: 'Connected', tone: 'good' },
-  demo: { label: 'Demo mode', tone: 'info' },
-  missing: { label: 'Not connected', tone: 'bad' },
-  invalid_key: { label: 'Key rejected', tone: 'bad' },
-  model_unavailable: { label: 'Model unavailable', tone: 'bad' },
-  unreachable: { label: 'Unreachable', tone: 'warn' },
-};
-
-function Connections({ ctx }: { ctx: Ctx }) {
-  const { d } = ctx;
-  const [busy, setBusy] = useState(false);
-  const st = d.status;
-  const ai = st ? AI_LABEL[st.ai.state] ?? AI_LABEL.unreachable : null;
-  const photoTone = st?.photos.state === 'missing' ? 'bad' : st?.photos.state === 'local' ? 'info' : 'good';
-  return (
-    <section className="card pad stack-14">
-      <div className="card-head">
-        <div className="stack-4 grow"><h2 className="h2">Connections</h2></div>
-        <button className="btn sm" disabled={busy} onClick={async () => { setBusy(true); await d.checkStatus(true); setBusy(false); }}><Icon name="refresh" size={14} />{busy ? 'Checking…' : 'Check again'}</button>
-      </div>
-      {!st && <span className="muted small">Checking…</span>}
-      {st && ai && (
-        <div className="list">
-          {st.ocr && (
-            <div className="list-row wrap">
-              <div className="stack-2 grow">
-                <span className="strong">OCR (Google Cloud Vision)</span>
-                <span className="muted small">{st.ocr.message}</span>
-                {st.ocr.fix && <span className="t2 small">What to do: {st.ocr.fix}</span>}
-              </div>
-              <Pill tone={st.ocr.state === 'connected' ? 'good' : 'warn'}>{st.ocr.state === 'connected' ? 'Connected' : 'Not connected'}</Pill>
-            </div>
-          )}
-          <div className="list-row wrap">
-            <div className="stack-2 grow">
-              <span className="strong">AI (Gemini)</span>
-              <span className="muted small">{st.ai.message}{st.ai.state !== 'missing' && st.ai.state !== 'demo' && st.models ? ` Low tier: ${st.models.low} · High tier: ${st.models.high}.` : ''}</span>
-              {st.ai.fix && <span className="t2 small">What to do: {st.ai.fix}</span>}
-            </div>
-            <Pill tone={ai.tone}>{ai.label}</Pill>
-          </div>
-          <div className="list-row wrap">
-            <div className="stack-2 grow">
-              <span className="strong">Photo storage</span>
-              <span className="muted small">{st.photos.message}</span>
-              {st.photos.fix && <span className="t2 small">What to do: {st.photos.fix}</span>}
-            </div>
-            <Pill tone={photoTone}>{st.photos.state === 'connected' ? 'Connected' : st.photos.state === 'local' ? 'Local folder' : 'Not connected'}</Pill>
-          </div>
-        </div>
-      )}
-    </section>
   );
 }
 
