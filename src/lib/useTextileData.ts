@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SystemStatus, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, LedgerEntry, Lot, Toast, ToastTone, Worker } from './types';
+import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, LedgerEntry, Lot, Toast, ToastTone, Worker } from './types';
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
 import { DEFAULT_CONFIG, type FirmConfig } from './config';
 
@@ -78,12 +78,13 @@ export function useTextileData() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [flow, setFlow] = useState<FlowDay[]>([]);
   const [config, setConfigState] = useState<FirmConfig>(DEFAULT_CONFIG);
-  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [status, setStatus] = useState<Features | null>(null);
 
-  // AI / photo storage health, for in-app warnings. Re-checked every 10 minutes.
-  const checkStatus = useCallback(async (force = false) => {
+  // Which features work right now (photo reading, AI text). Plain yes/no; details are developer-only.
+  // Re-checked every 10 minutes.
+  const checkStatus = useCallback(async () => {
     try {
-      const s = await getJson<SystemStatus>(`/api/status${force ? '?recheck=1' : ''}`);
+      const s = await getJson<Features>('/api/status');
       setStatus(s);
       return s;
     } catch {
@@ -143,7 +144,7 @@ export function useTextileData() {
     } catch (err) {
       console.error('Error loading data:', err);
       setDbOk(false);
-      showToast('Could not load data. Check that Postgres is running.', 'danger');
+      showToast('Something went wrong loading data, try again.', 'danger');
     } finally {
       setLoading(false);
     }
