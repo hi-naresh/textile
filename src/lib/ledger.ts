@@ -11,6 +11,7 @@ import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, lotCode,
 
 export { LedgerError };
 import { afterOutgoing } from './agents/hooks';
+import { logError } from './errors';
 
 export const DISPATCHED = SYSTEM_LOCATIONS.dispatched;
 export type LocationStage = 'arrival' | 'job_card' | 'returned' | 'dispatch' | 'moved';
@@ -291,6 +292,6 @@ export async function applyCaptureRead(q: Q, type: CaptureType, data: Record<str
 export function errorResponseBody(err: unknown): { status: number; body: { error: string } } {
   if (err instanceof LedgerError) return { status: err.status, body: { error: err.message } };
   if (err instanceof SyntaxError) return { status: 400, body: { error: 'The request body is not valid JSON.' } };
-  console.error('[Ledger] Unexpected error', err);
-  return { status: 500, body: { error: 'Something went wrong while saving. Nothing was changed.' } };
+  logError('api', err);
+  return { status: 500, body: { error: 'Something went wrong, try again. Nothing was changed.' } };
 }

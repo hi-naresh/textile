@@ -2,9 +2,10 @@
 // Single source of truth: the Access & roles screen renders MATRIX,
 // and every screen gates data/actions through can() and the scope helpers.
 //
-// NOTE: there is no login yet, so the active role is chosen with the
-// "Preview as" switch. These rules shape the UI; enforce the same rules
-// in the API routes once real authentication is added.
+// The role comes from the signed-in account. The API routes enforce the same rules on the
+// server (src/lib/apiAuth.ts → requireCap); hiding a screen here is never the only check.
+// The developer role is not here: it has its own console (/dev) and never sees client screens
+// except through "View as".
 
 import type { CaptureType, JobCard } from './types';
 import { DEFAULT_CONFIG, type FirmConfig, type SupervisorProfile } from './config';
@@ -39,7 +40,7 @@ export function allLocations(): string[] {
 export function activeSupervisors() { return current.supervisors.filter((s) => s.active); }
 export function sectionNames(): string[] { return current.sections.filter((s) => s.active).map((s) => s.name); }
 
-/** Supervisor used when previewing the Supervisor role. */
+/** The signed-in supervisor (set by page.tsx from the session). */
 export function setPreviewSupervisor(id: string | null) { previewSupervisorId = id; }
 export function activeSupervisor(): SupervisorProfile {
   const list = activeSupervisors();
@@ -159,7 +160,7 @@ export function levelTone(level: string): 'good' | 'warn' | 'info' | 'neutral' {
 
 // ---------- Navigation ----------
 export type Tab =
-  | 'overview' | 'stock' | 'jobs' | 'review' | 'capture' | 'people' | 'access' | 'settings'
+  | 'overview' | 'stock' | 'jobs' | 'review' | 'capture' | 'people' | 'access' | 'team' | 'settings'
   | 'floor' | 'allot'
   | 'orders' | 'dispatch' | 'money' | 'reports';
 
@@ -183,6 +184,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { tab: 'money', label: 'Money', short: 'Money', icon: 'rupee', group: 'Sales' },
     { tab: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', group: 'Sales' },
     { tab: 'people', label: 'People & CCTV', short: 'People', icon: 'users', group: 'Admin' },
+    { tab: 'team', label: 'Users & sign ups', short: 'Users', icon: 'userPlus', group: 'Admin' },
     { tab: 'access', label: 'Access & roles', short: 'Access', icon: 'shield', group: 'Admin' },
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Admin' },
   ],

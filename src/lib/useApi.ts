@@ -30,7 +30,7 @@ export async function apiSend<T = Record<string, unknown>>(url: string, method: 
   return data as T;
 }
 
-/** Query string for role + actor (GET requests to role-aware APIs). */
+/** Query string for role + actor. Informational only: the server takes both from the session cookie. */
 export function who(role: string, actor: string | null) {
   return `role=${encodeURIComponent(role)}${actor ? `&actor=${encodeURIComponent(actor)}` : ''}`;
 }
