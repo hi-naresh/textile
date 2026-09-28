@@ -1,24 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { timingSafeEqual } from 'crypto';
 import { query } from '@/lib/db';
+import { errorResponseBody } from '@/lib/ledger';
+import { requireDeveloper } from '@/lib/apiAuth';
 import { prices } from '@/lib/usage';
 
-// Developer-only: AI usage + cost log. Send the DEV_ACCESS_TOKEN in the x-dev-token header.
-// Without DEV_ACCESS_TOKEN set on the server this endpoint doesn't exist (404).
-function allowed(req: NextRequest): boolean {
-  const token = process.env.DEV_ACCESS_TOKEN?.trim();
-  const given = req.headers.get('x-dev-token')?.trim() ?? '';
-  if (!token || token.length < 16 || !given) return false;
-  const a = Buffer.from(token);
-  const b = Buffer.from(given);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
+// Developer only: AI usage + cost log. Any other session gets 404.
 export async function GET(req: NextRequest) {
-  if (!process.env.DEV_ACCESS_TOKEN) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  if (!allowed(req)) return NextResponse.json({ error: 'Wrong or missing developer token.' }, { status: 401 });
-  const d = Math.min(Math.max(parseInt(req.nextUrl.searchParams.get('days') ?? '30', 10) || 30, 1), 366);
   try {
+    await requireDeveloper(req);
+    const d = Math.min(Math.max(parseInt(req.nextUrl.searchParams.get('days') ?? '30', 10) || 30, 1), 366);
     const [byFeature, byDay, recent, engines] = await Promise.all([
       query(
         `SELECT feature, provider, model, tier, COUNT(*) AS calls, SUM(CASE WHEN success THEN 0 ELSE 1 END) AS failures,
@@ -48,7 +38,7 @@ export async function GET(req: NextRequest) {
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[dev/usage] failed', error);
-    return NextResponse.json({ error: 'Could not load usage.' }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }
