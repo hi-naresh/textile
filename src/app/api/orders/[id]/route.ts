@@ -6,10 +6,10 @@ import { getOrder, orderAllocations, updateOrder } from '@/lib/sales/orders';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-// GET ?role= → { order, allocations }
+// GET → { order, allocations }
 export async function GET(req: NextRequest, { params }: Ctx) {
   try {
-    const role = requireCap(req.nextUrl.searchParams.get('role'), 'orders.view');
+    const { role } = await requireCap(req, 'orders.view');
     const { id } = await params;
     const order = await getOrder(query, id, role);
     const allocations = await orderAllocations(query, order.id);
@@ -20,12 +20,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   }
 }
 
-// PATCH (owner) { party?|party_id?, quality?, design?, meters?, rate_per_m?, promise_date?, notes?, status?: 'cancelled', role, actor }
+// PATCH (owner) { party?|party_id?, quality?, design?, meters?, rate_per_m?, promise_date?, notes?, status?: 'cancelled' }
 // → { order, message, warnings }. Cancelling releases the order's reserved lots.
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
+    await requireCap(req, 'orders.manage');
     const b = await readObject(req);
-    requireCap(b.role, 'orders.manage');
     const { id } = await params;
     const { role: _r, actor: _a, ...fields } = b;
     void _r; void _a;
