@@ -34,8 +34,8 @@ For a **test** database (e.g. staging), `npm run db:seed-demo` adds test account
 - At least one of the two is required for photo capture. The app never invents data in production.
 - `GEMINI_MODEL` (both tiers) or `GEMINI_MODEL_LOW` / `GEMINI_MODEL_HIGH` — optional (default `gemini-3.5-flash`).
 - `LLM_PRICE_*`, `OCR_PRICE_PER_IMAGE` — optional; set to Google's current prices so the cost log is accurate.
-- `DEV_ACCESS_TOKEN` — optional, 16+ characters. Enables the developer usage/cost log: `curl -H "x-dev-token: <token>" https://<site>/api/dev/usage?days=30`.
-- If a key is missing/rejected or a model is retired, the app shows a warning banner and Settings → **Connections** explains what to fix. Workers can't capture only when neither OCR nor AI works.
+- `DEV_ADMIN_EMAIL` + `DEV_ADMIN_PASSWORD` (12+ characters) — **required**: the developer account. Sign in at `https://<site>/dev/login`. Changing the password here (and redeploying) changes it and signs the developer out everywhere.
+- If a key is missing/rejected or a model is retired, the developer console (**/dev → Health**) says what to fix. Client screens never show service details; workers only see that photo reading is off (capture is blocked only when neither OCR nor AI works).
 
 ### 3b. Agents (Phase 2)
 - The agents scan every few minutes while the app is open, and once a day via Vercel Cron (`vercel.json` → `/api/agents/run`, 07:00 IST).
@@ -45,17 +45,29 @@ For a **test** database (e.g. staging), `npm run db:seed-demo` adds test account
 ### 4. Server region
 - `vercel.json` pins the app to Mumbai (`bom1`), next to the database.
 
-### 5. Protect the site until login exists
-- Project → Settings → **Deployment Protection** → turn on password protection.
-- There is no login yet: anyone with the link could otherwise open Settings.
+### 5. Sign in (see "Sign in & roles" below)
+- Every page and API needs a signed-in session; the old Deployment Protection password is no longer needed.
 
 ### 6. Firm-specific setup
 - `scripts/migrations/003_setup_narmada_group.sql` sets Narmada Group / Surat / Mukesh.
 - **For another firm:** delete that file before the first deploy, then fill in **Settings** in the app.
 
 ### 7. First login to the live app
-- Open the site → Preview as **Owner** → **Settings**
-- Add sections, supervisors (tick their sections) and workers.
+1. Developer: open `/dev/login`, sign in with `DEV_ADMIN_EMAIL` / `DEV_ADMIN_PASSWORD`.
+2. Developer console → **Users & view as → Owner account**: enter the owner's name + phone → **Set up owner**.
+3. Owner: open the site, sign in with that phone and the starting password `12345678`, then choose a new password.
+4. Owner → **Settings**: add sections. Supervisors and workers sign up themselves on the sign-in page; the owner approves them under **Users & sign ups** and picks their role (supervisor → sections, worker → section).
+
+## Sign in & roles
+- **Owner / supervisor / worker**: phone number + password at `/`. Sessions last 60 days and slide forward with use (`AUTH_CLIENT_SESSION_DAYS`), survive closing the browser, and are stored server-side (`auth_sessions`). Cookies are httpOnly + Secure + SameSite=Lax; nothing is kept in localStorage.
+- **Starting password `12345678`**: only for accounts the developer/owner creates or resets. Anyone on it must choose their own before they can do anything. Sign ups choose their own password.
+- **Sign up → pending**: sees nothing until the owner approves and gives a role. A rejected phone number can sign up again up to 3 times.
+- **Owner** can switch people off, change role, reset a forgotten password and see / end each person's devices (**Users & sign ups**). Switching off, role change and password change sign that person out everywhere immediately.
+- **Developer**: separate login (`/dev/login`, email + password, 12 h sessions), no sign up. Sees service health, connections, AI usage + cost, technical errors, the audit trail, and can **View as** any user (read-only unless `DEV_VIEW_AS_WRITE=1`; every call logged).
+- Every API route checks the session on the server (`src/lib/apiAuth.ts`); `npm run lint` fails if a route handler has no check (`scripts/check-route-auth.js`).
+- Audit trail: `auth_audit` (logins, failed logins, sign ups, approvals, rejections, deactivations, role changes, session revokes, developer actions). Technical errors: `app_errors`.
+- Five wrong passwords for one phone/email pause sign in for 15 minutes.
+- No OTP for now (passwords only).
 
 ## Preview deployments (branches / pull requests)
 - The database is connected to Production only, so previews have no database: migrations are skipped and the app shows "can't reach the database".
@@ -77,6 +89,7 @@ Voice engines: Chrome / Android / Safari tabs use the phone's built-in speech re
 
 ## Local development
 - Local Postgres + `npm run db:init` (demo data) → `npm run db:seed-demo` (test accounts) → `npm run dev`
+- Demo sign-ins (password `12345678`): owner `9000000001`, supervisor `9000000002`, worker `9000000003`. Developer: set `DEV_ADMIN_EMAIL` / `DEV_ADMIN_PASSWORD` in `.env.local` or run `npm run dev:create -- --email you@example.com`.
 - After pulling this version run `npm install` (adds `exceljs`, `sharp` and `pdf-lib`).
 - Migrations also apply automatically when the local dev server starts.
 - Copy `.env.example` to `.env.local` if you want to point at another database or storage.

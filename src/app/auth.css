@@ -1,0 +1,19 @@
+/* ---------- Sign in / sign up / developer console ---------- */
+.auth-wrap { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+.auth-card { width: 100%; max-width: 400px; }
+.auth-brand { display: flex; align-items: center; gap: 12px; }
+.auth-card .fld input { height: 46px; font-size: 16px; }
+.auth-card .btn { width: 100%; }
+.auth-foot { text-align: center; }
+.viewas-banner { display: flex; align-items: center; gap: 10px; padding: 10px 28px; background: var(--warnSoft); color: var(--warn); font-size: 13px; border-bottom: 1px solid var(--line); }
+.dev-page { max-width: 1200px; margin: 0 auto; }
+.dev-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dev-table th, .dev-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line2, var(--line)); vertical-align: top; }
+.dev-table th { font-weight: 600; color: var(--muted); font-size: 12px; }
+.dev-scroll { overflow-x: auto; }
+.dev-pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font: 12px var(--font-mono); color: var(--text2); max-height: 260px; overflow: auto; }
+.sess-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line2, var(--line)); }
+.sess-row:last-child { border-bottom: 0; }
+@media (max-width: 1023px) {
+  .viewas-banner { padding: 10px 16px; }
+}
