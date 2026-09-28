@@ -12,10 +12,10 @@ export function shiftName(d = new Date()) {
   return h >= 6 && h < 14 ? 'Morning shift' : h >= 14 && h < 22 ? 'Evening shift' : 'Night shift';
 }
 
-export function whoAmI(role: Role, me: Worker | null) {
-  if (role === 'owner') return { name: owner().name, title: 'Owner' };
-  if (role === 'supervisor') return { name: activeSupervisor().name, title: activeSupervisor().sections.length ? `Supervisor · ${activeSupervisor().sections.join(' & ')}` : activeSupervisor().id ? 'Supervisor · no sections yet' : 'No supervisors yet — add in Settings' };
-  return { name: me?.name ?? 'Worker', title: `Worker · ${sectionName(me?.section)}` };
+export function whoAmI(role: Role, me: Worker | null, name?: string) {
+  if (role === 'owner') return { name: name ?? owner().name, title: 'Owner' };
+  if (role === 'supervisor') return { name: name ?? activeSupervisor().name, title: activeSupervisor().sections.length ? `Supervisor · ${activeSupervisor().sections.join(' & ')}` : 'Supervisor · no sections yet' };
+  return { name: name ?? me?.name ?? 'Worker', title: me ? `Worker · ${sectionName(me.section)}` : 'Worker' };
 }
 
 // Current minute on the client, null during server render. Keeps the
@@ -37,7 +37,7 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
   const { role, d, go, me } = ctx;
   const [more, setMore] = useState(false);
   const [search, setSearch] = useState('');
-  const who = whoAmI(role, me);
+  const who = whoAmI(role, me, ctx.account.name);
   const nav = NAV[role];
   const pending = d.captures.filter((c) => c.status === 'pending' && captureInScope(role, c.type)).length;
   const groups = Array.from(new Set(nav.map((n) => n.group)));
@@ -108,10 +108,10 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
           </div>
         </header>
 
-        <SystemBanner ctx={ctx} onOpenSettings={() => go('settings')} />
+        <ViewAsBanner ctx={ctx} />
 
         {d.dbOk === false && (
-          <div className="db-banner"><Icon name="alert" size={16} strokeWidth={2} />Can’t reach the database. Showing the last data loaded. <button className="linkbtn" onClick={() => d.refresh()}>Retry</button></div>
+          <div className="db-banner"><Icon name="alert" size={16} strokeWidth={2} />Something went wrong loading the latest data. Showing what was loaded before. <button className="linkbtn" onClick={() => d.refresh()}>Try again</button></div>
         )}
 
         <main className="content">{children}</main>
@@ -148,39 +148,15 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
   );
 }
 
-/** Warns when AI, OCR or photo storage isn't working. Stays until fixed; can be hidden per session. */
-function SystemBanner({ ctx, onOpenSettings }: { ctx: Ctx; onOpenSettings: () => void }) {
-  const { d, role } = ctx;
-  const [hidden, setHidden] = useState<string | null>(null);
-  const st = d.status;
-  if (!st) return null;
-  const ocrOk = st.ocr?.state === 'connected';
-  const aiOk = st.ai.state === 'connected';
-  const demo = st.ai.state === 'demo';
-  const photosOk = st.photos.state !== 'missing';
-  const readingOn = photosOk && (ocrOk || aiOk || demo);
-  // Workers only hear about it when they can't capture; owner/supervisors whenever the AI is down.
-  const problem = role === 'worker' ? !readingOn : !photosOk || !aiOk;
-  if (!problem) return null;
-
-  const key = `${st.ai.state}|${st.ocr?.state}|${st.photos.state}`;
-  if (hidden === key) return null;
-  let text: string;
-  if (role === 'worker') {
-    text = 'Photo reading is switched off right now. Tell your supervisor, and give them the paper challan or job card.';
-  } else if (demo && photosOk) {
-    text = ocrOk ? 'AI is not connected (demo). Photos are read by OCR; unclear photos go to review.' : st.ai.message;
-  } else {
-    const parts = [!aiOk ? st.ai.message : '', !photosOk ? st.photos.message : ''].filter(Boolean);
-    const after = !readingOn ? ' Enter stock and job cards manually until it is fixed.' : ocrOk ? ' Photos are still read by OCR; unclear ones go to review.' : '';
-    text = parts.join(' ') + after;
-  }
+/** Developer "View as": always visible while active, with a way back to the console. */
+function ViewAsBanner({ ctx }: { ctx: Ctx }) {
+  const s = ctx.session;
+  if (s.kind !== 'developer' || !s.viewAs) return null;
   return (
-    <div className={`sys-banner ${demo && readingOn ? 'info' : 'warn'}`} role="alert">
-      <Icon name="alert" size={16} strokeWidth={2} />
-      <span className="grow">{text}</span>
-      {role === 'owner' && <button className="linkbtn" onClick={onOpenSettings}>Details</button>}
-      <button className="ib sm-ib" aria-label="Hide this message" onClick={() => setHidden(key)}><Icon name="x" size={14} /></button>
+    <div className="viewas-banner" role="alert">
+      <Icon name="shield" size={16} strokeWidth={2} />
+      <span className="grow">Viewing as <b>{s.viewAs.name}</b> ({s.viewAs.role}) · {s.viewAsWrite ? 'changes are allowed and logged' : 'read-only'}. Every screen you open is logged.</span>
+      <button className="linkbtn" onClick={async () => { await fetch('/api/dev/view-as', { method: 'DELETE' }).catch(() => null); window.location.replace('/dev'); }}>Stop viewing</button>
     </div>
   );
 }
