@@ -1,22 +1,25 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { query, withTransaction } from '@/lib/db';
-import { LedgerError, applyCaptureRead } from '@/lib/ledger';
+import { LedgerError, applyCaptureRead, errorResponseBody } from '@/lib/ledger';
 import { readRules } from '@/lib/settings';
 import { extractDataFromPhoto } from '@/lib/ai';
 import { compressForAudit, photoUrlForClient, savePhoto } from '@/lib/photos';
-import { canCapture, type Role } from '@/lib/access';
+import { canCapture } from '@/lib/access';
+import { requireUser } from '@/lib/apiAuth';
+import { logError } from '@/lib/errors';
 
-// TODO(auth): attribute auto-commits to a system user once users/sessions exist.
-const AUTO_COMMIT_ACTOR = 'usr-owner';
-
-export async function GET() {
+export async function GET(request: NextRequest) {
   // GET: Fetch all capture events (e.g. for the confirm queue)
   try {
+    // Workers see only their own photos; owner / supervisors see the whole queue.
+    const a = await requireUser(request);
     const res = await query(
       `SELECT ce.*, (ce.ts::date = CURRENT_DATE) AS is_today, u.name as confirmed_by_name
        FROM capture_events ce
        LEFT JOIN users u ON ce.confirmed_by = u.id
-       ORDER BY ce.ts DESC`
+       WHERE $1::varchar IS NULL OR ce.captured_by = $1
+       ORDER BY ce.ts DESC`,
+      [a.role === 'worker' ? a.userId : null]
     );
     return NextResponse.json({
       events: res.rows.map(row => ({
@@ -26,8 +29,8 @@ export async function GET() {
       }))
     });
   } catch (error) {
-    console.error('Failed to fetch capture events:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }
 
@@ -36,11 +39,13 @@ type Kind = (typeof TYPES)[number];
 
 export async function POST(request: NextRequest) {
   try {
+    // Who captured it (and who an auto-confirm is attributed to) is the signed-in user.
+    const a = await requireUser(request);
+    const role = a.role;
+    const capturedBy = a.by;
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
     const type = formData.get('type') as Kind;
-    const role = String(formData.get('role') ?? 'owner') as Role;
-    const capturedBy = String(formData.get('captured_by') ?? '').slice(0, 50) || null;
     const captureSecondsRaw = parseFloat(String(formData.get('capture_seconds') ?? ''));
     const captureSeconds = Number.isFinite(captureSecondsRaw) && captureSecondsRaw >= 0 ? Math.min(captureSecondsRaw, 3600) : null;
 
@@ -48,8 +53,7 @@ export async function POST(request: NextRequest) {
     if (!TYPES.includes(type)) {
       return NextResponse.json({ error: 'Invalid or missing capture type. Must be incoming_stock, outgoing_stock, or job_card_folding.' }, { status: 400 });
     }
-    // TODO(auth): take the role from the signed-in user, not the form.
-    if (!['owner', 'supervisor', 'worker'].includes(role) || !canCapture(role, type)) {
+    if (!canCapture(role, type)) {
       return NextResponse.json({ error: 'You are not allowed to capture this kind of photo.' }, { status: 403 });
     }
 
@@ -69,10 +73,8 @@ export async function POST(request: NextRequest) {
     // 2. Read it from the RAW photo (OCR first, LLM only if needed). Nothing is stored if it can't be read.
     const extraction = await extractDataFromPhoto({ buffer: raw, filename: file.name || `${type}_${stamp}`, mediaType }, type, `capture:${type}:${stamp}`);
     if (!extraction.success) {
-      return NextResponse.json(
-        { error: 'Could not read the photo. Please retake it or enter the details manually.', details: extraction.rawResponse },
-        { status: 502 }
-      );
+      logError('capture.read', new Error('Photo could not be read'), { type, engine: extraction.engine ?? null, raw: String(extraction.rawResponse ?? '').slice(0, 2000) });
+      return NextResponse.json({ error: 'Could not read the photo. Please retake it or enter the details manually.' }, { status: 502 });
     }
     const { data: aiData, confidence } = extraction;
 
@@ -108,17 +110,17 @@ export async function POST(request: NextRequest) {
     if (confidence * 100 >= aiAutoConfirmPct) {
       try {
         await withTransaction(async (q) => {
-          const saved = await applyCaptureRead(q, type, aiData as Record<string, unknown>, event.id, AUTO_COMMIT_ACTOR);
+          const saved = await applyCaptureRead(q, type, aiData as Record<string, unknown>, event.id, capturedBy);
           await q(
             `UPDATE capture_events SET status = 'confirmed', confirmed_by = $1, ai_json = $2, confirmed_at = NOW(), review_seconds = 0 WHERE id = $3`,
-            [AUTO_COMMIT_ACTOR, JSON.stringify(saved), event.id]
+            [capturedBy, JSON.stringify(saved), event.id]
           );
         });
         autoCommitted = true;
       } catch (err) {
         // Anything that can't be saved automatically stays in the review queue.
-        commitError = err instanceof LedgerError ? `${err.message} Left in review queue.` : String(err);
-        if (!(err instanceof LedgerError)) console.error('[Capture API] Auto-commit failed:', err);
+        commitError = err instanceof LedgerError ? `${err.message} Left in review queue.` : 'Could not save it automatically. Left in review queue.';
+        if (!(err instanceof LedgerError)) logError('capture.auto_commit', err, { event_id: event.id });
       }
     }
 
@@ -137,7 +139,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Failed to handle photo capture:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
   }
 }
