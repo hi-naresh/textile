@@ -2,7 +2,69 @@
 
 These are parked on purpose: build them once the product flow is confirmed and the app is delivering real value, before production.
 
-Last updated: 26 Sep 2026
+Last updated: 27 Sep 2026
+
+---
+
+## Discussed changes — 27 Sep 2026 (Phase 1 built, Phase 2 = agents)
+
+### Done — Phase 1
+- [x] Demo/test accounts: `npm run db:seed-demo` → owner, 1 supervisor (Ramesh Patel), 1 worker (Suresh Rathod, linked to a worker record), 3 sample lots, 2 job cards, 3 knowledge notes. Never drops data; refuses non-local DBs unless `ALLOW_DEMO_SEED=1`
+- [x] Capture rights: owner any; supervisor incoming + outgoing challans; worker job card (cut) only — also checked by `/api/capture`
+- [x] Worker sees only Capture + Settings (theme/language)
+- [x] Owner Compact / Detailed switch in the header (Compact hides charts, sections table and detail columns)
+- [x] Floating chat pop-up with voice input (right side, above the bottom nav on phones); Ask tab removed
+- [x] Theme + language moved into Settings → Preferences (all roles); header theme button removed
+- [x] Floating rounded bottom nav on phones
+- [x] Verbose scope labels removed (scope card, "Viewing all sections", "Every answer audited", lock notes)
+- [x] Challans: S.No column + Excel export (challans / lots); manual stock Excel import with template, all-or-nothing, row errors
+- [x] Fixed location list only (no free text); strict formats for lot/challan numbers and meters; canonical spellings for mill/weaver/party/quality/design
+- [x] Decision layer for photos: Google Vision OCR + deterministic parser with arithmetic cross-checks → low-tier LLM on OCR text → high-tier vision LLM
+- [x] Chat: fixed parameterised query templates (no AI-written SQL) + firm knowledge notes (full-text search + low-tier LLM)
+- [x] LLM/OCR usage + cost log (`llm_usage`), developer endpoint `/api/dev/usage`
+- [x] Raw photo used only for reading; compressed WEBP (≤1600 px) stored in `YYYY/MM/DD` folders by a background job
+- [x] Time saved vs manual baseline (Settings → Rules) as an Overview KPI
+
+### Done — 28 Sep follow-ups
+- [x] Phones: no pinch / double-tap zoom (viewport + iOS gesture block + 16px inputs); "Add to Home Screen" opens full-screen
+- [x] Bottom nav sits lower on iPhone (inside the home-indicator area) and is fully rounded
+- [x] Phones: no floating chat — chat icon next to the profile in the top bar opens a full-screen chat; desktop keeps the round button
+- [x] Voice mode: hands-free loop (listen → answer out loud → listen again) plus one-shot dictation
+- [x] Owner home "Right now": on the floor, dispatched today, received today, activity feed
+- [x] Stock flow: Today (hourly) / Week / Month / Year / All years, quality filter, demand by quality
+- [x] Preview-as role, supervisor/worker picker and Compact/Detailed moved to Settings → View (header is clean)
+- [x] `npm run db:seed-demo -- --history` adds 2 years of sample movements for the charts
+
+### Done — 28 Sep voice + language
+- [x] Voice mode like ChatGPT: always listening (no pause / tap-to-talk), mute + end buttons, tap the orb to interrupt; every turn shows in the chat
+- [x] Answers in the language of the question (English / Hindi / Gujarati, script or romanised). Templates understand Hindi/Gujarati words without AI; the reply is translated by the low-tier model (needs GEMINI_API_KEY — without it replies stay English)
+- [x] Voice mode switches its listening language to the one you last spoke
+- [x] Phone: chat slides down from the top, close (×) slides it back up
+
+### Done — 28 Sep chat coverage + phone voice
+- [x] Chat "semantic layer": counts / sums / % by worker, section, quality, party, mill, lot, location, day, month with filters and periods — compiled to parameterised SQL from a fixed catalog (no AI-written SQL). Answers "how many workers / supervisors", "who folded how much today", "dispatch by party this month", "efficiency by section", "how many workers per section", etc. without AI
+- [x] "What's happening today?" briefing (floor, completed, dispatched, received, workers with work, reads waiting)
+- [x] Unmatched questions: the low-tier model picks a template or a catalog query (still no SQL)
+- [x] Mic + voice buttons always visible; on an http:// Wi-Fi link they explain that phones need https (`npm run tunnel`)
+- [x] Voice fallback for browsers without speech recognition (iPhone home-screen app): records the mic, the server transcribes (`/api/chat/transcribe`, logged as voice.stt)
+
+### Check / tune after first real use
+- [ ] **Set real keys**: `GOOGLE_VISION_API_KEY`, `GEMINI_API_KEY`; set `LLM_PRICE_*` / `OCR_PRICE_PER_IMAGE` to the current Google price list (defaults are estimates)
+- [ ] Test the OCR parser on 20–30 real photos of each layout (cutting report, dispatch challan). Only the "Job Card/Cutting Report" layout has a dedicated parser; dispatch challans go through a generic reader and usually reach the LLM
+- [ ] Tune `OCR_MIN_CONFIDENCE` (default 0.75) and the auto-confirm % once corrections data exists (`/api/dev/usage` → captureEngines)
+- [ ] Owner to confirm the manual baseline minutes (defaults 6 min per challan, 4 per job card)
+- [ ] Voice input works in Chrome/Edge/Android; Safari/iOS support is partial — check on the phones the firm uses
+- [ ] Language setting translates the capture screen + voice; other screens are English only — decide if more is needed
+- [ ] Excel import posts every row with today's date — add a Date column if they want to back-fill history
+- [ ] Old photos saved before this change stay where they were (no re-compression)
+- [ ] **Timezone**: "today" uses the database date. Supabase runs in UTC, so between 00:00 and 05:30 IST "today" is still yesterday. Fix before go-live: store `timestamptz` and compute days in Asia/Kolkata (needs a careful migration of existing rows)
+- [ ] Extend the chat catalog as new questions come up (add a metric in `src/lib/chat/semantic.ts`); review `chat_audit` for questions that fell through to "help"
+- [ ] Voice mode on iPhone: speech recognition needs Safari 14.5+ and mic permission each session; test on the owner's phone
+- [ ] Gujarati speech: Chrome/Android support gu-IN recognition and voices; iPhone has no Gujarati text-to-speech voice (reply shows on screen, spoken voice may fall back). Consider Google Cloud TTS for Gujarati if needed
+
+### Phase 2 — agents (spec only: `docs/AGENTS_PHASE2.md`)
+- [ ] Approved: Inquiry Handling, Order Management, Fabric Inventory, Fabric Allocation, Logistics & Dispatch, Costing & Margin, Document Generation, Analytics & Reporting, Credit & Payment
+- [ ] Not doing: supply-chain visibility, quality/inspection, production agents
 
 ---
 
@@ -19,7 +81,7 @@ Last updated: 26 Sep 2026
 ### Check with the owner
 - [ ] **Which meters count as stock?** Built as: finished meters if known, else grey. Confirm this matches how they count.
 - [ ] **Old lots have no location** ("Not recorded"). Set them once from Stock ledger → Lots & balance → Move.
-- [ ] **Location list**: presets are Godown / Shop / Floor + free text. Do they have named godowns/shops to fix as a list?
+- [x] **Location list**: fixed list only now (Settings → Lot locations). Owner to add their named godowns/shops there.
 - [ ] Old incoming entries keep their supplier in `party` (shown as "old entry"); decide if these should be moved into mill name.
 
 ### §2 Parked — ask the owner first
@@ -62,7 +124,7 @@ Today there is no login. The role comes from the "Preview as" switch.
 - [ ] Login for owner and supervisors (phone/email + password, passwords hashed)
 - [ ] Worker login that works on the shop floor (e.g. short PIN on a shared or personal phone) — *decide*
 - [ ] Secure session cookie (httpOnly, sameSite), logout, session expiry
-- [ ] Link `users` to `workers` (a worker login must map to one `workers.id`)
+- [x] Link `users` to `workers` (`users.worker_id`, migration 004)
 - [ ] Add a password/PIN column to `users` (schema change + migration)
 - [ ] Remove "Preview as" from production (keep for development only)
 
@@ -76,17 +138,17 @@ Rules exist in `src/lib/access.ts` but only the screens apply them.
 - [ ] Owner screen to add/disable users and assign sections ("Users, roles & sections" in the matrix)
 
 ## 3. Security and data safety
-- [ ] Chat: run AI-generated SQL with a separate **read-only** database user
-- [ ] Chat: block `SELECT … INTO` and system functions; add row limit and query timeout
-- [ ] Chat: scope questions by role (supervisor = meters only, own sections)
+- [x] Chat: no AI-generated SQL any more (fixed templates only)
+- [ ] Chat: still run templates with a separate **read-only** database user + statement timeout
+- [x] Chat: scope by role (supervisor = own sections for job cards / shortage / efficiency; workers can't chat)
 - [x] Fix transactions for stock, job cards and photo confirm (now `withTransaction` in `src/lib/db.ts`)
-- [ ] Validate uploads (file type, size limit) on `/api/capture`
+- [x] Validate uploads (file type, size limit) on `/api/capture`
 - [ ] Move `DATABASE_URL` / `GEMINI_API_KEY` to proper secrets for production
 - [ ] Rate-limit login and chat endpoints
 
 ## 4. Data model gaps
 - [ ] Rates table (₹ per meter by quality/party) — replaces the owner's per-device "average rate"
-- [ ] Record which worker/device took each photo (`capture_events.captured_by`)
+- [ ] Record which worker took each photo — `capture_events.captured_by` exists; fill it from the session once workers log in
 - [ ] Record who moved a lot from the session (today `moved_by` comes from the browser)
 - [ ] Stop allotting more meters than a lot's balance (today the API allows it)
 - [ ] Shift stored with efficiency records (history currently has no shift)
@@ -105,4 +167,4 @@ Rules exist in `src/lib/access.ts` but only the screens apply them.
 - Who can confirm stock IN/OUT photo reads — owner only, or a stores/dispatch supervisor?
 - Should workers be able to mark a job done without a photo?
 - Which ₹ numbers matter to the owner (stock value, shortage loss, party-wise), and where do rates come from?
-- Languages needed on every screen, or only worker screens?
+- Languages needed on every screen, or only worker screens? (Settings now has one language switch; only the capture screen + voice use it)

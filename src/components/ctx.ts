@@ -4,7 +4,9 @@ import type { WorkerDay } from '@/lib/derive';
 import type { CaptureType, Worker } from '@/lib/types';
 
 export type Lang = 'en' | 'hi' | 'gu';
-export type SheetKind = 'stock' | 'job' | null;
+export type SheetKind = 'stock' | 'job' | 'import' | null;
+export type ThemePref = 'light' | 'dark' | 'system';
+export type Density = 'compact' | 'detailed';
 
 export interface Ctx {
   role: Role;
@@ -19,4 +21,15 @@ export interface Ctx {
   openSheet: (s: SheetKind) => void;
   capType: CaptureType; // selected capture type (shared by My shift → Capture)
   setCapType: (t: CaptureType) => void;
+  theme: ThemePref;
+  setTheme: (t: ThemePref) => void;
+  openChat: () => void;
+  // Preview controls (Settings → View) until real login exists
+  setRole: (r: Role) => void;
+  density: Density;
+  setDensity: (d: Density) => void;
+  workerId: string | null;
+  setWorkerId: (id: string) => void;
+  supervisorId: string | null;
+  setSupervisorId: (id: string) => void;
 }

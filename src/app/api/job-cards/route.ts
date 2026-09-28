@@ -9,7 +9,9 @@ export async function GET() {
   try {
     const jobCardsQuery = `
       SELECT 
-        jc.*, 
+        jc.*,
+        (jc.ts_created::date = CURRENT_DATE) AS created_today,
+        (jc.ts_closed::date = CURRENT_DATE) AS closed_today, 
         w.name as worker_name, 
         w.section as worker_section,
         l.quality,

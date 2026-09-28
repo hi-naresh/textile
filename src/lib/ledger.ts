@@ -4,17 +4,12 @@
 // Every function takes the transaction's `q` so callers control the transaction.
 
 import type { Q } from './db';
+import { LedgerError } from './ledger-error';
+import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, lotCode, metersValue, nameValue, SYSTEM_LOCATIONS } from './normalize';
 
-export class LedgerError extends Error {
-  status: number;
-  constructor(message: string, status = 400) {
-    super(message);
-    this.status = status;
-  }
-}
+export { LedgerError };
 
-export const LOCATION_PRESETS = ['Godown', 'Shop', 'Floor'] as const;
-export const DISPATCHED = 'Dispatched';
+export const DISPATCHED = SYSTEM_LOCATIONS.dispatched;
 export type LocationStage = 'arrival' | 'job_card' | 'returned' | 'dispatch' | 'moved';
 
 // ---------- small parsers ----------
@@ -23,14 +18,6 @@ const text = (v: unknown, max = 150): string | null => {
   const s = String(v).trim();
   if (!s) return null;
   return s.slice(0, max);
-};
-
-/** Positive number or null. Throws on a value that is present but invalid. */
-const positive = (v: unknown, label: string): number | null => {
-  if (v === null || v === undefined || v === '') return null;
-  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/,/g, ''));
-  if (!Number.isFinite(n) || n <= 0) throw new LedgerError(`${label} must be a positive number.`);
-  return Math.round(n * 100) / 100;
 };
 
 // ---------- lookups ----------
@@ -71,11 +58,9 @@ export async function moveLot(
 
 /** Manual move from the UI. */
 export async function moveLotManually(q: Q, input: { lot_id: unknown; location: unknown; note?: unknown; moved_by?: unknown }) {
-  const lotId = text(input.lot_id, 50);
-  if (!lotId) throw new LedgerError('lot_id is required.');
+  const lotId = lotCode(input.lot_id)!;
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
-  const location = text(input.location, 100);
-  if (!location) throw new LedgerError('Location is required.');
+  const location = (await allowedLocation(q, input.location, true))!;
   if ((await currentLocation(q, lotId)) === location) throw new LedgerError(`${lotId} is already at ${location}.`);
   return moveLot(q, { lot_id: lotId, location, stage: 'moved', note: text(input.note, 500), moved_by: text(input.moved_by, 50) });
 }
@@ -101,18 +86,22 @@ export interface IncomingInput {
  * `requireLotDetails`: manual entry must name quality + design for a new lot; photo reads fall back to "Unknown".
  */
 export async function recordIncoming(q: Q, input: IncomingInput, opts: { requireLotDetails: boolean }) {
-  const lotId = text(input.lot_id, 50);
-  if (!lotId) throw new LedgerError('Lot number is required.');
-  const grey = positive(input.grey_meters, 'Grey meters');
-  const finished = positive(input.finished_meters, 'Finished meters');
-  const legacy = positive(input.meters, 'Meters');
+  const lotId = lotCode(input.lot_id)!;
+  const grey = metersValue(input.grey_meters, 'Grey meters');
+  const finished = metersValue(input.finished_meters, 'Finished meters');
+  const legacy = metersValue(input.meters, 'Meters');
   const stockMeters = finished ?? legacy ?? grey;
   if (stockMeters == null) throw new LedgerError('Enter finished meters or grey meters.');
+  if (grey != null && finished != null && finished > grey * 1.1) throw new LedgerError(`Finished meters (${finished}) can't be much more than grey meters (${grey}). Check the numbers.`);
+  const mill = await canonicalName(q, 'mill_name', nameValue(input.mill_name, 'Mill'));
+  const weaver = await canonicalName(q, 'weaver_name', nameValue(input.weaver_name, 'Weaver'));
+  const challan = challanCode(input.source_doc);
+  const givenLocation = await allowedLocation(q, input.location, false);
 
   const exists = await lockLot(q, lotId);
   if (!exists) {
-    const quality = text(input.quality, 100);
-    const design = text(input.design, 100);
+    const quality = await canonicalLotAttr(q, 'quality', nameValue(input.quality, 'Quality'));
+    const design = await canonicalLotAttr(q, 'design', nameValue(input.design, 'Design'));
     if (opts.requireLotDetails && (!quality || !design)) throw new LedgerError('Quality and design are required for a new lot.');
     await q(`INSERT INTO lots (lot_id, quality, design, grade, status) VALUES ($1, $2, $3, 'A', 'active')`, [lotId, quality ?? 'Unknown Quality', design ?? 'Unknown Design']);
   }
@@ -120,12 +109,12 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   const mv = await q(
     `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id)
      VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8) RETURNING *`,
-    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), text(input.mill_name), text(input.weaver_name), text(input.source_doc, 100), input.capture_event_id ?? null],
+    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null],
   );
   const movement = mv.rows[0];
-  const challan = text(input.source_doc, 100);
   // No location given (e.g. a photo read): a new lot lands in the godown; an existing lot stays where it is.
-  const location = text(input.location, 100) ?? (exists ? await currentLocation(q, lotId) : null) ?? 'Godown';
+  const here = exists ? await currentLocation(q, lotId) : null;
+  const location = givenLocation ?? (here && here !== SYSTEM_LOCATIONS.dispatched ? here : null) ?? SYSTEM_LOCATIONS.godown;
   await moveLot(q, {
     lot_id: lotId,
     location,
@@ -149,11 +138,11 @@ export interface OutgoingInput {
 
 /** Record a dispatch. Party (destination client) is required. */
 export async function recordOutgoing(q: Q, input: OutgoingInput) {
-  const lotId = text(input.lot_id, 50);
-  if (!lotId) throw new LedgerError('Lot number is required.');
-  const meters = positive(input.meters, 'Meters');
+  const lotId = lotCode(input.lot_id)!;
+  const meters = metersValue(input.meters, 'Meters');
   if (meters == null) throw new LedgerError('Meters are required.');
-  const party = text(input.party);
+  const party = await canonicalName(q, 'party', nameValue(input.party, 'Party'));
+  const challan = challanCode(input.source_doc);
   if (!party) throw new LedgerError('Party (the client receiving the goods) is required for outgoing stock.');
 
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`);
@@ -163,7 +152,7 @@ export async function recordOutgoing(q: Q, input: OutgoingInput) {
   const mv = await q(
     `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id)
      VALUES ($1, 'OUT', $2, $3, $4, $5) RETURNING *`,
-    [lotId, meters, party, text(input.source_doc, 100), input.capture_event_id ?? null],
+    [lotId, meters, party, challan, input.capture_event_id ?? null],
   );
   const movement = mv.rows[0];
   const remaining = Math.round((balance - meters) * 100) / 100;
@@ -185,10 +174,10 @@ export async function createJobCard(
   q: Q,
   input: { lot_id?: unknown; process?: unknown; worker_id?: unknown; meters_in?: unknown; shift?: unknown; moved_by?: string | null },
 ) {
-  const lotId = text(input.lot_id, 50);
+  const lotId = lotCode(input.lot_id, false);
   const process = text(input.process, 100);
   const workerId = text(input.worker_id, 50);
-  const metersIn = positive(input.meters_in, 'Meters');
+  const metersIn = metersValue(input.meters_in, 'Meters');
   if (!lotId || !process || !workerId || metersIn == null) throw new LedgerError('Lot, process, worker and meters are required.');
 
   const w = await q('SELECT name FROM workers WHERE id = $1', [workerId]);
@@ -212,9 +201,8 @@ export async function createJobCard(
 export async function closeJobCard(q: Q, input: { id?: unknown; meters_out?: unknown; moved_by?: string | null }) {
   const id = Number(input.id);
   if (!Number.isInteger(id) || id <= 0) throw new LedgerError('A valid job card id is required.');
-  if (input.meters_out === null || input.meters_out === undefined || input.meters_out === '') throw new LedgerError('Meters out is required.');
-  const metersOut = typeof input.meters_out === 'number' ? input.meters_out : parseFloat(String(input.meters_out));
-  if (!Number.isFinite(metersOut) || metersOut < 0) throw new LedgerError('Meters out must be zero or more.');
+  const metersOut = metersValue(input.meters_out, 'Meters out', { allowZero: true });
+  if (metersOut == null) throw new LedgerError('Meters out is required.');
 
   const upd = await q(
     `UPDATE job_cards SET meters_out = $1, status = 'closed', ts_closed = NOW() WHERE id = $2 RETURNING *`,
@@ -257,7 +245,7 @@ export async function closeJobCard(q: Q, input: { id?: unknown; meters_out?: unk
 export async function resolveOpenJobCard(q: Q, jobCardId: unknown, lotId: unknown): Promise<number | null> {
   const id = Number(jobCardId);
   if (Number.isInteger(id) && id > 0) return id;
-  const lot = text(lotId, 50);
+  const lot = lotCode(lotId, false);
   if (!lot) return null;
   const r = await q(`SELECT id FROM job_cards WHERE lot_id = $1 AND status IN ('open', 'in-process') ORDER BY ts_created DESC LIMIT 1`, [lot]);
   return r.rows[0]?.id ?? null;

@@ -31,6 +31,11 @@ export function firm() { return current.firm; }
 export function owner() { return current.owner; }
 export function rules() { return current.rules; }
 export function locationPresets() { return current.locationPresets; }
+/** Locations a person can pick: the firm's fixed list (+ Floor, used by job cards). */
+export function allLocations(): string[] {
+  const l = current.locationPresets;
+  return l.some((x) => x.toLowerCase() === 'floor') ? l : [...l, 'Floor'];
+}
 export function activeSupervisors() { return current.supervisors.filter((s) => s.active); }
 export function sectionNames(): string[] { return current.sections.filter((s) => s.active).map((s) => s.name); }
 
@@ -59,6 +64,17 @@ export function captureSection(type: CaptureType): string {
   return 'Dispatch';
 }
 
+// ---------- Capture rights ----------
+// Owner: any capture. Supervisor: incoming + outgoing challans. Worker: job card (cut) only.
+export const CAPTURE_TYPES: Record<Role, CaptureType[]> = {
+  owner: ['incoming_stock', 'outgoing_stock', 'job_card_folding'],
+  supervisor: ['incoming_stock', 'outgoing_stock'],
+  worker: ['job_card_folding'],
+};
+export function canCapture(role: Role, type: CaptureType): boolean {
+  return CAPTURE_TYPES[role].includes(type);
+}
+
 export function inSupervisorScope(section: string): boolean {
   return activeSupervisor().sections.includes(sectionName(section));
 }
@@ -69,9 +85,10 @@ export function jobInScope(role: Role, jc: JobCard, workerId?: string): boolean 
   return jc.worker_id === workerId;
 }
 
+/** Review queue scope: supervisors review the challans they capture + job card reads from their sections. */
 export function captureInScope(role: Role, type: CaptureType): boolean {
   if (role === 'owner') return true;
-  if (role === 'supervisor') return inSupervisorScope(captureSection(type));
+  if (role === 'supervisor') return canCapture('supervisor', type) || inSupervisorScope(captureSection(type));
   return false;
 }
 
@@ -92,16 +109,16 @@ export type Capability =
   | 'users.manage'
   | 'settings.manage';
 
-type Level = 'Full' | 'Full + override' | 'Via job cards' | 'Section' | 'Section lots' | 'Section crew' | 'Meters only' | 'Own cards' | 'Own only' | '—';
+type Level = 'Full' | 'Full + override' | 'Via job cards' | 'Section' | 'Section lots' | 'Section crew' | 'Meters only' | 'In + out challans' | 'Job card (cut)' | 'Own cards' | 'Own only' | '—';
 
 export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string; owner: Level; supervisor: Level; worker: Level }[] = [
   { layer: 'Data', cap: 'stock.quantity', label: 'Stock quantities (meters)', owner: 'Full', supervisor: 'Section lots', worker: '—' },
   { layer: 'Data', cap: 'stock.value', label: 'Stock value, party rates (₹)', owner: 'Full', supervisor: '—', worker: '—' },
-  { layer: 'Data', cap: 'jobs.view', label: 'Job cards & shortage', owner: 'Full', supervisor: 'Section', worker: 'Own cards' },
-  { layer: 'Data', cap: 'efficiency.view', label: 'Worker efficiency', owner: 'Full', supervisor: 'Section crew', worker: 'Own only' },
+  { layer: 'Data', cap: 'jobs.view', label: 'Job cards & shortage', owner: 'Full', supervisor: 'Section', worker: '—' },
+  { layer: 'Data', cap: 'efficiency.view', label: 'Worker efficiency', owner: 'Full', supervisor: 'Section crew', worker: '—' },
   { layer: 'Data', cap: 'cctv.view', label: 'CCTV activity', owner: 'Full', supervisor: 'Section crew', worker: '—' },
-  { layer: 'Data', cap: 'chat.use', label: 'Ask {firm} + audit log', owner: 'Full', supervisor: 'Meters only', worker: '—' },
-  { layer: 'Control', cap: 'capture.create', label: 'Capture photos', owner: 'Full', supervisor: 'Full', worker: 'Full' },
+  { layer: 'Data', cap: 'chat.use', label: 'Chat', owner: 'Full', supervisor: 'Meters only', worker: '—' },
+  { layer: 'Control', cap: 'capture.create', label: 'Capture photos', owner: 'Full', supervisor: 'In + out challans', worker: 'Job card (cut)' },
   { layer: 'Control', cap: 'capture.confirm', label: 'Confirm AI reads to ledger', owner: 'Full + override', supervisor: 'Section', worker: '—' },
   { layer: 'Control', cap: 'jobs.manage', label: 'Create / close job cards', owner: 'Full', supervisor: 'Section', worker: '—' },
   { layer: 'Control', cap: 'work.allot', label: 'Allot work', owner: 'Full', supervisor: 'Section crew', worker: '—' },
@@ -125,9 +142,8 @@ export function levelTone(level: string): 'good' | 'warn' | 'info' | 'neutral' {
 
 // ---------- Navigation ----------
 export type Tab =
-  | 'overview' | 'stock' | 'jobs' | 'review' | 'ask' | 'people' | 'access' | 'settings'
-  | 'floor' | 'allot'
-  | 'shift' | 'capture' | 'history';
+  | 'overview' | 'stock' | 'jobs' | 'review' | 'capture' | 'people' | 'access' | 'settings'
+  | 'floor' | 'allot';
 
 export interface NavItem {
   tab: Tab;
@@ -143,46 +159,36 @@ export const NAV: Record<Role, NavItem[]> = {
     { tab: 'stock', label: 'Stock ledger', short: 'Stock', icon: 'box', group: 'Business' },
     { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'Business' },
     { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'Business' },
-    { tab: 'ask', label: 'Ask {firm}', short: 'Ask', icon: 'chat', group: 'Business' },
+    { tab: 'capture', label: 'Capture', short: 'Capture', icon: 'camera', group: 'Business' },
     { tab: 'people', label: 'People & CCTV', short: 'People', icon: 'users', group: 'Admin' },
     { tab: 'access', label: 'Access & roles', short: 'Access', icon: 'shield', group: 'Admin' },
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Admin' },
   ],
   supervisor: [
     { tab: 'floor', label: 'Floor today', short: 'Floor', icon: 'factory', group: 'My sections' },
-    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'My sections' },
+    { tab: 'capture', label: 'Capture challan', short: 'Capture', icon: 'camera', group: 'My sections' },
     { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'My sections' },
+    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'My sections' },
     { tab: 'allot', label: 'Allot work', short: 'Allot', icon: 'userPlus', group: 'My sections' },
-    { tab: 'ask', label: 'Ask {firm}', short: 'Ask', icon: 'chat', group: 'My sections' },
+    { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Me' },
   ],
   worker: [
-    { tab: 'shift', label: 'My shift', short: 'My shift', icon: 'clock', group: 'My work' },
-    { tab: 'capture', label: 'Capture photo', short: 'Capture', icon: 'camera', group: 'My work' },
-    { tab: 'history', label: 'My history', short: 'History', icon: 'history', group: 'My work' },
+    { tab: 'capture', label: 'Capture job card', short: 'Capture', icon: 'camera', group: 'My work' },
+    { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Me' },
   ],
 };
 
-// Bottom bar on phones: first N tabs, the rest go in "More".
+// Bottom bar on phones: these tabs, the rest go in "More".
 export const MOBILE_PRIMARY: Record<Role, Tab[]> = {
-  owner: ['overview', 'review', 'ask'],
-  supervisor: ['floor', 'review', 'allot'],
-  worker: ['shift', 'capture', 'history'],
+  owner: ['overview', 'capture', 'review', 'stock'],
+  supervisor: ['floor', 'capture', 'review', 'jobs'],
+  worker: ['capture', 'settings'],
 };
 
-export const HOME_TAB: Record<Role, Tab> = { owner: 'overview', supervisor: 'floor', worker: 'shift' };
+export const HOME_TAB: Record<Role, Tab> = { owner: 'overview', supervisor: 'floor', worker: 'capture' };
 
 export function tabAllowed(role: Role, tab: Tab): boolean {
   return NAV[role].some((n) => n.tab === tab);
-}
-
-export function scopeText(role: Role): { scope: string; line: string; chip: string } {
-  if (role === 'owner') return { scope: 'Full access · all units', line: 'Sees ₹ values, party rates, CCTV and every section. Manages people and settings.', chip: 'Viewing all sections' };
-  if (role === 'supervisor') {
-    const secs = activeSupervisor().sections;
-    const list = secs.length ? secs.join(' + ') : 'No sections assigned';
-    return { scope: `${list} · can edit`, line: 'Meters, not money. Confirms reads, runs job cards and allots work in own sections.', chip: secs.length ? `${list} only` : list };
-  }
-  return { scope: 'Own records · capture', line: 'Sees own allotments and history. Can photograph cards and challans.', chip: 'My work only' };
 }
 
 /** Labels may contain {firm}, replaced with the firm's name. */

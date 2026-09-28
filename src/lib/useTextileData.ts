@@ -5,6 +5,10 @@ import type { SystemStatus, KnownNames, LotLocationEntry, Allotment, CaptureEven
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
 import { DEFAULT_CONFIG, type FirmConfig } from './config';
 
+export interface ValueWindow { days: number; captures: number; manualMin: number; actualMin: number; savedMin: number; baseline: { challanMin: number; jobCardMin: number } }
+export interface ValueSummary { today: ValueWindow; week: ValueWindow; month: ValueWindow }
+export interface KnowledgeDoc { id: number; title: string; body: string; active: boolean; updated_at: string }
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { cache: 'no-store' });
   const data = await res.json();
@@ -99,6 +103,7 @@ export function useTextileData() {
   const [efficiency, setEfficiency] = useState<EfficiencyRecord[]>([]);
   const [cctv, setCctv] = useState<CctvActivity[]>([]);
   const [captures, setCaptures] = useState<CaptureEvent[]>([]);
+  const [value, setValue] = useState<ValueSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [dbOk, setDbOk] = useState<boolean | null>(null);
   const [lastSync, setLastSync] = useState<Date | null>(null);
@@ -132,6 +137,7 @@ export function useTextileData() {
       setEfficiency(wk.efficiency || []);
       setCctv(wk.cctv || []);
       setCaptures(cap.events || []);
+      getJson<ValueSummary>('/api/value').then(setValue).catch(() => setValue(null));
       setDbOk(true);
       setLastSync(new Date());
     } catch (err) {
@@ -184,37 +190,63 @@ export function useTextileData() {
   const closeJobCard = (role: Role, id: number, metersOut: string) =>
     run(() => send('/api/job-cards', 'PATCH', { id, meters_out: metersOut, moved_by: actorId(role) }), `Job card JC-${id} closed`);
 
-  const confirmCapture = (role: Role, ev: CaptureEvent, corrected?: Record<string, unknown>) =>
+  const confirmCapture = (role: Role, ev: CaptureEvent, corrected?: Record<string, unknown>, reviewSeconds?: number | null) =>
     run(
       () => send('/api/capture/confirm', 'POST', {
         event_id: ev.id,
         confirmed_by: actorId(role),
         status: corrected ? 'corrected' : 'confirmed',
         corrected_data: corrected ?? ev.ai_json,
+        review_seconds: reviewSeconds ?? null,
       }),
       `Read #${ev.id} ${corrected ? 'corrected and ' : ''}confirmed · added to ledger`,
     );
 
-  const rejectCapture = (role: Role, ev: CaptureEvent) =>
-    run(() => send('/api/capture/confirm', 'POST', { event_id: ev.id, confirmed_by: actorId(role), status: 'rejected' }), `Read #${ev.id} rejected · retake needed`, 'warning');
+  const rejectCapture = (role: Role, ev: CaptureEvent, reviewSeconds?: number | null) =>
+    run(() => send('/api/capture/confirm', 'POST', { event_id: ev.id, confirmed_by: actorId(role), status: 'rejected', review_seconds: reviewSeconds ?? null }), `Read #${ev.id} rejected · retake needed`, 'warning');
 
-  const uploadCapture = async (original: File, type: CaptureType) => {
+  /** `startedAt`: when the person opened the camera / picked the photo (for the time-saved figure). */
+  const uploadCapture = async (original: File, type: CaptureType, role: Role, startedAt?: number | null) => {
     try {
       const file = await shrinkPhoto(original);
       const fd = new FormData();
       fd.append('file', file);
       fd.append('type', type);
+      fd.append('role', role);
+      const by = role === 'worker' ? null : actorId(role);
+      if (by) fd.append('captured_by', by);
+      if (startedAt) fd.append('capture_seconds', String(Math.max(0, Math.round((Date.now() - startedAt) / 1000))));
       const res = await fetch('/api/capture', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) { checkStatus(); throw new Error(data?.error || 'Photo reading failed.'); }
       const pct = Math.round((data.event?.confidence ?? 0) * 100);
-      if (data.autoCommitted) showToast(`Read with ${pct}% confidence · saved to ledger`, 'success');
-      else showToast(`Read with ${pct}% confidence · sent to supervisor for review`, 'warning');
+      if (data.autoCommitted) showToast(`Read ${pct}% sure · saved`, 'success');
+      else showToast(`Read ${pct}% sure · sent for review`, 'warning');
       await refresh();
       return true;
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Network error during upload.', 'danger');
       return false;
+    }
+  };
+
+  // ---------- Excel ----------
+  const importStock = async (role: Role, file: File): Promise<{ ok: boolean; rows?: { row: number; error: string }[] }> => {
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('role', role);
+      const by = actorId(role);
+      if (by) fd.append('moved_by', by);
+      const res = await fetch('/api/stock/import', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data?.error || 'Import failed.', 'danger'); return { ok: false, rows: data?.rows }; }
+      showToast(`Imported ${data.imported.in} incoming + ${data.imported.out} outgoing`, 'success');
+      await refresh();
+      return { ok: true };
+    } catch {
+      showToast('Network error during import.', 'danger');
+      return { ok: false };
     }
   };
 
@@ -241,38 +273,44 @@ export function useTextileData() {
       updateSection: (id: number, body: Record<string, unknown>) => save('/api/settings/sections', 'PATCH', { id, ...body }, 'Section saved'),
       addWorker: (name: string, section: string) => save('/api/workers', 'POST', { name, section }, `${name} added`),
       updateWorker: (id: string, body: Record<string, unknown>) => save('/api/workers', 'PATCH', { id, ...body }, 'Worker saved'),
+      knowledge: async (): Promise<KnowledgeDoc[]> => (await getJson<{ docs: KnowledgeDoc[] }>('/api/knowledge')).docs,
+      addKnowledge: (title: string, body: string) => save('/api/knowledge', 'POST', { title, body }, 'Note added'),
+      updateKnowledge: (id: number, body: Record<string, unknown>) => save('/api/knowledge', 'PATCH', { id, ...body }, 'Note saved'),
       allWorkers: async (): Promise<(Worker & { active: boolean })[]> => (await getJson<{ workers: (Worker & { active: boolean })[] }>('/api/workers?include_inactive=1')).workers,
     };
   }, [refresh, showToast]);
 
   // ---------- Chat ----------
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { sender: 'bot', text: 'Ask anything about lots, stock balances, ledger movements, job cards or worker efficiency. I query the live database and every answer is logged.', timestamp: new Date() },
+    { sender: 'bot', text: 'Ask about stock, a lot, a challan, dispatches, job cards, shortage or efficiency.', timestamp: new Date() },
   ]);
 
-  const ask = async (role: Role, question: string) => {
-    if (!question.trim()) return;
+  /** Sends a question to chat; resolves with the answer + its language (null on failure) so voice mode can speak it. */
+  const ask = async (role: Role, question: string): Promise<{ text: string; lang: 'en' | 'hi' | 'gu' } | null> => {
+    if (!question.trim()) return null;
     setMessages((m) => [...m, { sender: 'user', text: question, timestamp: new Date() }, { sender: 'bot', text: 'Thinking…', timestamp: new Date(), loading: true }]);
     try {
-      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, user_id: actorId(role) }) });
+      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, user_id: actorId(role), role }) });
       const data = await res.json();
-      setMessages((m) => [
-        ...m.filter((x) => !x.loading),
-        res.ok
-          ? { sender: 'bot', text: data.answer, sql: data.sql, rows: data.rows, timestamp: new Date() }
-          : { sender: 'bot', text: data.error || 'Sorry, I could not answer that.', sql: data.sql, timestamp: new Date(), error: true },
-      ]);
+      const msg: ChatMessage = res.ok
+        ? { sender: 'bot', text: data.answer, rows: data.rows, route: data.route, sources: data.sources, lang: data.lang, timestamp: new Date() }
+        : { sender: 'bot', text: data.error || 'Sorry, I could not answer that.', timestamp: new Date(), error: true };
+      setMessages((m) => [...m.filter((x) => !x.loading), msg]);
+      return { text: msg.text, lang: msg.lang ?? 'en' };
     } catch {
       setMessages((m) => [...m.filter((x) => !x.loading), { sender: 'bot', text: 'Network error. Is the server running?', timestamp: new Date(), error: true }]);
+      return null;
     }
   };
+  const clearChat = () => setMessages((m) => m.slice(0, 1));
 
   return {
     config, settingsApi, status, checkStatus,
     lots, ledger, flow, names, jobCards, allotments, workers, efficiency, cctv, captures,
     loading, dbOk, lastSync, toast, showToast, refresh,
+    value, importStock,
     addStock, moveLot, lotHistory, createJobCard, closeJobCard, confirmCapture, rejectCapture, uploadCapture,
-    messages, ask,
+    messages, ask, clearChat,
   };
 }
 

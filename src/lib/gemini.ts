@@ -1,10 +1,15 @@
 // Google Gemini connection settings + a cached health check used to warn users
 // when AI photo reading / chat is not available.
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
 
-export function geminiModel(): string {
-  return (process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL).trim();
+/**
+ * Model tiers. "low" = cheap/fast (chat intent, reading OCR text), "high" = strongest (reading a photo directly).
+ * GEMINI_MODEL_LOW / GEMINI_MODEL_HIGH override each tier; GEMINI_MODEL sets both.
+ */
+export function geminiModel(tier: 'low' | 'high' = 'high'): string {
+  const own = tier === 'low' ? process.env.GEMINI_MODEL_LOW : process.env.GEMINI_MODEL_HIGH;
+  return (own || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL).trim();
 }
 
 export function geminiKey(): string | null {
@@ -13,9 +18,9 @@ export function geminiKey(): string | null {
 }
 
 /** generateContent endpoint; the key goes in a header so it never appears in URLs or logs. */
-export function geminiRequest(apiKey: string) {
+export function geminiRequest(apiKey: string, tier: 'low' | 'high' = 'high') {
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel())}:generateContent`,
+    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel(tier))}:generateContent`,
     headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
   };
 }
@@ -81,4 +86,67 @@ export async function getAiStatus(force = false): Promise<AiStatus> {
   }
   cached = { at: Date.now(), status };
   return status;
+}
+
+// ---------- One call path for every Gemini request: tier choice + usage/cost log ----------
+type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
+
+export interface GeminiCall {
+  tier: 'low' | 'high';
+  feature: string; // for the usage log, e.g. chat.intent
+  parts: Part[];
+  json?: boolean;
+  temperature?: number;
+  ref?: string | null;
+  timeoutMs?: number;
+}
+
+export class GeminiError extends Error {}
+
+/** Returns the model's text. Throws GeminiError when not configured or the call fails (after logging it). */
+export async function callGemini(c: GeminiCall): Promise<string> {
+  const key = geminiKey();
+  if (!key) throw new GeminiError('GEMINI_API_KEY is not set.');
+  const model = geminiModel(c.tier);
+  const started = Date.now();
+  const { logUsage } = await import('./usage');
+  try {
+    const req = geminiRequest(key, c.tier);
+    const res = await fetch(req.url, {
+      method: 'POST',
+      headers: req.headers,
+      signal: AbortSignal.timeout(c.timeoutMs ?? 45_000),
+      body: JSON.stringify({
+        contents: [{ parts: c.parts }],
+        generationConfig: { temperature: c.temperature ?? 0.1, ...(c.json ? { responseMimeType: 'application/json' } : {}) },
+      }),
+    });
+    const latencyMs = Date.now() - started;
+    if (!res.ok) {
+      const errText = await res.text();
+      reportAiFailure(res.status, errText);
+      await logUsage({ feature: c.feature, provider: 'gemini', model, tier: c.tier, latencyMs, success: false, error: `${res.status} ${errText.slice(0, 200)}`, ref: c.ref });
+      throw new GeminiError(`Gemini error ${res.status}`);
+    }
+    const data = await res.json();
+    reportAiSuccess();
+    const meta = data.usageMetadata ?? {};
+    await logUsage({
+      feature: c.feature, provider: 'gemini', model, tier: c.tier, latencyMs, success: true, ref: c.ref,
+      tokensIn: meta.promptTokenCount ?? 0,
+      tokensOut: (meta.candidatesTokenCount ?? 0) + (meta.thoughtsTokenCount ?? 0),
+    });
+    return (data.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('').trim();
+  } catch (e) {
+    if (e instanceof GeminiError) throw e;
+    reportAiFailure(null, String(e));
+    await logUsage({ feature: c.feature, provider: 'gemini', model, tier: c.tier, latencyMs: Date.now() - started, success: false, error: String(e), ref: c.ref });
+    throw new GeminiError(String(e));
+  }
+}
+
+/** Parse a JSON answer, tolerating ```json fences. */
+export function parseJsonAnswer<T = Record<string, unknown>>(text: string): T {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+  return JSON.parse(cleaned) as T;
 }

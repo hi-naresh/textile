@@ -62,7 +62,8 @@ export function shortTone(pct: number | null): 'good' | 'warn' | 'bad' | 'neutra
 export const STATUS_LABEL: Record<JobCard['status'], string> = { open: 'Open', 'in-process': 'In process', folded: 'Folded', closed: 'Closed' };
 export const STATUS_TONE: Record<JobCard['status'], 'good' | 'warn' | 'info' | 'neutral'> = { open: 'neutral', 'in-process': 'warn', folded: 'info', closed: 'good' };
 
-export const CAPTURE_LABEL = { incoming_stock: 'Incoming challan', outgoing_stock: 'Outgoing challan', job_card_folding: 'Folding job card' } as const;
+export const CAPTURE_LABEL = { incoming_stock: 'Incoming challan', outgoing_stock: 'Outgoing challan', job_card_folding: 'Job card (cut)' } as const;
+export const ENGINE_LABEL: Record<string, string> = { ocr: 'read by OCR', llm_text: 'OCR + AI check', llm_vision: 'read by AI', mock: 'demo read' };
 
 export const FIELD_LABEL: Record<string, string> = {
   lot_id: 'Lot', quality: 'Quality', design: 'Design', meters: 'Meters', party: 'Party (client)', source_doc: 'Challan',

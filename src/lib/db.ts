@@ -37,7 +37,7 @@ if (process.env.NODE_ENV === 'production') {
 
 export default pool;
 
-export async function query(text: string, params?: any[]) {
+export async function query(text: string, params?: unknown[]) {
   const start = Date.now();
   try {
     const res = await pool.query(text, params);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAiStatus } from '@/lib/gemini';
+import { geminiModel, getAiStatus } from '@/lib/gemini';
+import { visionKey } from '@/lib/vision';
 import { photoStorageMode } from '@/lib/photos';
 
 // GET /api/status → health of external connections, used for in-app warnings.
@@ -14,5 +15,9 @@ export async function GET(request: NextRequest) {
       : process.env.VERCEL
         ? { state: 'missing' as const, message: 'Photo storage is not connected — photos cannot be saved.', fix: 'Connect Supabase to this project (it adds SUPABASE_URL and SUPABASE_SECRET_KEY).' }
         : { state: 'local' as const, message: 'Photos are saved in this computer’s public/uploads folder (development).' };
-  return NextResponse.json({ ai, photos }, { headers: { 'Cache-Control': 'no-store' } });
+  const ocr = visionKey()
+    ? { state: 'connected' as const, message: 'Photos are read with Google Cloud Vision OCR first; AI is used only when OCR can’t read a photo.' }
+    : { state: 'missing' as const, message: 'OCR is not connected, so every photo is read by the AI model (slower and costs more).', fix: 'Add GOOGLE_VISION_API_KEY (Google Cloud → APIs & Services → enable Cloud Vision API → create an API key) and redeploy.' };
+  const models = { low: geminiModel('low'), high: geminiModel('high') };
+  return NextResponse.json({ ai, ocr, models, photos }, { headers: { 'Cache-Control': 'no-store' } });
 }

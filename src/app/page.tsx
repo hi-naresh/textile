@@ -4,11 +4,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Shell from '@/components/Shell';
 import Icon from '@/components/Icon';
 import { Sheet } from '@/components/ui';
-import type { Ctx, Lang, SheetKind } from '@/components/ctx';
+import type { Ctx, Density, Lang, SheetKind, ThemePref } from '@/components/ctx';
+import ChatDock from '@/components/ChatDock';
 import { Access, Overview, People, Stock } from '@/components/screens/Owner';
-import { Allot, AllotForm, Ask, JobCards, Review, StockForm } from '@/components/screens/Shared';
+import { Allot, AllotForm, JobCards, Review, StockForm, StockImport } from '@/components/screens/Shared';
 import { Floor } from '@/components/screens/Floor';
-import { Capture, History, Shift } from '@/components/screens/Worker';
+import { Capture } from '@/components/screens/Worker';
 import { HOME_TAB, can, sectionName, setPreviewSupervisor, tabAllowed, type Role, type Tab } from '@/lib/access';
 import { Settings } from '@/components/screens/Settings';
 import { useTextileData } from '@/lib/useTextileData';
@@ -31,7 +32,9 @@ export default function TextileBrain() {
   const [supervisorId, setSupervisorIdState] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetKind>(null);
   const [capType, setCapType] = useState<CaptureType>('job_card_folding');
-  const [dark, setDark] = useState(false);
+  const [theme, setThemeState] = useState<ThemePref>('system');
+  const [density, setDensityState] = useState<Density>('detailed');
+  const [chatOpen, setChatOpen] = useState(false);
 
   // Restore per-device preferences after hydration.
   useEffect(() => {
@@ -49,7 +52,9 @@ export default function TextileBrain() {
     const sup = store.get('tb-sup');
     setPreviewSupervisor(sup);
     setSupervisorIdState(sup);
-    setDark(document.documentElement.dataset.theme === 'dark');
+    const th = store.get('tb-theme');
+    setThemeState(th === 'light' || th === 'dark' ? th : 'system');
+    setDensityState(store.get('tb-density') === 'compact' ? 'compact' : 'detailed');
     setMounted(true);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
@@ -60,25 +65,29 @@ export default function TextileBrain() {
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
+  // From Settings → View the screen stays on Settings (every role has it).
   const setRole = (r: Role) => {
     setRoleState(r);
     store.set('tb-role', r);
-    setTab(HOME_TAB[r]);
-    store.set('tb-tab', HOME_TAB[r]);
+    const next: Tab = tab === 'settings' ? 'settings' : HOME_TAB[r];
+    setTab(next);
+    store.set('tb-tab', next);
     setSheet(null);
+    setChatOpen(false);
   };
   const setLang = (l: Lang) => { setLangState(l); store.set('tb-lang', l); };
   const setRate = (r: number | null) => { setRateState(r); store.set('tb-rate', r == null ? null : String(r)); };
   const setWorkerId = (id: string) => { setWorkerIdState(id); store.set('tb-worker', id); };
   const setSupervisorId = (id: string) => { setPreviewSupervisor(id); setSupervisorIdState(id); store.set('tb-sup', id); };
 
-  const toggleTheme = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.dataset.theme = next ? 'dark' : 'light';
-    store.set('tb-theme', next ? 'dark' : 'light');
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', next ? '#111210' : '#F3F0E8');
+  const setTheme = (t: ThemePref) => {
+    setThemeState(t);
+    store.set('tb-theme', t === 'system' ? null : t);
+    const dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#111210' : '#F3F0E8');
   };
+  const setDensity = (v: Density) => { setDensityState(v); store.set('tb-density', v); };
 
   // Browser tab title follows the firm name from Settings
   useEffect(() => {
@@ -94,7 +103,9 @@ export default function TextileBrain() {
       ?? d.workers[0];
   }, [d.workers, workerId]);
 
-  const ctx: Ctx = { role, d, go, days, me, lang, setLang, rate: role === 'owner' ? rate : null, setRate, openSheet: setSheet, capType, setCapType };
+  const ctx: Ctx = { role, d, go, days, me, lang, setLang, rate: role === 'owner' ? rate : null, setRate, openSheet: setSheet, capType, setCapType, theme, setTheme, openChat: () => setChatOpen(true),
+    setRole, density, setDensity, workerId: me?.id ?? null, setWorkerId, supervisorId, setSupervisorId };
+  const compact = role === 'owner' && density === 'compact';
   const safeTab: Tab = tabAllowed(role, tab) ? tab : HOME_TAB[role];
 
   let screen: React.ReactNode = null;
@@ -103,33 +114,35 @@ export default function TextileBrain() {
     case 'stock': screen = <Stock ctx={ctx} />; break;
     case 'jobs': screen = <JobCards ctx={ctx} />; break;
     case 'review': screen = <Review ctx={ctx} />; break;
-    case 'ask': screen = <Ask ctx={ctx} />; break;
     case 'people': screen = <People ctx={ctx} />; break;
     case 'access': screen = <Access ctx={ctx} />; break;
     case 'floor': screen = <Floor ctx={ctx} />; break;
     case 'allot': screen = <Allot ctx={ctx} />; break;
-    case 'shift': screen = <Shift ctx={ctx} />; break;
     case 'capture': screen = <Capture ctx={ctx} />; break;
-    case 'history': screen = <History ctx={ctx} />; break;
     case 'settings': screen = <Settings ctx={ctx} />; break;
   }
 
   return (
     <>
-      <Shell ctx={ctx} tab={safeTab} dark={dark} toggleTheme={toggleTheme} setRole={setRole} workerId={me?.id ?? null} setWorkerId={setWorkerId} supervisorId={supervisorId} setSupervisorId={setSupervisorId}>
+      <Shell ctx={ctx} tab={safeTab} openChat={() => setChatOpen(true)}>
         {!mounted || (d.loading && !d.lastSync) ? (
           <div className="page"><div className="loading"><span className="spinner" />Loading floor data…</div></div>
         ) : (
-          <div key={`${role}-${safeTab}`}>{screen}</div>
+          <div key={`${role}-${safeTab}`} className={compact ? 'compact' : 'detailed'}>{screen}</div>
         )}
       </Shell>
 
       <Sheet open={sheet === 'stock' && can(role, 'ledger.edit')} title="Manual stock entry" onClose={() => setSheet(null)}>
         <StockForm ctx={ctx} onDone={() => setSheet(null)} />
       </Sheet>
+      <Sheet open={sheet === 'import' && can(role, 'ledger.edit')} title="Import stock from Excel" onClose={() => setSheet(null)}>
+        <StockImport ctx={ctx} onDone={() => setSheet(null)} />
+      </Sheet>
       <Sheet open={sheet === 'job' && can(role, 'jobs.manage')} title="New job card" onClose={() => setSheet(null)}>
         <AllotForm ctx={ctx} onDone={() => setSheet(null)} />
       </Sheet>
+
+      {mounted && <ChatDock ctx={ctx} open={chatOpen} setOpen={setChatOpen} />}
 
       {d.toast && (
         <div className={`toast ${d.toast.tone}`} role="status">

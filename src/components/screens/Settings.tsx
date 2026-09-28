@@ -2,10 +2,11 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Icon from '../Icon';
-import { PageHead, Pill } from '../ui';
+import { PageHead, Pill, Segmented } from '../ui';
+import type { KnowledgeDoc } from '@/lib/useTextileData';
 import type { Ctx } from '../ctx';
 import { LIMITS } from '@/lib/config';
-import { sectionName } from '@/lib/access';
+import { ROLE_LABEL, activeSupervisors, sectionName, type Role } from '@/lib/access';
 import type { Worker } from '@/lib/types';
 
 type WorkerRow = Worker & { active: boolean };
@@ -52,7 +53,70 @@ function AddRow({ placeholder, button, onAdd, children }: { placeholder: string;
   );
 }
 
+/** Preview role (until login exists) + owner screen density. Stored on this device. */
+function ViewSettings({ ctx }: { ctx: Ctx }) {
+  const { role, d } = ctx;
+  const sups = activeSupervisors();
+  return (
+    <section className="card pad stack-16">
+      <h2 className="h2">View</h2>
+      <div className="fld">Preview as
+        <Segmented label="Preview as role" value={role} onChange={ctx.setRole} className="fit" options={(['owner', 'supervisor', 'worker'] as Role[]).map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
+        <span className="muted small">Until login is added, this decides what the app shows.</span>
+      </div>
+      {role === 'supervisor' && sups.length > 0 && (
+        <label className="fld">Supervisor
+          <select value={ctx.supervisorId ?? sups[0].id} onChange={(e) => ctx.setSupervisorId(e.target.value)}>
+            {sups.map((s) => <option key={s.id} value={s.id}>{s.name}{s.sections.length ? ` · ${s.sections.join(', ')}` : ''}</option>)}
+          </select>
+        </label>
+      )}
+      {role === 'worker' && d.workers.length > 0 && (
+        <label className="fld">Worker
+          <select value={ctx.workerId ?? ''} onChange={(e) => ctx.setWorkerId(e.target.value)}>
+            {d.workers.map((w) => <option key={w.id} value={w.id}>{w.name} · {sectionName(w.section)}</option>)}
+          </select>
+        </label>
+      )}
+      {role === 'owner' && (
+        <div className="fld">Screen density
+          <Segmented label="Screen density" value={ctx.density} onChange={ctx.setDensity} className="fit" options={[{ value: 'compact', label: 'Compact' }, { value: 'detailed', label: 'Detailed' }]} />
+          <span className="muted small">Compact hides charts, the sections table and detail columns.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Theme + language: every role, stored on this device. */
+function Preferences({ ctx }: { ctx: Ctx }) {
+  return (
+    <section className="card pad stack-16">
+      <h2 className="h2">Preferences</h2>
+      <div className="fld">Theme
+        <Segmented label="Theme" value={ctx.theme} onChange={ctx.setTheme} className="fit" options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]} />
+      </div>
+      <div className="fld">Language
+        <Segmented label="Language" value={ctx.lang} onChange={ctx.setLang} className="fit" options={[{ value: 'en', label: 'English' }, { value: 'hi', label: 'हिंदी' }, { value: 'gu', label: 'ગુજરાતી' }]} />
+        <span className="muted small">Used for the capture screen and voice questions.</span>
+      </div>
+    </section>
+  );
+}
+
 export function Settings({ ctx }: { ctx: Ctx }) {
+  if (ctx.role !== 'owner') {
+    return (
+      <div className="page fade settings">
+        <PageHead title="Settings" />
+        <div className="settings-grid"><ViewSettings ctx={ctx} /><Preferences ctx={ctx} /></div>
+      </div>
+    );
+  }
+  return <OwnerSettings ctx={ctx} />;
+}
+
+function OwnerSettings({ ctx }: { ctx: Ctx }) {
   const { d } = ctx;
   const cfg = d.config;
   const api = d.settingsApi;
@@ -64,6 +128,8 @@ export function Settings({ ctx }: { ctx: Ctx }) {
   const [shortage, setShortage] = useState(String(cfg.rules.shortageLimitPct));
   const [efficiency, setEfficiency] = useState(String(cfg.rules.efficiencyTargetPct));
   const [autoPct, setAutoPct] = useState(String(cfg.rules.aiAutoConfirmPct));
+  const [challanMin, setChallanMin] = useState(String(cfg.rules.manualChallanMin));
+  const [jobCardMin, setJobCardMin] = useState(String(cfg.rules.manualJobCardMin));
   const [locations, setLocations] = useState<string[]>(cfg.locationPresets);
   const [newLoc, setNewLoc] = useState('');
 
@@ -77,17 +143,19 @@ export function Settings({ ctx }: { ctx: Ctx }) {
   useEffect(() => { let alive = true; api.allWorkers().then((w) => { if (alive) setWorkers(w); }).catch(() => { if (alive) setWorkers([]); }); return () => { alive = false; }; }, [api]);
 
   const firmDirty = firmName !== cfg.firm.name || firmCity !== cfg.firm.city;
-  const rulesDirty = shortage !== String(cfg.rules.shortageLimitPct) || efficiency !== String(cfg.rules.efficiencyTargetPct) || autoPct !== String(cfg.rules.aiAutoConfirmPct);
+  const rulesDirty = shortage !== String(cfg.rules.shortageLimitPct) || efficiency !== String(cfg.rules.efficiencyTargetPct) || autoPct !== String(cfg.rules.aiAutoConfirmPct)
+    || challanMin !== String(cfg.rules.manualChallanMin) || jobCardMin !== String(cfg.rules.manualJobCardMin);
   const locDirty = locations.join('|') !== cfg.locationPresets.join('|');
   const workerSection = newWorkerSection || activeSections[0]?.name || '';
 
   return (
     <div className="page fade settings">
-      <PageHead title="Settings" sub="Everything here is specific to this firm. Changes apply for everyone straight away." />
-
-      <Connections ctx={ctx} />
+      <PageHead title="Settings" sub="Firm settings apply for everyone straight away" />
 
       <div className="settings-grid">
+        <ViewSettings ctx={ctx} />
+        <Preferences ctx={ctx} />
+        <Connections ctx={ctx} />
         {/* Firm */}
         <section className="card pad stack-16">
           <div className="stack-4"><h2 className="h2">Firm</h2><span className="muted small">Shown in the header and the browser tab.</span></div>
@@ -103,14 +171,19 @@ export function Settings({ ctx }: { ctx: Ctx }) {
             <span className="muted small">A job card losing more than this is flagged. Allowed {LIMITS.shortageLimitPct.min}–{LIMITS.shortageLimitPct.max}.</span></label>
           <label className="fld">Worker efficiency target (%)<input className="num" inputMode="decimal" value={efficiency} onChange={(e) => setEfficiency(e.target.value)} />
             <span className="muted small">A worker’s day below this is flagged.</span></label>
-          <label className="fld">AI auto-confirm (%)<input className="num" inputMode="decimal" value={autoPct} onChange={(e) => setAutoPct(e.target.value)} />
+          <div className="two-col">
+            <label className="fld">Manual minutes per challan<input className="num" inputMode="decimal" value={challanMin} onChange={(e) => setChallanMin(e.target.value)} /></label>
+            <label className="fld">Manual minutes per job card<input className="num" inputMode="decimal" value={jobCardMin} onChange={(e) => setJobCardMin(e.target.value)} /></label>
+          </div>
+          <span className="muted small" style={{ marginTop: -8 }}>How long entering one by hand takes. Used for the time-saved figure.</span>
+          <label className="fld">Auto-confirm photo reads (%)<input className="num" inputMode="decimal" value={autoPct} onChange={(e) => setAutoPct(e.target.value)} />
             <span className="muted small">Photo reads at or above this confidence are saved without review. Allowed {LIMITS.aiAutoConfirmPct.min}–{LIMITS.aiAutoConfirmPct.max}; 100 = always review.</span></label>
-          <div className="row-8"><button className="btn primary" disabled={!rulesDirty} onClick={() => api.updateFirm({ shortage_limit_pct: shortage, efficiency_target_pct: efficiency, ai_auto_confirm_pct: autoPct })}>Save rules</button></div>
+          <div className="row-8"><button className="btn primary" disabled={!rulesDirty} onClick={() => api.updateFirm({ shortage_limit_pct: shortage, efficiency_target_pct: efficiency, ai_auto_confirm_pct: autoPct, manual_challan_min: challanMin, manual_job_card_min: jobCardMin })}>Save rules</button></div>
         </section>
 
         {/* Locations */}
         <section className="card pad stack-16">
-          <div className="stack-4"><h2 className="h2">Lot locations</h2><span className="muted small">Quick choices when receiving or moving a lot. Staff can still type any other place.</span></div>
+          <div className="stack-4"><h2 className="h2">Lot locations</h2><span className="muted small">The only places a lot can be. Floor is used by job cards; Dispatched is set automatically.</span></div>
           <div className="chips">
             {locations.map((l) => (
               <span key={l} className="chip-tag">{l}<button type="button" aria-label={`Remove ${l}`} onClick={() => setLocations(locations.filter((x) => x !== l))}><Icon name="x" size={14} strokeWidth={2} /></button></span>
@@ -122,6 +195,8 @@ export function Settings({ ctx }: { ctx: Ctx }) {
           </form>
           <div className="row-8"><button className="btn primary" disabled={!locDirty || !locations.length} onClick={() => api.updateFirm({ location_presets: locations })}>Save locations</button></div>
         </section>
+
+        <Knowledge ctx={ctx} />
 
         {/* Sections */}
         <section className="card pad stack-16">
@@ -229,16 +304,26 @@ function Connections({ ctx }: { ctx: Ctx }) {
   return (
     <section className="card pad stack-14">
       <div className="card-head">
-        <div className="stack-4 grow"><h2 className="h2">Connections</h2><span className="muted small">Services the app depends on. Checked every 10 minutes.</span></div>
+        <div className="stack-4 grow"><h2 className="h2">Connections</h2></div>
         <button className="btn sm" disabled={busy} onClick={async () => { setBusy(true); await d.checkStatus(true); setBusy(false); }}><Icon name="refresh" size={14} />{busy ? 'Checking…' : 'Check again'}</button>
       </div>
       {!st && <span className="muted small">Checking…</span>}
       {st && ai && (
         <div className="list">
+          {st.ocr && (
+            <div className="list-row wrap">
+              <div className="stack-2 grow">
+                <span className="strong">OCR (Google Cloud Vision)</span>
+                <span className="muted small">{st.ocr.message}</span>
+                {st.ocr.fix && <span className="t2 small">What to do: {st.ocr.fix}</span>}
+              </div>
+              <Pill tone={st.ocr.state === 'connected' ? 'good' : 'warn'}>{st.ocr.state === 'connected' ? 'Connected' : 'Not connected'}</Pill>
+            </div>
+          )}
           <div className="list-row wrap">
             <div className="stack-2 grow">
-              <span className="strong">AI photo reading & chat</span>
-              <span className="muted small">{st.ai.message}{st.ai.state !== 'missing' && st.ai.state !== 'demo' ? ` Model: ${st.ai.model}.` : ''}</span>
+              <span className="strong">AI (Gemini)</span>
+              <span className="muted small">{st.ai.message}{st.ai.state !== 'missing' && st.ai.state !== 'demo' && st.models ? ` Low tier: ${st.models.low} · High tier: ${st.models.high}.` : ''}</span>
               {st.ai.fix && <span className="t2 small">What to do: {st.ai.fix}</span>}
             </div>
             <Pill tone={ai.tone}>{ai.label}</Pill>
@@ -253,6 +338,38 @@ function Connections({ ctx }: { ctx: Ctx }) {
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+/** Firm notes the chat answers policy / how-to questions from. */
+function Knowledge({ ctx }: { ctx: Ctx }) {
+  const api = ctx.d.settingsApi;
+  const [docs, setDocs] = useState<KnowledgeDoc[] | null>(null);
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [open, setOpen] = useState<number | null>(null);
+  const load = useCallback(async () => { try { setDocs(await api.knowledge()); } catch { setDocs([]); } }, [api]);
+  useEffect(() => { let alive = true; api.knowledge().then((x) => { if (alive) setDocs(x); }).catch(() => { if (alive) setDocs([]); }); return () => { alive = false; }; }, [api]);
+  return (
+    <section className="card pad stack-16">
+      <div className="stack-4"><h2 className="h2">Firm knowledge</h2><span className="muted small">Short notes (policies, party terms, how-tos). Chat answers from these.</span></div>
+      <div className="list">
+        {docs == null && <span className="muted small">Loading…</span>}
+        {docs?.map((k) => (
+          <div key={k.id} className={`list-row wrap ${k.active ? '' : 'off'}`}>
+            <button type="button" className="linkbtn strong grow left" onClick={() => setOpen(open === k.id ? null : k.id)}>{k.title}</button>
+            <Toggle on={k.active} label={`${k.title} active`} onChange={async (v) => { if (await api.updateKnowledge(k.id, { active: v })) load(); }} />
+            {open === k.id && <p className="t2 small note-body">{k.body}</p>}
+          </div>
+        ))}
+        {docs && !docs.length && <span className="muted small">No notes yet.</span>}
+      </div>
+      <form className="stack-10" onSubmit={async (e) => { e.preventDefault(); if (!title.trim() || !body.trim()) return; if (await api.addKnowledge(title.trim(), body.trim())) { setTitle(''); setBody(''); load(); } }}>
+        <input className="input" aria-label="Note title" placeholder="Title, e.g. Payment terms" value={title} maxLength={150} onChange={(e) => setTitle(e.target.value)} />
+        <textarea className="input" aria-label="Note text" rows={3} placeholder="The note…" value={body} maxLength={5000} onChange={(e) => setBody(e.target.value)} />
+        <div className="row-8"><button className="btn primary" type="submit" disabled={!title.trim() || !body.trim()}><Icon name="plus" size={16} strokeWidth={2} />Add note</button></div>
+      </form>
     </section>
   );
 }

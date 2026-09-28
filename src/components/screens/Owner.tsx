@@ -4,9 +4,10 @@ import React, { useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Kpi, PageHead, Pill, Segmented, Sheet, Track, dayTime, effTone, fmt, fmtM, inr, initials, time } from '../ui';
 import { LotLocationPanel } from './Shared';
+import { LiveNow, StockFlow } from './Today';
 import type { LedgerEntry } from '@/lib/types';
 import type { Ctx } from '../ctx';
-import { MATRIX, ROLE_LABEL, levelTone, supervisorFor, type Role, scopeText, rules, activeSupervisors, owner, firm, withFirm } from '@/lib/access';
+import { MATRIX, ROLE_LABEL, levelTone, supervisorFor, type Role, rules, activeSupervisors, owner, withFirm } from '@/lib/access';
 import { STAGE_LABEL, camStatus, locationTone, sectionRows } from '@/lib/derive';
 
 const greeting = () => {
@@ -34,7 +35,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
     const items: { tone: 'bad' | 'warn' | 'info'; title: string; sub: string; action: string; onClick: () => void }[] = [];
     d.jobCards.filter((j) => j.flagged).slice(0, 2).forEach((j) =>
       items.push({ tone: 'bad', title: `Shortage ${j.shortage_pct.toFixed(1)}% on ${j.lot_id}`, sub: `${j.process} · JC-${j.id} · above ${rules().shortageLimitPct}% limit${rate && j.shortage ? ` · ${inr(j.shortage * rate)}` : ''}`, action: 'Open', onClick: () => go('jobs') }));
-    if (pending.length) items.push({ tone: 'warn', title: `${pending.length} AI photo read${pending.length > 1 ? 's' : ''} waiting`, sub: lowConf ? `${lowConf} below ${autoPct}% confidence` : `All above ${autoPct}% confidence`, action: 'Review', onClick: () => go('review') });
+    if (pending.length) items.push({ tone: 'warn', title: `${pending.length} photo read${pending.length > 1 ? 's' : ''} waiting`, sub: lowConf ? `${lowConf} below ${autoPct}% confidence` : `All above ${autoPct}% confidence`, action: 'Review', onClick: () => go('review') });
     days.filter((x) => x.cam && x.cam.active_pct < 60).slice(0, 2).forEach((x) =>
       items.push({ tone: 'warn', title: `${x.worker.name} idle ${Math.round(x.cam!.idle_min)} min`, sub: `CCTV · ${x.cam!.station} · ${x.section}`, action: 'View', onClick: () => go('people') }));
     d.lots.filter((l) => l.balance > 0 && l.balance < 200).slice(0, 1).forEach((l) =>
@@ -42,48 +43,24 @@ export function Overview({ ctx }: { ctx: Ctx }) {
     return items;
   }, [d.jobCards, d.lots, pending.length, lowConf, autoPct, days, go, rate]);
 
-  const max = Math.max(1, ...d.flow.map((f) => Math.max(f.in_m, f.out_m)));
-  const lastQ = [...d.messages].reverse().find((m) => m.sender === 'user');
-  const lastA = lastQ ? d.messages[d.messages.indexOf(lastQ) + 1] : undefined;
 
   return (
     <div className="page fade">
-      <PageHead title={`${greeting()}, ${owner().name.split(' ')[0]}`} sub={`All units · ${sections.filter((s) => s.open > 0).length} section${sections.filter((s) => s.open > 0).length === 1 ? '' : 's'} running${d.lastSync ? ` · synced ${time(d.lastSync.toISOString())}` : ''}`}>
+      <PageHead title={`${greeting()}, ${owner().name.split(' ')[0]}`} sub={`${sections.filter((s) => s.open > 0).length} section${sections.filter((s) => s.open > 0).length === 1 ? '' : 's'} running${d.lastSync ? ` · synced ${time(d.lastSync.toISOString())}` : ''}`}>
         <button className="btn" onClick={() => d.refresh()}><Icon name="refresh" size={16} strokeWidth={2} />Refresh</button>
         <button className="btn primary" onClick={() => ctx.openSheet('stock')}><Icon name="plus" size={16} strokeWidth={2} />New entry</button>
       </PageHead>
 
-      <div className="grid-4">
+      <div className="grid-kpi">
         <Kpi label="Stock on hand" value={fmtM(onHand)} sub={`${activeLots} active lots`} />
         <RateKpi ctx={ctx} onHand={onHand} />
         <Kpi label="Dispatched today" value={fmtM(today?.out_m ?? 0)} sub={`In today: ${fmtM(today?.in_m ?? 0)}`} />
         <Kpi label="Floor efficiency" value={floorEff == null ? '—' : `${floorEff.toFixed(1)}%`} sub={floorEff == null ? 'No work allotted today' : flaggedWorkers ? `${flaggedWorkers} worker${flaggedWorkers > 1 ? 's' : ''} below ${target}%` : 'Everyone on track'} subTone={flaggedWorkers ? 'warn' : 'good'} />
+        <TimeSavedKpi ctx={ctx} />
       </div>
 
       <div className="grid-split">
-        <section className="card pad">
-          <div className="card-head">
-            <h2>Stock flow · last 7 days</h2>
-            <span className="legend"><i style={{ background: 'var(--accent)' }} />In</span>
-            <span className="legend"><i style={{ background: 'var(--warn)' }} />Out</span>
-          </div>
-          <div className="chart">
-            {d.flow.map((f) => {
-              const label = new Date(f.day + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' });
-              return (
-                <div className="chart-col" key={f.day} title={`${label}: in ${fmt(f.in_m)} m, out ${fmt(f.out_m)} m`}>
-                  <div className="chart-bars">
-                    <div className="chart-bar" style={{ height: `${(f.in_m / max) * 100}%`, background: 'var(--accent)' }} />
-                    <div className="chart-bar" style={{ height: `${(f.out_m / max) * 100}%`, background: 'var(--warn)' }} />
-                  </div>
-                  <span className="chart-label">{label}</span>
-                </div>
-              );
-            })}
-            {!d.flow.length && <span className="muted">No movements yet</span>}
-          </div>
-        </section>
-
+        <LiveNow ctx={ctx} />
         <section className="card pad stack-14">
           <div className="card-head"><h2>Needs your attention</h2>{attention.length > 0 && <Pill tone="bad"><span className="num">{attention.length}</span></Pill>}</div>
           {attention.length === 0 && <p className="muted" style={{ margin: 0 }}>All clear. Nothing needs you right now.</p>}
@@ -100,8 +77,9 @@ export function Overview({ ctx }: { ctx: Ctx }) {
         </section>
       </div>
 
-      <div className="grid-split">
-        <section className="card flush">
+      <StockFlow ctx={ctx} />
+
+      <section className="card flush d">
           <div className="card-head pad-x"><h2>Sections</h2><span className="muted small">today, live</span></div>
           <table className="tbl rtbl">
             <thead><tr><th>Section</th><th>Supervisor</th><th className="r">Open cards</th><th style={{ width: 180 }}>Efficiency</th><th className="r">Shortage</th></tr></thead>
@@ -119,26 +97,20 @@ export function Overview({ ctx }: { ctx: Ctx }) {
           </table>
         </section>
 
-        <section className="card pad stack-14">
-          <div className="card-head"><Icon name="chat" style={{ color: 'var(--accent)' }} /><h2>Ask {firm().name}</h2><Pill>Every answer audited</Pill></div>
-          {lastQ && lastA && !lastA.loading ? (
-            <div className="qa">
-              <span className="muted small">You asked · {time(lastQ.timestamp.toISOString())}</span>
-              <span className="strong">{lastQ.text}</span>
-              <span className="t2">{lastA.text}</span>
-            </div>
-          ) : (
-            <div className="qa"><span className="t2">Ask about stock, lots, job cards or workers in plain language. I query the live database.</span></div>
-          )}
-          <div className="chips">
-            {['Which lots have less than 500 meters?', 'Top 5 workers by efficiency', 'Total shortage by process'].map((q) => (
-              <button key={q} className="chip" onClick={() => { d.ask('owner', q); go('ask'); }}>{q}</button>
-            ))}
-          </div>
-          <AskInline onAsk={(q) => { d.ask('owner', q); go('ask'); }} />
-        </section>
-      </div>
     </div>
+  );
+}
+
+function TimeSavedKpi({ ctx }: { ctx: Ctx }) {
+  const v = ctx.d.value?.month;
+  const hours = v ? v.savedMin / 60 : 0;
+  return (
+    <Kpi
+      label="Time saved · 30 days"
+      value={v ? (hours >= 1 ? `${fmt(hours, 1)} h` : `${fmt(v.savedMin, 0)} min`) : '—'}
+      sub={v ? (v.captures ? `${v.captures} photo read${v.captures === 1 ? '' : 's'} vs manual entry` : 'No confirmed photo reads yet') : 'Loading…'}
+      subTone={v && v.savedMin > 0 ? 'good' : undefined}
+    />
   );
 }
 
@@ -155,17 +127,7 @@ function RateKpi({ ctx, onHand }: { ctx: Ctx; onHand: number }) {
     );
   }
   return (
-    <Kpi label="Stock value" lock value={ctx.rate ? inr(onHand * ctx.rate) : '₹ —'} sub={ctx.rate ? <>at ₹{fmt(ctx.rate)}/m average · <button className="linkbtn" onClick={() => setEditing(true)}>edit</button></> : <button className="linkbtn" onClick={() => setEditing(true)}>Set average ₹/m rate</button>} />
-  );
-}
-
-export function AskInline({ onAsk, placeholder = 'Ask in English, हिंदी or ગુજરાતી…' }: { onAsk: (q: string) => void; placeholder?: string }) {
-  const [q, setQ] = useState('');
-  return (
-    <form className="askbox" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { onAsk(q.trim()); setQ(''); } }}>
-      <input aria-label="Ask a question" placeholder={placeholder} value={q} onChange={(e) => setQ(e.target.value)} />
-      <button className="btn primary sm icon-only" aria-label="Send" type="submit"><Icon name="arrow" size={16} strokeWidth={2} /></button>
-    </form>
+    <Kpi label="Stock value" value={ctx.rate ? inr(onHand * ctx.rate) : '₹ —'} sub={ctx.rate ? <>at ₹{fmt(ctx.rate)}/m average · <button className="linkbtn" onClick={() => setEditing(true)}>edit</button></> : <button className="linkbtn" onClick={() => setEditing(true)}>Set average ₹/m rate</button>} />
   );
 }
 
@@ -178,22 +140,13 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   const rows = d.ledger.filter((l) => dir === 'ALL' || l.direction === dir);
   const today = d.flow[d.flow.length - 1];
 
-  const exportCsv = () => {
-    const head = ['time', 'direction', 'lot', 'quality', 'design', 'meters', 'grey_meters', 'finished_meters', 'mill', 'weaver', 'party', 'challan', 'source'];
-    const lines = d.ledger.map((l) => [l.ts, l.direction, l.lot_id, l.quality ?? '', l.design ?? '', l.meters, l.grey_meters ?? '', l.finished_meters ?? '', l.mill_name ?? '', l.weaver_name ?? '', l.direction === 'OUT' ? l.party ?? '' : '', l.source_doc_id ?? '', l.capture_event_id ? 'photo' : 'manual']
-      .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','));
-    const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `stock-ledger-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+  const exportHref = view === 'lots' ? '/api/stock/export?kind=lots' : `/api/stock/export?kind=challans${dir === 'ALL' ? '' : `&direction=${dir}`}`;
 
   return (
     <div className="page fade">
-      <PageHead title="Stock ledger" sub="Every IN and OUT movement, from confirmed photo reads and manual entries">
-        <button className="btn" onClick={exportCsv}><Icon name="download" size={16} strokeWidth={2} />Export CSV</button>
+      <PageHead title="Stock ledger" sub="Every challan in and out">
+        <a className="btn" href={exportHref} download><Icon name="download" size={16} strokeWidth={2} />Excel</a>
+        <button className="btn" onClick={() => ctx.openSheet('import')}><Icon name="upload" size={16} strokeWidth={2} />Import</button>
         <button className="btn primary" onClick={() => ctx.openSheet('stock')}><Icon name="plus" size={16} strokeWidth={2} />Manual entry</button>
       </PageHead>
       <div className="toolbar">
@@ -205,38 +158,40 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       {view === 'moves' ? (
         <section className="card flush">
           <table className="tbl rtbl">
-            <thead><tr><th>Time</th><th>Dir</th><th>Lot</th><th>Quality · Design</th><th className="r">Meters</th><th className="r">Grey → Finished</th><th>From (mill · weaver) / To (party)</th><th>Challan</th><th>Source</th><th className="r"><span className="lock th-lock"><Icon name="lock" size={12} strokeWidth={2} />Value</span></th></tr></thead>
+            <thead><tr><th className="r">S.No</th><th>Time</th><th>Dir</th><th>Lot</th><th className="d">Quality · Design</th><th className="r">Meters</th><th className="r d">Grey → Finished</th><th>From (mill · weaver) / To (party)</th><th>Challan</th><th className="d">Source</th><th className="r d">Value ₹</th></tr></thead>
             <tbody>
-              {rows.map((l) => (
+              {rows.map((l, i) => (
                 <tr key={l.id}>
+                  <td data-label="S.No" className="r num muted">{i + 1}</td>
                   <td data-label="Time" className="num t2">{dayTime(l.ts)}</td>
                   <td data-label="Dir"><Pill tone={l.direction === 'IN' ? 'info' : 'warn'}>{l.direction}</Pill></td>
                   <td data-label="Lot" className="num strong">{l.lot_id}</td>
-                  <td data-label="Quality"><div>{l.quality ?? '—'}</div><div className="muted small">{l.design}</div></td>
+                  <td data-label="Quality" className="d"><div>{l.quality ?? '—'}</div><div className="muted small">{l.design}</div></td>
                   <td data-label="Meters" className="r num">{fmt(l.meters, 1)}</td>
-                  <td data-label="Grey → Finished" className="r num t2">{l.direction === 'IN' && (l.grey_meters != null || l.finished_meters != null) ? `${fmt(l.grey_meters, 1)} → ${fmt(l.finished_meters, 1)}` : '—'}</td>
+                  <td data-label="Grey → Finished" className="r num t2 d">{l.direction === 'IN' && (l.grey_meters != null || l.finished_meters != null) ? `${fmt(l.grey_meters, 1)} → ${fmt(l.finished_meters, 1)}` : '—'}</td>
                   <td data-label={l.direction === 'IN' ? 'From' : 'To'} className="t2">{l.direction === 'IN' ? <InSource l={l} /> : <span>→ {l.party ?? '—'}</span>}</td>
                   <td data-label="Challan" className="num t2">{l.source_doc_id ?? '—'}</td>
-                  <td data-label="Source"><Pill>{l.capture_event_id ? 'Photo · AI' : 'Manual'}</Pill></td>
-                  <td data-label="Value" className="r num">{rate ? inr(l.meters * rate) : '—'}</td>
+                  <td data-label="Source" className="d"><Pill>{l.capture_event_id ? 'Photo' : 'Manual'}</Pill></td>
+                  <td data-label="Value" className="r num d">{rate ? inr(l.meters * rate) : '—'}</td>
                 </tr>
               ))}
-              {!rows.length && <tr><td colSpan={10} className="muted center">No movements</td></tr>}
+              {!rows.length && <tr><td colSpan={11} className="muted center">No movements</td></tr>}
             </tbody>
           </table>
         </section>
       ) : (
         <section className="card flush">
           <table className="tbl rtbl">
-            <thead><tr><th>Lot</th><th>Quality</th><th>Design</th><th>Grade</th><th>Status</th><th>Location</th><th className="r">Balance</th><th className="r">Action</th></tr></thead>
+            <thead><tr><th className="r">S.No</th><th>Lot</th><th>Quality</th><th className="d">Design</th><th className="d">Grade</th><th className="d">Status</th><th>Location</th><th className="r">Balance</th><th className="r">Action</th></tr></thead>
             <tbody>
-              {d.lots.map((l) => (
+              {d.lots.map((l, i) => (
                 <tr key={l.lot_id}>
+                  <td data-label="S.No" className="r num muted">{i + 1}</td>
                   <td data-label="Lot" className="num strong">{l.lot_id}</td>
                   <td data-label="Quality">{l.quality}</td>
-                  <td data-label="Design" className="t2">{l.design}</td>
-                  <td data-label="Grade">{l.grade}</td>
-                  <td data-label="Status"><Pill tone={l.status === 'active' ? 'good' : l.status === 'hold' ? 'warn' : 'neutral'}>{l.status}</Pill></td>
+                  <td data-label="Design" className="t2 d">{l.design}</td>
+                  <td data-label="Grade" className="d">{l.grade}</td>
+                  <td data-label="Status" className="d"><Pill tone={l.status === 'active' ? 'good' : l.status === 'hold' ? 'warn' : 'neutral'}>{l.status}</Pill></td>
                   <td data-label="Location"><div className="loc-cell"><Pill tone={locationTone(l.location)}>{l.location ?? 'Not recorded'}</Pill>{l.location_stage && <span className="muted tiny">{STAGE_LABEL[l.location_stage]} · {dayTime(l.location_ts!)}</span>}</div></td>
                   <td data-label="Balance" className="r num strong">{fmt(l.balance, 1)} m</td>
                   <td data-label="Action" className="r"><button className="btn sm" onClick={() => setLotSheet(l.lot_id)}>{l.location === 'Dispatched' ? 'History' : 'Move'}</button></td>
@@ -298,12 +253,12 @@ export function Access({ ctx }: { ctx: Ctx }) {
   const counts: Record<Role, number> = { owner: 1, supervisor: activeSupervisors().length, worker: ctx.d.workers.length };
   const blurb: Record<Role, string> = {
     owner: 'Whole firm. Money, rates, CCTV, users. Can override any read.',
-    supervisor: 'Assigned sections only. Meters, not money. Confirm reads, run job cards, allot work.',
-    worker: 'Own allotments and history. Capture photos. Nothing about other workers.',
+    supervisor: 'Incoming and outgoing challan photos. Own sections: reviews, job cards, allotment. Meters, not money.',
+    worker: 'Job card (cut) photos only.',
   };
   return (
     <div className="page fade">
-      <PageHead title="Access & roles" sub="Who can see which data, and who can change it. Each layer only sees down, never up." />
+      <PageHead title="Access & roles" sub="Who sees what, and who can change it" />
       <div className="grid-3">
         {(['owner', 'supervisor', 'worker'] as Role[]).map((r) => (
           <div className="card pad role-card" key={r}>
@@ -311,7 +266,6 @@ export function Access({ ctx }: { ctx: Ctx }) {
             <div className="stack-4">
               <span className="role-name">{ROLE_LABEL[r]}{r !== 'owner' ? 's' : ''}</span>
               <span className="t2 small lh">{blurb[r]}</span>
-              <span className="muted small">{scopeText(r).scope}</span>
             </div>
           </div>
         ))}
@@ -332,7 +286,6 @@ export function Access({ ctx }: { ctx: Ctx }) {
           </tbody>
         </table>
       </section>
-      <p className="muted small note"><Icon name="lock" size={14} strokeWidth={2} />Supervisor sections: {activeSupervisors().map((s) => `${s.name} — ${s.sections.join(' & ')}`).join(' · ')}</p>
     </div>
   );
 }

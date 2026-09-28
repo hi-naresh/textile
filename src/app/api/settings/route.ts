@@ -28,6 +28,8 @@ export async function PUT(request: NextRequest) {
     if ('shortage_limit_pct' in b) add('shortage_limit_pct', pct(b.shortage_limit_pct, 'Shortage limit %', LIMITS.shortageLimitPct));
     if ('efficiency_target_pct' in b) add('efficiency_target_pct', pct(b.efficiency_target_pct, 'Efficiency target %', LIMITS.efficiencyTargetPct));
     if ('ai_auto_confirm_pct' in b) add('ai_auto_confirm_pct', pct(b.ai_auto_confirm_pct, 'AI auto-confirm %', LIMITS.aiAutoConfirmPct));
+    if ('manual_challan_min' in b) add('manual_challan_min', pct(b.manual_challan_min, 'Minutes per challan', LIMITS.manualMinutes));
+    if ('manual_job_card_min' in b) add('manual_job_card_min', pct(b.manual_job_card_min, 'Minutes per job card', LIMITS.manualMinutes));
     if ('location_presets' in b) {
       if (!Array.isArray(b.location_presets)) throw new LedgerError('location_presets must be a list.');
       const list: string[] = [];

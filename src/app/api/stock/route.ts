@@ -33,7 +33,7 @@ export async function GET() {
 
     // 2. Fetch full ledger history
     const ledgerQuery = `
-      SELECT sm.*, l.quality, l.design
+      SELECT sm.*, l.quality, l.design, (sm.ts::date = CURRENT_DATE) AS is_today
       FROM stock_movements sm
       JOIN lots l ON sm.lot_id = l.lot_id
       ORDER BY sm.ts DESC, sm.id DESC

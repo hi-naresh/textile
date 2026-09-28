@@ -43,7 +43,7 @@ export async function savePhoto(buffer: Buffer, name: string, contentType: strin
   const sb = supabase();
   if (sb) {
     await ensureBucket(sb);
-    const objectPath = `${new Date().toISOString().slice(0, 7)}/${name}`; // e.g. 2026-09/incoming_stock_123.jpg
+    const objectPath = `${dateFolder()}/${name}`; // e.g. 2026/09/27/incoming_stock_123.webp
     const res = await fetch(`${sb.base}/object/${BUCKET}/${objectPath}`, {
       method: 'POST',
       headers: { ...sb.headers, 'Content-Type': contentType, 'x-upsert': 'false' },
@@ -53,10 +53,31 @@ export async function savePhoto(buffer: Buffer, name: string, contentType: strin
     return `sb:${BUCKET}/${objectPath}`;
   }
   if (process.env.VERCEL) throw new Error('Photo storage is not configured (SUPABASE_URL and SUPABASE_SECRET_KEY are missing).');
-  const dir = path.join(process.cwd(), 'public', 'uploads');
+  const folder = dateFolder();
+  const dir = path.join(process.cwd(), 'public', 'uploads', ...folder.split('/'));
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, name), buffer);
-  return `/uploads/${name}`;
+  return `/uploads/${folder}/${name}`;
+}
+
+/** YYYY/MM/DD in India time — one folder per day (≈500 photos/day per firm). */
+export function dateFolder(d = new Date()): string {
+  const ist = new Date(d.getTime() + 330 * 60_000);
+  return ist.toISOString().slice(0, 10).replace(/-/g, '/');
+}
+
+/**
+ * Audit copy: the raw photo is used only for reading; what we keep is a compressed WEBP
+ * (longest side ≤ 1600 px, EXIF rotation applied, metadata dropped). Typically 150–400 KB.
+ */
+export async function compressForAudit(buffer: Buffer): Promise<{ buffer: Buffer; contentType: string; ext: string }> {
+  const sharp = (await import('sharp')).default;
+  const out = await sharp(buffer, { failOn: 'none' })
+    .rotate()
+    .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 72 })
+    .toBuffer();
+  return { buffer: out, contentType: 'image/webp', ext: '.webp' };
 }
 
 /** URL the browser can show for a stored reference. */

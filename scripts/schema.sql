@@ -2,6 +2,8 @@
 
 -- Drop tables if they exist
 DROP TABLE IF EXISTS schema_migrations CASCADE;
+DROP TABLE IF EXISTS llm_usage CASCADE;
+DROP TABLE IF EXISTS knowledge_docs CASCADE;
 DROP TABLE IF EXISTS supervisor_sections CASCADE;
 DROP TABLE IF EXISTS sections CASCADE;
 DROP TABLE IF EXISTS app_settings CASCADE;

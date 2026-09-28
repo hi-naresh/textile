@@ -11,13 +11,15 @@ const TTL_MS = 30_000;
 export function invalidateSettings() { cache = null; }
 
 export async function readRules(q: Q = run): Promise<FirmRules> {
-  const r = await q(`SELECT shortage_limit_pct, efficiency_target_pct, ai_auto_confirm_pct FROM app_settings WHERE id = 1`);
+  const r = await q(`SELECT * FROM app_settings WHERE id = 1`);
   const row = r.rows[0];
   if (!row) return DEFAULT_RULES;
   return {
     shortageLimitPct: parseFloat(row.shortage_limit_pct),
     efficiencyTargetPct: parseFloat(row.efficiency_target_pct),
     aiAutoConfirmPct: parseFloat(row.ai_auto_confirm_pct),
+    manualChallanMin: parseFloat(row.manual_challan_min ?? DEFAULT_RULES.manualChallanMin),
+    manualJobCardMin: parseFloat(row.manual_job_card_min ?? DEFAULT_RULES.manualJobCardMin),
   };
 }
 
@@ -46,6 +48,8 @@ export async function getFirmConfig(fresh = false): Promise<FirmConfig> {
       shortageLimitPct: parseFloat(st.shortage_limit_pct ?? DEFAULT_RULES.shortageLimitPct),
       efficiencyTargetPct: parseFloat(st.efficiency_target_pct ?? DEFAULT_RULES.efficiencyTargetPct),
       aiAutoConfirmPct: parseFloat(st.ai_auto_confirm_pct ?? DEFAULT_RULES.aiAutoConfirmPct),
+      manualChallanMin: parseFloat(st.manual_challan_min ?? DEFAULT_RULES.manualChallanMin),
+      manualJobCardMin: parseFloat(st.manual_job_card_min ?? DEFAULT_RULES.manualJobCardMin),
     },
     locationPresets: st.location_presets ?? ['Godown', 'Shop', 'Floor'],
   };

@@ -47,6 +47,7 @@ export interface LedgerEntry {
   ts: string;
   quality?: string;
   design?: string;
+  is_today?: boolean; // server's today (database date)
 }
 
 export interface FlowDay {
@@ -72,6 +73,8 @@ export interface JobCard {
   quality: string;
   design: string;
   flagged: boolean;
+  created_today?: boolean;
+  closed_today?: boolean;
 }
 
 export interface Allotment {
@@ -122,21 +125,26 @@ export type CaptureType = 'incoming_stock' | 'outgoing_stock' | 'job_card_foldin
 
 export interface CaptureEvent {
   id: number;
-  photo_url: string;
+  photo_url: string | null; // null while the compressed copy is being stored
   type: CaptureType;
   ai_json: Record<string, unknown> | null;
   confidence: number;
   status: 'pending' | 'confirmed' | 'corrected' | 'rejected';
   confirmed_by: string | null;
   confirmed_by_name: string | null;
+  read_engine?: 'ocr' | 'llm_text' | 'llm_vision' | 'mock' | null;
+  read_meta?: Record<string, unknown> | null;
+  is_today?: boolean;
   ts: string;
 }
 
 export interface ChatMessage {
   sender: 'user' | 'bot';
   text: string;
-  sql?: string;
   rows?: Record<string, unknown>[];
+  route?: 'template' | 'knowledge' | 'help';
+  sources?: { id: number; title: string }[];
+  lang?: 'en' | 'hi' | 'gu'; // language of the answer
   timestamp: Date;
   loading?: boolean;
   error?: boolean;
@@ -151,5 +159,7 @@ export interface Toast {
 export type AiState = 'connected' | 'missing' | 'invalid_key' | 'model_unavailable' | 'unreachable' | 'demo';
 export interface SystemStatus {
   ai: { state: AiState; model: string; message: string; fix: string; checkedAt: string };
+  ocr?: { state: 'connected' | 'missing'; message: string; fix?: string };
+  models?: { low: string; high: string };
   photos: { state: 'connected' | 'local' | 'missing'; message: string; fix?: string };
 }

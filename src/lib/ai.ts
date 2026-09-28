@@ -1,4 +1,6 @@
-import { geminiRequest, reportAiFailure, reportAiSuccess } from '@/lib/gemini';
+import { callGemini, geminiKey, parseJsonAnswer } from '@/lib/gemini';
+import { ocrImage, visionKey } from '@/lib/vision';
+import { parseOcr } from '@/lib/capture/parse';
 
 export interface ExtractedStockData {
   lot_id?: string;
@@ -16,11 +18,15 @@ export interface ExtractedStockData {
   worker_id?: string;
 }
 
+export type ReadEngine = 'ocr' | 'llm_text' | 'llm_vision' | 'mock';
+
 export interface ExtractionResult {
   data: ExtractedStockData;
   confidence: number; // 0.0 to 1.0
   success: boolean;
   rawResponse?: string;
+  engine?: ReadEngine;
+  meta?: Record<string, unknown>; // what the router did and why (stored with the read for audit)
 }
 
 export interface PhotoInput {
@@ -29,95 +35,71 @@ export interface PhotoInput {
   mediaType: string; // e.g. image/jpeg
 }
 
+type CaptureKind = 'incoming_stock' | 'outgoing_stock' | 'job_card_folding';
+
 /** Mock reads are for local development only; in production a failed read must never invent data. */
 function mockAllowed() {
   return process.env.ALLOW_MOCK_AI === '1' || (process.env.NODE_ENV !== 'production' && !process.env.VERCEL);
 }
 
-/**
- * Call Google Gemini API for vision extraction
- */
-async function extractWithGemini(
-  base64Data: string,
-  mediaType: string,
-  type: 'incoming_stock' | 'outgoing_stock' | 'job_card_folding',
-  apiKey: string
-): Promise<ExtractionResult> {
-  const systemPrompt = `You are a specialized OCR and data extraction system for an Indian textile firm (challans may be in English, Hindi or Gujarati).
-Your job is to read images of challans, lot tags, or meter displays and extract the required information in a strict JSON format.
-
-${
-  type === 'incoming_stock'
-    ? 'For incoming stock, extract: "lot_id" (e.g. LOT-5021), "quality" (fabric quality name, e.g. Poly-Crepe, Georgette), "design" (design code, e.g. Design-104A), "grey_meters" (numeric grey / raw meters, if shown), "finished_meters" (numeric finished meters, if shown), "mill_name" (the mill the goods came from), "weaver_name" (the weaver, if named separately; it can be the same as the mill), "source_doc" (challan number). Grey and finished meters are different numbers — never copy one into the other. Do not extract a party for incoming stock.'
-    : type === 'outgoing_stock'
-    ? 'For outgoing stock, extract: "lot_id" (e.g. LOT-5021), "meters" (numeric total dispatch meters), "party" (client/buyer name), "source_doc" (dispatch challan or invoice number).'
-    : 'For job card folding, extract: "lot_id" (e.g. LOT-5021), "job_card_id" (numeric, if visible), "meters_out" (numeric folded meters out), "worker_id" (worker ID, e.g. wrk-04 if visible).'
+/** Below this mean OCR word confidence the photo is treated as unreadable by OCR (blurry, handwritten). */
+function ocrMinConfidence() {
+  const v = parseFloat(process.env.OCR_MIN_CONFIDENCE ?? '');
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.75;
 }
 
-Rules:
-1. Return ONLY a JSON object. No conversational text, no markdown block wrappers (do not include \`\`\`json).
-2. If any field is not readable or missing, set its value to null.
-3. In addition to the fields, add a field "confidence" which is a decimal between 0.0 and 1.0 representing your overall confidence in the extraction (lower confidence if text is blurry, hand-written, or ambiguous).
-`;
+function fieldsPrompt(type: CaptureKind) {
+  return type === 'incoming_stock'
+    ? '"lot_id" (lot number), "quality" (fabric quality), "design" (design code, if any), "grey_meters" (total grey / raw meters), "finished_meters" (total finished / received meters), "mill_name", "weaver_name" (can be the same as the mill), "source_doc" (challan number). Grey and finished meters are different numbers — never copy one into the other. Do not extract a party for incoming stock.'
+    : type === 'outgoing_stock'
+    ? '"lot_id", "meters" (total dispatch meters), "party" (client receiving the goods), "source_doc" (dispatch challan or invoice number).'
+    : '"lot_id", "job_card_id" (number, if printed), "meters_out" (total cut / folded / received meters), "worker_id" (if printed).';
+}
 
-  try {
-    const response = await fetch(geminiRequest(apiKey).url, {
-      method: 'POST',
-      headers: geminiRequest(apiKey).headers,
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: systemPrompt },
-              {
-                inlineData: {
-                  mimeType: mediaType,
-                  data: base64Data
-                }
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1
-        }
-      })
-    });
+const RULES = `Rules:
+1. Return ONLY a JSON object with those keys plus "confidence" (0.0–1.0, your overall confidence; lower it for blur, handwriting or anything ambiguous).
+2. A value you cannot read is null. Never guess numbers.
+3. Numbers are plain numbers without commas or units.`;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      reportAiFailure(response.status, errText);
-      throw new Error(`Gemini Vision API error: ${response.status} - ${errText}`);
-    }
+function splitConfidence(raw: Record<string, unknown>): { data: ExtractedStockData; confidence: number } {
+  const confidence = typeof raw.confidence === 'number' ? Math.max(0, Math.min(1, raw.confidence)) : 0.6;
+  const data = { ...raw } as Record<string, unknown>;
+  delete data.confidence;
+  return { data: data as ExtractedStockData, confidence };
+}
 
-    const resJson = await response.json();
-    reportAiSuccess();
-    const content = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    
-    // Parse response
-    const cleaned = content.trim().replace(/^```json\s*/i, '').replace(/```$/, '');
-    const data = JSON.parse(cleaned);
-    
-    const confidence = typeof data.confidence === 'number' ? data.confidence : 0.85;
-    delete data.confidence; // Remove confidence from data fields
-    
-    return {
-      data,
-      confidence,
-      success: true,
-      rawResponse: content
-    };
-  } catch (error) {
-    if (!(error instanceof Error && error.message.startsWith('Gemini'))) reportAiFailure(null, String(error));
-    console.error('Error in Gemini Vision Extraction:', error);
-    return {
-      data: {},
-      confidence: 0,
-      success: false,
-      rawResponse: String(error)
-    };
-  }
+function required(type: CaptureKind, d: ExtractedStockData): boolean {
+  if (type === 'incoming_stock') return !!d.lot_id && (d.grey_meters != null || d.finished_meters != null);
+  if (type === 'outgoing_stock') return !!d.lot_id && d.meters != null && !!d.party;
+  return !!d.lot_id && d.meters_out != null;
+}
+
+/** Low tier: read already-OCR'd text (cheap, no image tokens). */
+async function llmFromText(ocrText: string, type: CaptureKind, ref: string): Promise<ExtractionResult> {
+  const prompt = `You extract fields from OCR text of an Indian textile challan / job card (English, Hindi or Gujarati).
+Extract: ${fieldsPrompt(type)}
+${RULES}
+
+OCR text (rows are in reading order):
+"""
+${ocrText.slice(0, 12000)}
+"""`;
+  const text = await callGemini({ tier: 'low', feature: 'capture.llm_text', parts: [{ text: prompt }], json: true, ref });
+  const { data, confidence } = splitConfidence(parseJsonAnswer(text));
+  return { data, confidence, success: true, rawResponse: text, engine: 'llm_text' };
+}
+
+/** High tier: read the photo itself (most expensive; used when OCR can't read it). */
+async function llmFromImage(photo: PhotoInput, type: CaptureKind, ref: string): Promise<ExtractionResult> {
+  const prompt = `You read photos of Indian textile challans, lot tags and job cards (English, Hindi or Gujarati).
+Extract: ${fieldsPrompt(type)}
+${RULES}`;
+  const text = await callGemini({
+    tier: 'high', feature: 'capture.llm_vision', json: true, ref,
+    parts: [{ text: prompt }, { inlineData: { mimeType: photo.mediaType, data: photo.buffer.toString('base64') } }],
+  });
+  const { data, confidence } = splitConfidence(parseJsonAnswer(text));
+  return { data, confidence, success: true, rawResponse: text, engine: 'llm_vision' };
 }
 
 /**
@@ -178,32 +160,62 @@ function extractWithMock(
 }
 
 /**
- * Main API to extract data from a photo
+ * Decision layer for reading a photo — cheapest path first:
+ *   1. OCR (Google Vision) + deterministic parser with arithmetic cross-checks → accepted as is when the
+ *      read is complete and nothing contradicts itself (no LLM call at all).
+ *   2. OCR text is readable but the read is incomplete / contradicts itself → low-tier LLM on the OCR text.
+ *   3. OCR can't read the photo (low confidence) or isn't configured, or step 2 is still incomplete → high-tier vision LLM.
+ *   4. Nothing configured → demo reads in local development only.
+ * Every OCR/LLM call is logged with tokens, latency and cost (llm_usage).
  */
-export async function extractDataFromPhoto(
-  photo: PhotoInput,
-  type: 'incoming_stock' | 'outgoing_stock' | 'job_card_folding'
-): Promise<ExtractionResult> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const filename = photo.filename;
+export async function extractDataFromPhoto(photo: PhotoInput, type: CaptureKind, ref = 'capture'): Promise<ExtractionResult> {
+  const steps: Record<string, unknown>[] = [];
+  const hasLlm = !!geminiKey();
+  let best: ExtractionResult | null = null;
 
-  if (apiKey) {
-    console.log(`[AI Extraction] Connecting to Gemini API for ${filename}...`);
+  if (visionKey()) {
     try {
-      const result = await extractWithGemini(photo.buffer.toString('base64'), photo.mediaType, type, apiKey);
-      if (result.success || !mockAllowed()) return result;
-      return extractWithMock(filename, type);
+      const ocr = await ocrImage(photo.buffer, ref);
+      const parsed = parseOcr(ocr.lines, ocr.confidence, type);
+      const failed = parsed.checks.filter((c) => !c.ok);
+      steps.push({ step: 'ocr', ocr_confidence: Math.round(ocr.confidence * 100) / 100, words: ocr.words, format: parsed.format, complete: parsed.complete, checks: parsed.checks });
+      const ocrRead: ExtractionResult = { data: parsed.data as ExtractedStockData, confidence: parsed.confidence, success: true, engine: 'ocr', rawResponse: ocr.text.slice(0, 4000) };
+      const readable = ocr.confidence >= ocrMinConfidence() && ocr.words > 5;
+      if (readable && parsed.complete && failed.length === 0) return { ...ocrRead, meta: { steps, decision: 'ocr accepted: complete and cross-checks agree' } };
+      best = parsed.complete ? ocrRead : null;
+      if (readable && hasLlm) {
+        try {
+          const r = await llmFromText(ocr.text, type, ref);
+          steps.push({ step: 'llm_text', confidence: r.confidence, complete: required(type, r.data) });
+          if (required(type, r.data)) return { ...r, meta: { steps, decision: 'OCR read incomplete or inconsistent → low-tier LLM on OCR text' } };
+        } catch (e) {
+          steps.push({ step: 'llm_text', error: String(e).slice(0, 200) });
+        }
+      }
     } catch (e) {
-      console.error('[AI Extraction] Gemini extraction failed.', e);
-      if (!mockAllowed()) return { data: {}, confidence: 0, success: false, rawResponse: String(e) };
-      return extractWithMock(filename, type);
+      steps.push({ step: 'ocr', error: String(e).slice(0, 200) });
+    }
+  } else {
+    steps.push({ step: 'ocr', skipped: 'GOOGLE_VISION_API_KEY not set' });
+  }
+
+  if (hasLlm) {
+    try {
+      const r = await llmFromImage(photo, type, ref);
+      steps.push({ step: 'llm_vision', confidence: r.confidence, complete: required(type, r.data) });
+      return { ...r, meta: { steps, decision: 'photo read by high-tier vision LLM' } };
+    } catch (e) {
+      steps.push({ step: 'llm_vision', error: String(e).slice(0, 200) });
     }
   }
-  if (!mockAllowed()) {
-    return { data: {}, confidence: 0, success: false, rawResponse: 'GEMINI_API_KEY is not set on the server.' };
+
+  if (best) return { ...best, confidence: Math.min(best.confidence, 0.6), meta: { steps, decision: 'OCR read kept for review (LLM not available)' } };
+
+  if (mockAllowed()) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const m = extractWithMock(photo.filename, type);
+    return { ...m, engine: 'mock', meta: { steps, decision: 'demo read (OCR/AI not configured or failing; local development only)' } };
   }
-  console.log(`[AI Extraction] No Gemini API key found. Using mock OCR for ${filename}.`);
-  // Simulate slight delay to feel real
-  await new Promise(resolve => setTimeout(resolve, 800));
-  return extractWithMock(filename, type);
+  const why = !visionKey() && !hasLlm ? 'Neither GOOGLE_VISION_API_KEY nor GEMINI_API_KEY is set on the server.' : 'The photo could not be read.';
+  return { data: {}, confidence: 0, success: false, rawResponse: why, engine: undefined, meta: { steps } };
 }
