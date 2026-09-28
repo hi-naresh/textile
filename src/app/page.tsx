@@ -47,6 +47,7 @@ export default function TextileBrain() {
 
   useEffect(() => {
     installAuthFetch();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial session load (state is set after the request resolves)
     load();
   }, [load]);
 

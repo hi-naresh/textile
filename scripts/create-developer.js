@@ -2,6 +2,7 @@
 // DEV_ADMIN_PASSWORD in the environment. There is no sign up for developers.
 // Usage: npm run dev:create -- --email you@example.com --name "Your Name"
 //        (asks for the password; or set DEV_PASSWORD in the environment for scripts)
+/* eslint-disable @typescript-eslint/no-require-imports -- plain Node script, like migrate.js */
 const { Client } = require('pg');
 const crypto = require('crypto');
 const readline = require('readline');

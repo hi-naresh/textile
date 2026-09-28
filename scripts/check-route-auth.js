@@ -2,6 +2,7 @@
 // Every exported GET/POST/PUT/PATCH/DELETE in src/app/api/**/route.ts must call one of the guards below,
 // or be marked public with a "// PUBLIC" comment right above it (login, sign up, refresh, cron…).
 // Usage: npm run lint:auth
+/* eslint-disable @typescript-eslint/no-require-imports -- plain Node script, like migrate.js */
 const fs = require('fs');
 const path = require('path');
 
