@@ -11,7 +11,8 @@
     "db:init": "node scripts/db-init.js && node scripts/migrate.js",
     "db:seed-demo": "node scripts/seed-demo.js",
     "dev:https": "next dev --experimental-https -H 0.0.0.0",
-    "tunnel": "npx -y cloudflared tunnel --url http://localhost:3000"
+    "tunnel": "npx -y cloudflared tunnel --url http://localhost:3000",
+    "db:seed-showcase": "tsx scripts/seed-showcase.ts"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
@@ -31,6 +32,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
