@@ -3,7 +3,7 @@
 //
 // Writes through the app's own ledger / sales / dispatch / money functions, so every business rule
 // (stock balance, reservations, GST, FIFO payments, order status) holds exactly as in real use.
-// Never deletes anything. Runs once: skipped if lot SC-301 already exists. One transaction: all or nothing.
+// Never deletes anything. Six stages, each its own transaction and skipped once done — on a slow link, just run it again.
 import { Client } from 'pg';
 import type { Q } from '../src/lib/db';
 import { closeJobCard, createJobCard, recordIncoming } from '../src/lib/ledger';
@@ -73,11 +73,29 @@ async function main() {
   const client = new Client({ connectionString: c0.connectionString, ssl: c0.ssl, connectionTimeoutMillis: 20000 });
   await client.connect();
   const q: Q = (text, params) => client.query(text, params as unknown[]);
-  try {
-    if ((await q(`SELECT 1 FROM lots WHERE lot_id = 'SC-301'`)).rowCount) { console.log('[showcase] Already added — nothing to do.'); return; }
-    if (!(await q(`SELECT 1 FROM users WHERE id = $1`, [OWNER])).rowCount) throw new Error('Run `npm run db:seed-demo -- --history` first.');
-    await q('BEGIN');
-
+  const t0 = Date.now();
+  const scLots = async () => (await q(`SELECT lot_id AS id, quality FROM lots WHERE lot_id LIKE 'SC-%' ORDER BY lot_id`)).rows as { id: string; quality: string }[];
+  const once = async (m: string, sql: string) => !!(await q(sql)).rowCount;
+  const stockLots = async (from: number, to: number) => {
+    // ---- current stock: 18 lots received over the last 25 days ----
+    for (let i = from; i < to; i++) {
+      const [quality, design, , buy] = QUALITIES[i % QUALITIES.length];
+      const id = `SC-${301 + i}`;
+      const grey = Math.round(900 + rand() * 1400);
+      const fin = Math.round(grey * (0.9 + rand() * 0.07));
+      const daysAgo = 25 - Math.floor(i * 1.35);
+      const mill = pick(MILLS);
+      await recordIncoming(q, {
+        lot_id: id, quality, design, grey_meters: grey, finished_meters: fin, mill_name: mill, weaver_name: rand() < 0.5 ? mill : 'Om Weavers',
+        source_doc: `CH-${7100 + i}`, purchase_rate: buy, location: i % 5 === 0 ? 'Shop' : 'Godown', moved_by: OWNER,
+      }, { requireLotDetails: true });
+      await q(`UPDATE stock_movements SET ts = NOW() - ($2::int * interval '1 day') - interval '3 hours' WHERE lot_id = $1 AND direction = 'IN'`, [id, daysAgo]);
+      await q(`UPDATE lot_locations SET ts = NOW() - ($2::int * interval '1 day') - interval '3 hours' WHERE lot_id = $1`, [id, daysAgo]);
+    }
+  };
+  // Each stage is its own transaction and is skipped when already done, so a slow link can simply run the script again.
+  const STAGES: [string, string, () => Promise<void>][] = [
+    ['people, parties, rates', `SELECT 1 FROM parties WHERE name = 'Lucknow Chikan House'`, async () => {
     // ---- people ----
     for (const [i, s] of SECTIONS.entries()) await q(`INSERT INTO sections (name, sort_order) SELECT $1::varchar, $2 WHERE NOT EXISTS (SELECT 1 FROM sections WHERE lower(name) = lower($1::varchar))`, [s, i]);
     for (const s of SUPERVISORS) {
@@ -99,27 +117,19 @@ async function main() {
     }
     await q(`INSERT INTO rates (quality, party_id, rate_per_m, valid_from) SELECT 'Satin', id, 104, CURRENT_DATE - 90 FROM parties WHERE name = 'Hyderabad Sarees'`);
 
-    // ---- current stock: 18 lots received over the last 25 days ----
-    const lots: { id: string; quality: string }[] = [];
-    for (let i = 0; i < 18; i++) {
-      const [quality, design, , buy] = QUALITIES[i % QUALITIES.length];
-      const id = `SC-${301 + i}`;
-      const grey = Math.round(900 + rand() * 1400);
-      const fin = Math.round(grey * (0.9 + rand() * 0.07));
-      const daysAgo = 25 - Math.floor(i * 1.35);
-      const mill = pick(MILLS);
-      await recordIncoming(q, {
-        lot_id: id, quality, design, grey_meters: grey, finished_meters: fin, mill_name: mill, weaver_name: rand() < 0.5 ? mill : 'Om Weavers',
-        source_doc: `CH-${7100 + i}`, purchase_rate: buy, location: i % 5 === 0 ? 'Shop' : 'Godown', moved_by: OWNER,
-      }, { requireLotDetails: true });
-      await q(`UPDATE stock_movements SET ts = NOW() - ($2::int * interval '1 day') - interval '3 hours' WHERE lot_id = $1 AND direction = 'IN'`, [id, daysAgo]);
-      await q(`UPDATE lot_locations SET ts = NOW() - ($2::int * interval '1 day') - interval '3 hours' WHERE lot_id = $1`, [id, daysAgo]);
-      lots.push({ id, quality });
-    }
-
-    // ---- floor history: 14 days of job cards + efficiency ----
+    }],
+    ['stock lots 1/3', `SELECT 1 FROM lots WHERE lot_id = 'SC-306'`, () => stockLots(0, 6)],
+    ['stock lots 2/3', `SELECT 1 FROM lots WHERE lot_id = 'SC-312'`, () => stockLots(6, 12)],
+    ['stock lots 3/3', `SELECT 1 FROM lots WHERE lot_id = 'SC-318'`, () => stockLots(12, 18)],
+    ['floor history', `SELECT 1 FROM efficiency_daily WHERE worker_id = 'wrk-s02' AND date < CURRENT_DATE`, async () => {
+    // ---- floor history: 14 days of job cards + efficiency (bulk inserts: few round trips) ----
+    const lots = await scLots();
     const floorWorkers = WORKERS.filter(([, , s]) => s !== 'Packing');
     const target = 85;
+    type Card = { lot_id: string; process: string; worker_id: string; meters_in: number; meters_out: number; ts_created: string; ts_closed: string; shift: string; day: number };
+    const rows: Card[] = [];
+    const eff: { worker_id: string; day: number; allotted: number; done: number; pct: number; flagged: boolean }[] = [];
+    const at = (d: number, h: number) => new Date(Date.now() - d * 86400e3 + h * 3600e3).toISOString();
     for (let d = 14; d >= 1; d--) {
       for (const [wid, , section] of floorWorkers) {
         if (rand() < 0.12) continue; // day off
@@ -130,25 +140,39 @@ async function main() {
           const lot = pick(lots);
           const mIn = Math.round(180 + rand() * 320);
           const finished = rand() < skill;
-          const mOut = finished ? Math.round(mIn * (0.975 + rand() * 0.02)) : null;
-          const jc = await q(
-            `INSERT INTO job_cards (lot_id, process, worker_id, meters_in, meters_out, status, ts_created, ts_closed)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW() - ($7::int * interval '1 day') - interval '8 hours', CASE WHEN $5::numeric IS NULL THEN NULL ELSE NOW() - ($7::int * interval '1 day') - interval '2 hours' END) RETURNING id`,
-            [lot.id, section, wid, mIn, mOut, 'closed', d],
-          );
-          // Not finished that day: completed the next morning with a normal yield (counts as 0 done for the day).
-          if (mOut == null) await q(`UPDATE job_cards SET meters_out = ROUND(meters_in * 0.985), ts_closed = NOW() - ($2::int * interval '1 day') - interval '6 hours' WHERE id = $1`, [jc.rows[0].id, Math.max(d - 1, 0)]);
-          await q(`INSERT INTO allotments (worker_id, job_card_id, meters_allotted, shift, date) VALUES ($1, $2, $3, $4, CURRENT_DATE - $5::int)`, [wid, jc.rows[0].id, mIn, rand() < 0.7 ? 'Morning' : 'Evening', d]);
+          const mOut = Math.round(mIn * (finished ? 0.975 + rand() * 0.02 : 0.985));
+          // Not finished that day: completed the next morning (counts as 0 done for the day).
+          rows.push({ lot_id: lot.id, process: section, worker_id: wid, meters_in: mIn, meters_out: mOut, ts_created: at(d, -8), ts_closed: finished ? at(d, -2) : at(d - 1, -18), shift: rand() < 0.7 ? 'Morning' : 'Evening', day: d });
           allotted += mIn;
-          done += mOut ?? 0;
+          done += finished ? mOut : 0;
         }
-        const eff = Math.min(999, (done / allotted) * 100);
-        await q(`INSERT INTO efficiency_daily (worker_id, date, allotted, done, efficiency_pct, flagged) VALUES ($1, CURRENT_DATE - $2::int, $3, $4, $5, $6) ON CONFLICT (worker_id, date) DO NOTHING`,
-          [wid, d, allotted, done, r2(eff), eff < target]);
+        const pct = Math.min(999, (done / allotted) * 100);
+        eff.push({ worker_id: wid, day: d, allotted, done, pct: r2(pct), flagged: pct < target });
       }
     }
-
+    const ids = await q(
+      `INSERT INTO job_cards (lot_id, process, worker_id, meters_in, meters_out, status, ts_created, ts_closed)
+       SELECT lot_id, process, worker_id, meters_in, meters_out, 'closed', ts_created, ts_closed
+       FROM json_to_recordset($1::json) AS x(lot_id text, process text, worker_id text, meters_in numeric, meters_out numeric, ts_created timestamptz, ts_closed timestamptz)
+       RETURNING id`,
+      [JSON.stringify(rows)],
+    );
+    await q(
+      `INSERT INTO allotments (worker_id, job_card_id, meters_allotted, shift, date)
+       SELECT worker_id, job_card_id, meters_in, shift, CURRENT_DATE - day FROM json_to_recordset($1::json) AS x(worker_id text, job_card_id int, meters_in numeric, shift text, day int)`,
+      [JSON.stringify(rows.map((r, i) => ({ ...r, job_card_id: ids.rows[i].id })))],
+    );
+    await q(
+      `INSERT INTO efficiency_daily (worker_id, date, allotted, done, efficiency_pct, flagged)
+       SELECT worker_id, CURRENT_DATE - day, allotted, done, pct, flagged FROM json_to_recordset($1::json) AS x(worker_id text, day int, allotted numeric, done numeric, pct numeric, flagged boolean)
+       ON CONFLICT (worker_id, date) DO NOTHING`,
+      [JSON.stringify(eff)],
+    );
+    }],
+    ['today on the floor', `SELECT 1 FROM cctv_activity WHERE worker_id = 'wrk-s01' AND ts::date = CURRENT_DATE`, async () => {
     // ---- today on the floor: every worker finished a morning card; two are on a second card now ----
+    const lots = await scLots();
+    const floorWorkers = WORKERS.filter(([, , s]) => s !== 'Packing');
     const today = floorWorkers.slice(0, 9);
     for (const [i, [wid, , section]] of today.entries()) {
       const a = lots[(i * 2 + 3) % lots.length];
@@ -166,26 +190,27 @@ async function main() {
         [wid, `${section} bench ${1 + Math.floor(rand() * 4)}`, r2(55 + rand() * 40), r2(10 + rand() * 90)]);
     }
 
+    }],
+    ['photo reads', `SELECT 1 FROM capture_events WHERE ai_json->>'lot_id' = 'SC-301'`, async () => {
     // ---- photo reads confirmed over the month (drives "time saved") ----
-    const ins = await q(`SELECT id, lot_id, meters, grey_meters, mill_name, source_doc_id, ts FROM stock_movements WHERE direction = 'IN' AND lot_id LIKE 'SC-%'`);
-    for (const m of ins.rows) {
-      const ev = await q(
-        `INSERT INTO capture_events (type, ai_json, confidence, status, confirmed_by, ts, read_engine, captured_by, capture_seconds, review_seconds, confirmed_at)
-         VALUES ('incoming_stock', $1, $2, 'confirmed', 'usr-demo-sup', $3, 'ocr', 'usr-demo-sup', $4, $5, $3) RETURNING id`,
-        [JSON.stringify({ lot_id: m.lot_id, grey_meters: Number(m.grey_meters), finished_meters: Number(m.meters), mill_name: m.mill_name, source_doc: m.source_doc_id }), r2(0.9 + rand() * 0.08), m.ts, Math.round(15 + rand() * 25), Math.round(6 + rand() * 20)],
-      );
-      await q(`UPDATE stock_movements SET capture_event_id = $2 WHERE id = $1`, [m.id, ev.rows[0].id]);
-    }
-    const cards = await q(`SELECT id, lot_id, worker_id, meters_out, ts_closed FROM job_cards WHERE status = 'closed' AND ts_closed >= NOW() - interval '14 days' ORDER BY random() LIMIT 60`);
-    for (const jc of cards.rows) {
-      await q(
-        `INSERT INTO capture_events (type, ai_json, confidence, status, confirmed_by, ts, read_engine, captured_by, capture_seconds, review_seconds, confirmed_at)
-         VALUES ('job_card_folding', $1, $2, $3, 'usr-demo-sup', $4, $5, 'usr-demo-wrk', $6, $7, $4)`,
-        [JSON.stringify({ job_card_id: jc.id, lot_id: jc.lot_id, meters_out: Number(jc.meters_out), worker_id: jc.worker_id }), r2(0.82 + rand() * 0.16),
-          rand() < 0.12 ? 'corrected' : 'confirmed', jc.ts_closed, rand() < 0.8 ? 'ocr' : 'llm_vision', Math.round(10 + rand() * 20), Math.round(4 + rand() * 18)],
-      );
-    }
-
+    await q(
+      `WITH ev AS (
+         INSERT INTO capture_events (type, ai_json, confidence, status, confirmed_by, ts, read_engine, captured_by, capture_seconds, review_seconds, confirmed_at)
+         SELECT 'incoming_stock', json_build_object('lot_id', lot_id, 'grey_meters', grey_meters, 'finished_meters', meters, 'mill_name', mill_name, 'source_doc', source_doc_id),
+                round((0.9 + random() * 0.08)::numeric, 2), 'confirmed', 'usr-demo-sup', ts, 'ocr', 'usr-demo-sup', round(15 + random() * 25), round(6 + random() * 20), ts
+         FROM stock_movements WHERE direction = 'IN' AND lot_id LIKE 'SC-%' AND capture_event_id IS NULL
+         RETURNING id, ai_json->>'lot_id' AS lot_id)
+       UPDATE stock_movements sm SET capture_event_id = ev.id FROM ev WHERE sm.lot_id = ev.lot_id AND sm.direction = 'IN'`,
+    );
+    await q(
+      `INSERT INTO capture_events (type, ai_json, confidence, status, confirmed_by, ts, read_engine, captured_by, capture_seconds, review_seconds, confirmed_at)
+       SELECT 'job_card_folding', json_build_object('job_card_id', id, 'lot_id', lot_id, 'meters_out', meters_out, 'worker_id', worker_id),
+              round((0.82 + random() * 0.16)::numeric, 2), CASE WHEN random() < 0.12 THEN 'corrected' ELSE 'confirmed' END, 'usr-demo-sup', ts_closed,
+              CASE WHEN random() < 0.8 THEN 'ocr' ELSE 'llm_vision' END, 'usr-demo-wrk', round(10 + random() * 20), round(4 + random() * 18), ts_closed
+       FROM (SELECT * FROM job_cards WHERE status = 'closed' AND worker_id LIKE 'wrk-s%' AND ts_closed >= NOW() - interval '14 days' ORDER BY random() LIMIT 60) jc`,
+    );
+    }],
+    ['inquiries', `SELECT 1 FROM inquiries WHERE raw_text LIKE 'Rayon Print 600 m%'`, async () => {
     // ---- inquiries (en / hi / gu) ----
     const INQ: [string, string, string, string | null][] = [
       ['Need 900 m Satin by 15th, best rate?', 'whatsapp', 'Hyderabad Sarees', 'quoted'],
@@ -203,6 +228,8 @@ async function main() {
       if (status === 'won') await convertInquiry(q, v.id, { promise_date: iso(-9) }, OWNER);
     }
 
+    }],
+    ['orders + reservations', `SELECT 1 FROM orders o JOIN parties p ON p.id = o.party_id WHERE p.name = 'Lucknow Chikan House'`, async () => {
     // ---- orders: a spread of due dates, most reserved, some partly / fully sent ----
     const ORD: [string, string, number, number][] = [ // party, quality, meters, promise in days
       ['Shree Balaji Sarees', 'Satin', 700, 4], ['Mumbai Retailers', 'Rayon Print', 1200, 10], ['Kolkata Fashion House', 'Chiffon', 900, 2],
@@ -210,16 +237,18 @@ async function main() {
       ['Delhi Cloth Store', 'Poly-Crepe', 500, -2], ['Jaipur Prints', 'Cotton Cambric', 800, 18], ['Ahmedabad Textiles', 'Georgette', 650, 3],
       ['Lucknow Chikan House', 'Chiffon', 450, 21],
     ];
-    const orderIds: number[] = [];
     for (const [i, [party, quality, meters, due]] of ORD.entries()) {
       const { order } = await createOrder(q, { party, quality, meters, rate_per_m: QUALITIES.find((x) => x[0] === quality)![2], promise_date: iso(-Math.max(due, 1)) }, OWNER);
       if (due < 1) await q(`UPDATE orders SET promise_date = CURRENT_DATE + $2::int WHERE id = $1`, [order.id, due]); // already late
       await q(`UPDATE orders SET created_at = NOW() - ($2::int * interval '1 day') WHERE id = $1`, [order.id, 3 + (i % 6)]);
-      orderIds.push(order.id);
       if (i !== 7 && i !== 9) await autoAllocate(q, order.id, OWNER);
     }
 
+    }],
+    ['dispatches + GST invoices', `SELECT 1 FROM dispatches WHERE transporter IS NOT NULL AND lr_no LIKE 'LR%'`, async () => {
     // ---- dispatches against orders, with GST invoices ----
+    // Orders in the same order as ORD above (newest showcase orders).
+    const orderIds = (await q(`SELECT id FROM orders WHERE inquiry_id IS NULL ORDER BY id DESC LIMIT 10`)).rows.map((r) => Number(r.id)).reverse();
     const SEND: [number, number, number][] = [[0, 1, 3], [1, 0.5, 6], [3, 0.6, 2], [5, 1, 1], [6, 1, 4]]; // order idx, share of reserved, days ago
     const TRANSPORT = ['VRL Logistics', 'Gati', 'Shree Maruti Courier', 'TCI Freight'];
     for (const [idx, share, daysAgo] of SEND) {
@@ -237,6 +266,8 @@ async function main() {
       await createInvoiceForDispatch(q, d.id, { invoice_date: iso(daysAgo), actor: OWNER });
     }
 
+    }],
+    ['Tally invoices, payments', `SELECT 1 FROM invoices WHERE invoice_no = 'TLY/26-27/301'`, async () => {
     // ---- older invoices from Tally + payments (ageing buckets, collections) ----
     const TALLY: [string, number, number][] = [ // party, days ago, taxable
       ['Hyderabad Sarees', 95, 142000], ['Ahmedabad Textiles', 80, 58000], ['Pune Fabrics', 62, 76500], ['Lucknow Chikan House', 55, 33800],
@@ -257,18 +288,30 @@ async function main() {
       await recordPayment(q, { party, amount, paid_on: iso(daysAgo), mode, reference: `${mode.toUpperCase()}-${Math.floor(10000 + rand() * 89999)}` }, OWNER);
     }
 
-    // Let the agents scan on the next page load.
-    await q(`UPDATE app_settings SET agents_ran_at = NULL WHERE id = 1`);
-    await q('COMMIT');
-
+    }],
+  ];
+  try {
+    if (!(await q(`SELECT 1 FROM users WHERE id = $1`, [OWNER])).rowCount) throw new Error('Run `npm run db:seed-demo -- --history` first.');
+    for (const [name, marker, run] of STAGES) {
+      if (await once(name, marker)) { console.log(`[showcase] ✓ ${name} (already there)`); continue; }
+      if (Date.now() - t0 > 75_000) { console.log('[showcase] Time is up for this run — run the same command again to continue.'); return; }
+      const s0 = Date.now();
+      await q('BEGIN');
+      try {
+        await run();
+        await q(`UPDATE app_settings SET agents_ran_at = NULL WHERE id = 1`); // agents re-scan on next page load
+        await q('COMMIT');
+      } catch (e) {
+        await q('ROLLBACK').catch(() => {});
+        throw e;
+      }
+      console.log(`[showcase] + ${name} (${Math.round((Date.now() - s0) / 1000)}s)`);
+    }
     const n = async (t: string) => Number((await q(`SELECT COUNT(*) AS n FROM ${t}`)).rows[0].n);
-    console.log('[showcase] Done:', {
+    console.log('[showcase] All done:', {
       lots: await n('lots'), workers: await n('workers'), job_cards: await n('job_cards'), parties: await n('parties'),
       inquiries: await n('inquiries'), orders: await n('orders'), dispatches: await n('dispatches'), invoices: await n('invoices'), payments: await n('payments'),
     });
-  } catch (e) {
-    await q('ROLLBACK').catch(() => {});
-    throw e;
   } finally {
     await client.end();
   }

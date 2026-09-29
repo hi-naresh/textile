@@ -292,6 +292,11 @@ export async function applyCaptureRead(q: Q, type: CaptureType, data: Record<str
 export function errorResponseBody(err: unknown): { status: number; body: { error: string } } {
   if (err instanceof LedgerError) return { status: err.status, body: { error: err.message } };
   if (err instanceof SyntaxError) return { status: 400, body: { error: 'The request body is not valid JSON.' } };
+  // Postgres rejected the input itself (NUL byte, bad number / date text): the caller's mistake, not a server fault.
+  const code = (err as { code?: string } | null)?.code;
+  if (code === '22021' || code === '22P05' || code === '22P02' || code === '22003' || code === '22007' || code === '22008') {
+    return { status: 400, body: { error: 'Some of the values sent are not valid.' } };
+  }
   logError('api', err);
   return { status: 500, body: { error: 'Something went wrong, try again. Nothing was changed.' } };
 }

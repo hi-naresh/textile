@@ -31,10 +31,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
     const b = await readObject(req);
     if (!ACCOUNT_ACTIONS.includes(b.action)) throw new LedgerError('Unknown action.');
-    const message = await withTransaction((q) =>
+    const r = await withTransaction((q) =>
       accountAction({ q, by: a.by, sessionId: a.sessionId, req, asDeveloper: false }, id, b.action as AccountAction, b));
     invalidateSettings();
-    return NextResponse.json({ success: true, message });
+    return NextResponse.json({ success: true, ...r }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

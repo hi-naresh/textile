@@ -4,7 +4,7 @@ import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName, invalidateSettings } from '@/lib/settings';
 import { readObject, requireDeveloper } from '@/lib/apiAuth';
 import { audit } from '@/lib/auth/audit';
-import { hashPassword, TEMP_PASSWORD } from '@/lib/auth/password';
+import { hashPassword, newTempPassword, passwordProblem } from '@/lib/auth/password';
 import { normalizePhone } from '@/lib/auth/phone';
 import { ACCOUNT_ACTIONS, accountAction, listAccounts, listSessions, type AccountAction } from '@/lib/auth/users';
 
@@ -29,8 +29,8 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST { action: 'setup_owner', name, phone } → the owner account gets a name + phone and the starting
-//   password (to be changed at first login). Only the developer creates the owner.
+// POST { action: 'setup_owner', name, phone, password? } → the owner account gets a name + phone and a one-time
+//   starting password (random unless given; returned once as temp_password; changed at first login). Only the developer creates the owner.
 // POST { action: <account action>, id, ... } → same actions as the owner's screen, plus the owner account.
 export async function POST(req: NextRequest) {
   try {
@@ -41,7 +41,10 @@ export async function POST(req: NextRequest) {
       const name = cleanName(b.name, 'Owner name');
       const phone = normalizePhone(b.phone);
       if (!phone) throw new LedgerError('Enter a 10-digit mobile number.');
-      const hash = await hashPassword(TEMP_PASSWORD);
+      const given = typeof b.password === 'string' && b.password ? b.password : null;
+      if (given) { const p = passwordProblem(given); if (p) throw new LedgerError(p); }
+      const temp = given ?? newTempPassword();
+      const hash = await hashPassword(temp);
       const message = await withTransaction(async (q) => {
         const taken = await q(`SELECT id, role FROM users WHERE phone = $1`, [phone]);
         const cur = await q(`SELECT id FROM users WHERE role = 'owner' ORDER BY id LIMIT 1 FOR UPDATE`);
@@ -56,16 +59,16 @@ export async function POST(req: NextRequest) {
         );
         await q(`UPDATE auth_sessions SET revoked_at = now(), revoked_reason = 'password_reset', revoked_by = $2 WHERE user_id = $1 AND revoked_at IS NULL`, [ownerId, by]);
         await audit(q, { event: 'user.created', actorId: by, targetUserId: ownerId, sessionId: s.id, req, detail: { role: 'owner', phone, by_developer: true } });
-        return `${name} can sign in with ${phone} and the starting password`;
+        return `${name} can sign in with ${phone}`;
       });
       invalidateSettings();
-      return NextResponse.json({ success: true, message });
+      return NextResponse.json({ success: true, message, temp_password: temp }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (!ACCOUNT_ACTIONS.includes(b.action)) throw new LedgerError('Unknown action.');
     const id = typeof b.id === 'string' ? b.id : '';
-    const message = await withTransaction((q) => accountAction({ q, by, sessionId: s.id, req, asDeveloper: true }, id, b.action as AccountAction, b));
+    const r = await withTransaction((q) => accountAction({ q, by, sessionId: s.id, req, asDeveloper: true }, id, b.action as AccountAction, b));
     invalidateSettings();
-    return NextResponse.json({ success: true, message });
+    return NextResponse.json({ success: true, ...r }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

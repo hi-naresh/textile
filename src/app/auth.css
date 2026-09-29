@@ -17,3 +17,4 @@
 @media (max-width: 1023px) {
   .viewas-banner { padding: 10px 16px; }
 }
+.temp-pw { font-family: var(--font-mono); font-size: 18px; padding: 10px 12px; background: var(--hover); border-radius: 10px; user-select: all; word-break: break-all; display: block; }

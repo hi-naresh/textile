@@ -38,10 +38,12 @@ export function Team({ ctx }: { ctx: Ctx }) {
   const people = users.filter((u) => u.status === 'approved');
   const rejected = users.filter((u) => u.status === 'rejected');
 
+  const [issued, setIssued] = useState<{ message: string; password: string } | null>(null);
   const act = async (id: string, action: string, body: Record<string, unknown> = {}) => {
     try {
-      const r = await apiSend<{ message: string }>(`/api/users/${encodeURIComponent(id)}`, 'POST', { action, ...body });
-      d.showToast(r.message);
+      const r = await apiSend<{ message: string; temp_password?: string }>(`/api/users/${encodeURIComponent(id)}`, 'POST', { action, ...body });
+      if (r.temp_password) setIssued({ message: r.message, password: r.temp_password });
+      else d.showToast(r.message);
       setTick((t) => t + 1);
       d.refresh();
       return true;
@@ -55,6 +57,7 @@ export function Team({ ctx }: { ctx: Ctx }) {
     <div className="page fade settings">
       <PageHead title="Users & sign ups" sub="Supervisors and workers sign up with their phone number. Approve them here and choose their role." />
       {error && <div className="alert bad" role="alert">{error}</div>}
+      {issued && <StartingPassword issued={issued} onClose={() => setIssued(null)} />}
       {loading && !data && <div className="loading"><span className="spinner" />Loading…</div>}
 
       {data && (
@@ -182,13 +185,13 @@ function PersonRow({ ctx, u, workers, act }: { ctx: Ctx; u: Account; workers: Wo
                 <button className="btn" type="submit" disabled={busy || !phone.trim()}>Save phone</button>
               </form>
             )}
-            {!isOwner && u.phone && <span className="muted small">New number or forgot the password? Reset it to the starting password; they choose a new one when they sign in.</span>}
+            {!isOwner && u.phone && <span className="muted small">Forgot the password? Reset it: you get a one-time starting password to give them; they choose a new one when they sign in.</span>}
             {changing && !isOwner && (
               <RolePicker ctx={ctx} initial={u.role === 'supervisor' ? 'worker' : 'supervisor'} workers={workers} busy={busy} submitLabel="Change role"
                 onSubmit={async (b) => { if (await run('set_role', b)) setChanging(false); }} />
             )}
             <div className="row-8" style={{ flexWrap: 'wrap' }}>
-              {!isOwner && u.phone && <button className="btn sm" disabled={busy} onClick={() => { if (window.confirm(`Reset ${u.name}’s password to the starting password? They will be signed out.`)) run('reset_password'); }}>Reset password</button>}
+              {!isOwner && u.phone && <button className="btn sm" disabled={busy} onClick={() => { if (window.confirm(`Reset ${u.name}’s password? They will be signed out and get a new starting password.`)) run('reset_password'); }}>Reset password</button>}
               {!isOwner && u.active && !changing && <button className="btn sm" disabled={busy} onClick={() => setChanging(true)}>Change role</button>}
               {!isOwner && (u.active
                 ? <button className="btn sm danger" disabled={busy} onClick={() => { if (window.confirm(`Switch ${u.name} off? They are signed out everywhere and can’t sign in.`)) run('deactivate'); }}>Switch off</button>
@@ -226,5 +229,21 @@ function Sessions({ u, busy, run }: { u: Account; busy: boolean; run: (action: s
       ))}
       {list.length > 1 && <div className="row-8"><button className="btn sm danger" disabled={busy} onClick={() => end()}>Sign out everywhere</button></div>}
     </div>
+  );
+}
+
+/** A newly issued starting password: shown once, with a copy button. */
+export function StartingPassword({ issued, onClose }: { issued: { message: string; password: string }; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <section className="card pad stack-10" role="status" style={{ borderColor: 'var(--accent)' }}>
+      <strong>{issued.message}</strong>
+      <span className="muted small">Starting password — shown only once. Give it to them now; they must choose their own when they first sign in.</span>
+      <code className="temp-pw">{issued.password}</code>
+      <div className="row-8">
+        <button type="button" className="btn sm" onClick={() => { navigator.clipboard?.writeText(issued.password).then(() => setCopied(true)).catch(() => {}); }}>{copied ? 'Copied' : 'Copy'}</button>
+        <button type="button" className="btn sm primary" onClick={onClose}>Done</button>
+      </div>
+    </section>
   );
 }

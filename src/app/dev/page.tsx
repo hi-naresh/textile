@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { StartingPassword } from '@/components/screens/Team';
 import Icon, { Logo } from '@/components/Icon';
 import { Pill, Segmented, dayTime, fmt } from '@/components/ui';
 import { fetchMe, installAuthFetch, logout, type Me } from '@/lib/authClient';
@@ -197,6 +198,7 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
   const [tick, setTick] = useState(0);
   const { data, error } = useApi<{ users: DevUser[]; developers: { id: string; name: string; email: string; last_login_at: string | null; live_sessions: number }[] }>('/api/dev/users', tick);
   const [msg, setMsg] = useState<{ tone: 'bad' | 'good'; text: string } | null>(null);
+  const [issued, setIssued] = useState<{ message: string; password: string } | null>(null);
   const [ownerName, setOwnerName] = useState('');
   const [ownerPhone, setOwnerPhone] = useState('');
   const owner = data?.users.find((u) => u.role === 'owner');
@@ -204,8 +206,9 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
   const call = useCallback(async (body: Record<string, unknown>) => {
     setMsg(null);
     try {
-      const r = await apiSend<{ message: string }>('/api/dev/users', 'POST', body);
-      setMsg({ tone: 'good', text: r.message });
+      const r = await apiSend<{ message: string; temp_password?: string }>('/api/dev/users', 'POST', body);
+      if (r.temp_password) setIssued({ message: r.message, password: r.temp_password });
+      else setMsg({ tone: 'good', text: r.message });
       setTick((t) => t + 1);
     } catch (e) {
       setMsg({ tone: 'bad', text: e instanceof Error ? e.message : 'Failed.' });
@@ -219,9 +222,10 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
     <div className="stack-16">
       {error && <div className="alert bad">{error}</div>}
       {msg && <div className={`alert ${msg.tone === 'bad' ? 'bad' : ''}`}>{msg.text}</div>}
+      {issued && <StartingPassword issued={issued} onClose={() => setIssued(null)} />}
       <section className="card pad stack-14">
         <div className="stack-4"><h2 className="h2">Owner account</h2>
-          <span className="muted small">Only the developer creates the owner. The owner signs in with this phone and the starting password (12345678), then must choose their own.</span></div>
+          <span className="muted small">Only the developer creates the owner. You get a one-time starting password to give the owner; they sign in with this phone and must then choose their own.</span></div>
         {owner && <span className="small">Now: <b>{owner.name}</b> · {owner.phone ? formatPhone(owner.phone) : 'no phone (can’t sign in)'}{owner.must_change_password ? ' · starting password' : ''}</span>}
         <form className="add-row" onSubmit={(e) => { e.preventDefault(); call({ action: 'setup_owner', name: ownerName || owner?.name, phone: ownerPhone }); }}>
           <input className="input" placeholder={owner?.name ?? 'Owner name'} aria-label="Owner name" value={ownerName} onChange={(e) => setOwnerName(e.target.value)} />
@@ -246,7 +250,7 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
                 <td>
                   <div className="row-8" style={{ flexWrap: 'wrap' }}>
                     {u.status === 'approved' && u.active && u.role && <button className="btn sm" onClick={() => viewAs(u.id)}>View as</button>}
-                    {u.phone && <button className="btn sm" onClick={() => { if (window.confirm(`Reset ${u.name}’s password to the starting password?`)) call({ action: 'reset_password', id: u.id }); }}>Reset password</button>}
+                    {u.phone && <button className="btn sm" onClick={() => { if (window.confirm(`Reset ${u.name}’s password? They get a new one-time starting password.`)) call({ action: 'reset_password', id: u.id }); }}>Reset password</button>}
                     {u.live_sessions > 0 && <button className="btn sm danger" onClick={() => call({ action: 'revoke_sessions', id: u.id })}>Sign out all</button>}
                   </div>
                 </td>

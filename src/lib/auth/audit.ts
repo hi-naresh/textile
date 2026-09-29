@@ -14,8 +14,11 @@ export type AuditEvent =
 
 export function requestMeta(req: NextRequest | null | undefined): { ip: string | null; userAgent: string | null } {
   if (!req) return { ip: null, userAgent: null };
-  const fwd = req.headers.get('x-forwarded-for');
-  const ip = (fwd ? fwd.split(',')[0] : req.headers.get('x-real-ip'))?.trim().slice(0, 64) || null;
+  // On Vercel, x-vercel-forwarded-for / x-real-ip are set by the platform (a client can't forge them);
+  // x-forwarded-for is only the fallback for other hosts.
+  const h = req.headers;
+  const raw = h.get('x-vercel-forwarded-for') ?? h.get('x-real-ip') ?? h.get('x-forwarded-for');
+  const ip = raw?.split(',')[0]?.trim().slice(0, 64) || null;
   return { ip, userAgent: req.headers.get('user-agent')?.slice(0, 300) || null };
 }
 

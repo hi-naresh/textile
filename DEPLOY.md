@@ -55,12 +55,12 @@ For a **test** database (e.g. staging), `npm run db:seed-demo` adds test account
 ### 7. First login to the live app
 1. Developer: open `/dev/login`, sign in with `DEV_ADMIN_EMAIL` / `DEV_ADMIN_PASSWORD`.
 2. Developer console → **Users & view as → Owner account**: enter the owner's name + phone → **Set up owner**.
-3. Owner: open the site, sign in with that phone and the starting password `12345678`, then choose a new password.
+3. The console shows a one-time **starting password** (random, shown once). Give it to the owner: they open the site, sign in with that phone and the starting password, then choose their own.
 4. Owner → **Settings**: add sections. Supervisors and workers sign up themselves on the sign-in page; the owner approves them under **Users & sign ups** and picks their role (supervisor → sections, worker → section).
 
 ## Sign in & roles
 - **Owner / supervisor / worker**: phone number + password at `/`. Sessions last 60 days and slide forward with use (`AUTH_CLIENT_SESSION_DAYS`), survive closing the browser, and are stored server-side (`auth_sessions`). Cookies are httpOnly + Secure + SameSite=Lax; nothing is kept in localStorage.
-- **Starting password `12345678`**: only for accounts the developer/owner creates or resets. Anyone on it must choose their own before they can do anything. Sign ups choose their own password.
+- **Starting password**: a random one-time password (e.g. `maple-4821-river3`) for accounts the developer/owner creates or resets — shown once to whoever set it up. Anyone on it must choose their own before they can do anything. Sign ups choose their own password. Easy passwords (`12345678`, digits only, …) are refused.
 - **Sign up → pending**: sees nothing until the owner approves and gives a role. A rejected phone number can sign up again up to 3 times.
 - **Owner** can switch people off, change role, reset a forgotten password and see / end each person's devices (**Users & sign ups**). Switching off, role change and password change sign that person out everywhere immediately.
 - **Developer**: separate login (`/dev/login`, email + password, 12 h sessions), no sign up. Sees service health, connections, AI usage + cost, technical errors, the audit trail, and can **View as** any user (read-only unless `DEV_VIEW_AS_WRITE=1`; every call logged).

@@ -14,8 +14,19 @@ function scrypt(password: string, salt: Buffer, keylen: number, opts: ScryptOpti
 export const PASSWORD_MIN = 8;
 export const PASSWORD_MAX = 128;
 
-/** Starting password for accounts the owner/developer creates or resets. The person must change it on first login. */
-export const TEMP_PASSWORD = '12345678';
+/**
+ * One-time starting password for an account the owner / developer creates or resets, e.g. "maple-4821-river".
+ * Random per account (a fixed starting password would let anyone who knows the phone number sign in first).
+ * Shown once to whoever set it up; the person must choose their own at first sign-in.
+ */
+export function newTempPassword(): string {
+  const words = ['maple', 'river', 'cotton', 'silk', 'loom', 'thread', 'indigo', 'saffron', 'monsoon', 'amber', 'cedar', 'lotus', 'pearl', 'tiger', 'coral', 'jasmine', 'mango', 'neem', 'peacock', 'banyan'];
+  const b = randomBytes(6);
+  return `${words[b[0] % words.length]}-${1000 + (b.readUInt16BE(1) % 9000)}-${words[b[3] % words.length]}${b[4] % 10}`;
+}
+
+/** Passwords too easy to guess (old demo / starting passwords included). */
+const WEAK = new Set(['12345678', '123456789', '1234567890', 'password', 'password1', 'qwerty123', '11111111', '00000000', 'abcd1234']);
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
@@ -38,7 +49,8 @@ export async function verifyPassword(password: string, stored: string | null | u
 export function passwordProblem(pw: unknown): string | null {
   if (typeof pw !== 'string' || pw.length < PASSWORD_MIN) return `Password must be at least ${PASSWORD_MIN} characters.`;
   if (pw.length > PASSWORD_MAX) return `Password must be ${PASSWORD_MAX} characters or fewer.`;
-  if (pw === TEMP_PASSWORD) return 'Choose a password different from the starting password.';
+  if (WEAK.has(pw.toLowerCase())) return 'That password is too easy to guess. Choose another.';
+  if (/^\d+$/.test(pw)) return 'Use some letters as well as numbers.';
   return null;
 }
 

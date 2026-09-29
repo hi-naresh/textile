@@ -6,7 +6,7 @@ import type { Q } from '../db';
 import { LedgerError } from '../ledger-error';
 import { cleanName } from '../settings';
 import { audit } from './audit';
-import { hashPassword, TEMP_PASSWORD } from './password';
+import { hashPassword, newTempPassword } from './password';
 import { normalizePhone } from './phone';
 import { revokeUserSessions } from './session';
 
@@ -99,8 +99,16 @@ async function applyRole(q: Q, u: { id: string; name: string }, role: Assignable
 
 export type AccountAction = 'approve' | 'reject' | 'deactivate' | 'reactivate' | 'set_role' | 'set_sections' | 'set_phone' | 'reset_password' | 'revoke_sessions';
 
-/** Runs one account action inside the caller's transaction. Returns a short message for the toast. */
-export async function accountAction(c: Ctx, id: string, action: AccountAction, b: Record<string, unknown>): Promise<string> {
+export interface ActionResult { message: string; /** One-time starting password to hand over (set_phone for a new login, reset_password). */ temp_password?: string }
+
+/** Runs one account action inside the caller's transaction. Returns a short message (+ a starting password when one was issued). */
+export async function accountAction(c: Ctx, id: string, action: AccountAction, b: Record<string, unknown>): Promise<ActionResult> {
+  const msg = (message: string): ActionResult => ({ message });
+  const out = await accountActionInner(c, id, action, b);
+  return typeof out === 'string' ? msg(out) : out;
+}
+
+async function accountActionInner(c: Ctx, id: string, action: AccountAction, b: Record<string, unknown>): Promise<string | ActionResult> {
   const { q, by } = c;
   const u = await loadForUpdate(q, id);
   const log = (event: Parameters<typeof audit>[1]['event'], detail?: Record<string, unknown>) =>
@@ -158,22 +166,24 @@ export async function accountAction(c: Ctx, id: string, action: AccountAction, b
       if (!phone) throw new LedgerError('Enter a 10-digit mobile number.');
       const taken = await q(`SELECT 1 FROM users WHERE phone = $1 AND id <> $2`, [phone, id]);
       if (taken.rowCount) throw new LedgerError('Another account already uses this number.', 409);
-      // A number with no password yet gets the starting password, to be changed at first login.
+      // A number with no password yet gets a one-time starting password, to be changed at first login.
       const first = !u.password_hash;
+      const temp = first ? newTempPassword() : null;
       await q(
         `UPDATE users SET phone = $2 ${first ? ', password_hash = $3, must_change_password = true, password_changed_at = now()' : ''} WHERE id = $1`,
-        first ? [id, phone, await hashPassword(TEMP_PASSWORD)] : [id, phone],
+        first ? [id, phone, await hashPassword(temp!)] : [id, phone],
       );
       await log('user.updated', { phone, starting_password: first || undefined });
-      return first ? `${u.name} can sign in with ${phone} and the starting password` : 'Phone number saved';
+      return first ? { message: `${u.name} can sign in with ${phone}`, temp_password: temp! } : 'Phone number saved';
     }
     case 'reset_password': {
       if (isSelf) throw new LedgerError('Change your own password under Settings → Account.');
       if (!u.phone) throw new LedgerError('Add a phone number first.');
-      await q(`UPDATE users SET password_hash = $2, must_change_password = true, password_changed_at = now() WHERE id = $1`, [id, await hashPassword(TEMP_PASSWORD)]);
+      const temp = newTempPassword();
+      await q(`UPDATE users SET password_hash = $2, must_change_password = true, password_changed_at = now() WHERE id = $1`, [id, await hashPassword(temp)]);
       const ended = await revokeUserSessions(q, id, 'password_reset', by);
       await log('password.reset', { sessions_ended: ended });
-      return `${u.name}’s password reset to the starting password`;
+      return { message: `${u.name}’s password was reset — they sign in with ${u.phone} and this starting password`, temp_password: temp };
     }
     case 'revoke_sessions': {
       if (typeof b.session_id === 'string' && b.session_id) {

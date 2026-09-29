@@ -87,6 +87,14 @@ export async function readObject(req: Request): Promise<Record<string, any>> {
   let b: unknown;
   try { b = await req.json(); } catch { throw new LedgerError('The request body is not valid JSON.'); }
   if (!b || typeof b !== 'object' || Array.isArray(b)) throw new LedgerError('Send a JSON object.');
+  if (hasNul(b)) throw new LedgerError('Text contains an invalid character.');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return b as Record<string, any>;
+}
+
+/** NUL characters can't be stored in Postgres text: refuse them up front instead of failing later with a 500. */
+function hasNul(v: unknown, depth = 0): boolean {
+  if (typeof v === 'string') return v.includes('\u0000');
+  if (depth > 8 || !v || typeof v !== 'object') return false;
+  return Object.entries(v as Record<string, unknown>).some(([k, x]) => k.includes('\u0000') || hasNul(x, depth + 1));
 }
