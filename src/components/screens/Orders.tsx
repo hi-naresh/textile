@@ -8,7 +8,7 @@ import { Empty, PageHead, Pill, Segmented, Sheet, Track, dayTime, fmt, type Tone
 import type { Ctx } from '../ctx';
 import { can } from '@/lib/access';
 import { actorId } from '@/lib/useTextileData';
-import { apiSend, takeHash, useApi, who } from '@/lib/useApi';
+import { apiSend, useApi, useTakeHash, who } from '@/lib/useApi';
 import type { Allocation, Inquiry, Order, Party } from '@/lib/domain';
 import s from './Orders.module.css';
 
@@ -69,7 +69,7 @@ const qualitiesOf = (ctx: Ctx) => Array.from(new Set(ctx.d.lots.map((l) => l.qua
 // =====================================================================
 export function Orders({ ctx }: { ctx: Ctx }) {
   // Deep link from an agent alert: #order=41 opens that order, #inquiry=7 the inquiries list.
-  const [link] = useState(() => ({ order: takeHash('order'), inquiry: takeHash('inquiry') }));
+  const link = { order: useTakeHash('order'), inquiry: useTakeHash('inquiry') };
   const [view, setView] = useState<'inquiries' | 'orders'>(link.order ? 'orders' : 'inquiries');
   const [openOrder, setOpenOrder] = useState<number | null>(link.order ? Number(link.order) || null : null);
   const [newOrder, setNewOrder] = useState(false);

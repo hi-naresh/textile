@@ -35,11 +35,18 @@ export function who(role: string, actor: string | null) {
   return `role=${encodeURIComponent(role)}${actor ? `&actor=${encodeURIComponent(actor)}` : ''}`;
 }
 
-/** Deep link from an agent alert (e.g. "#order=41"): returns the value once and clears the hash. */
-export function takeHash(key: string): string | null {
+function readHash(key: string): string | null {
   if (typeof window === 'undefined') return null;
   const m = window.location.hash.match(new RegExp(`[#&]${key}=([^&]+)`));
-  if (!m) return null;
-  window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  return decodeURIComponent(m[1]);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** Deep link from an agent alert (e.g. "#order=41"): returns the value on first render and clears the hash.
+ *  The hash is cleared in an effect: replaceState during render updates Next's Router mid-render. */
+export function useTakeHash(key: string): string | null {
+  const [value] = useState(() => readHash(key));
+  useEffect(() => {
+    if (value != null) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, [value]);
+  return value;
 }

@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import Icon from '../Icon';
 import { Empty, Kpi, PageHead, Pill, Segmented, Sheet, fmt, inr, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
-import { apiSend, takeHash, useApi, who } from '@/lib/useApi';
+import { apiSend, useApi, useTakeHash, who } from '@/lib/useApi';
 import { actorId } from '@/lib/useTextileData';
 import type { Party, Payment } from '@/lib/domain';
 import type { BucketKey, CreditTotals, PartyCredit } from '@/lib/money/credit';
@@ -54,7 +54,7 @@ function OwnerMoney({ ctx }: { ctx: Ctx }) {
   const [payFor, setPayFor] = useState<string | null>(null); // party name for the payment sheet
   const [remFor, setRemFor] = useState<PartyCredit | null>(null);
   // Deep link from a credit alert (#party=12): open that party's reminder once the data is in.
-  const [linkParty, setLinkParty] = useState(() => Number(takeHash('party')) || null);
+  const [linkParty, setLinkParty] = useState(Number(useTakeHash('party')) || null);
   const linked = linkParty ? credit.data?.parties.find((p) => p.party_id === linkParty) ?? null : null;
   const reminder = remFor ?? linked;
 
