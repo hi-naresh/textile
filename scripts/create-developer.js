@@ -3,6 +3,7 @@
 // Usage: npm run dev:create -- --email you@example.com --name "Your Name"
 //        (asks for the password; or set DEV_PASSWORD in the environment for scripts)
 /* eslint-disable @typescript-eslint/no-require-imports -- plain Node script, like migrate.js */
+require('./load-env');
 const { Client } = require('pg');
 const crypto = require('crypto');
 const readline = require('readline');
@@ -45,9 +46,17 @@ async function main() {
   const password = process.env.DEV_PASSWORD || (await ask('Password (12+ characters): '));
   if (password.length < 12) throw new Error('Password must be at least 12 characters.');
 
+  const target = new URL(url);
+  console.log(`[create-developer] Connecting to database: ${target.host}${target.pathname}`);
   const c = new Client(dbConfig(url));
   await c.connect();
   try {
+    const hasEmail = await c.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'email'`
+    );
+    if (!hasEmail.rowCount) {
+      throw new Error("Migration 006 (006_auth.sql) has not been applied to this database. Please run 'npm run db:migrate' first.");
+    }
     await c.query('BEGIN');
     const cur = await c.query(`SELECT id, role FROM users WHERE lower(email) = $1 FOR UPDATE`, [email]);
     let id;

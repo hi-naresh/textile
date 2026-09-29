@@ -2,6 +2,7 @@
 // Runs after seed-demo (`npm run db:seed-demo`). Only fills a phone / password that isn't set yet,
 // so it never changes a real account. Refuses non-local databases unless ALLOW_DEMO_SEED=1.
 /* eslint-disable @typescript-eslint/no-require-imports -- plain Node script, like migrate.js */
+require('./load-env');
 const { Client } = require('pg');
 const crypto = require('crypto');
 

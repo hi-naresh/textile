@@ -1,6 +1,8 @@
 // Applies scripts/migrations/*.sql in name order, once each.
 // Usage: npm run db:migrate   (uses DATABASE_URL or the local default)
 // The app also runs this automatically at server start (src/lib/migrate.ts).
+/* eslint-disable @typescript-eslint/no-require-imports -- plain Node script */
+require('./load-env');
 const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');

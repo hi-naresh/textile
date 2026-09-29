@@ -10,6 +10,8 @@
 //   purchase rates, a few orders, inquiries, invoices and payments — so the agents have work to show.
 // - Refuses to run against a non-local database unless ALLOW_DEMO_SEED=1 is set
 //   (so demo data never lands in a firm's live database by accident).
+/* eslint-disable @typescript-eslint/no-require-imports -- plain Node script */
+require('./load-env');
 const { Client } = require('pg');
 
 const url =
