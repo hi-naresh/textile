@@ -4,7 +4,6 @@ import type { Q } from '../db';
 import { LedgerError } from '../ledger-error';
 import { canonicalLotAttr, metersValue, nameValue } from '../normalize';
 import { partyById, partyByName } from '../parties';
-import { rateFor } from '../pricing';
 import { refreshOrderStatus } from '../orderStatus';
 import type { Allocation, Order } from '../domain';
 import type { Role } from '../access';
@@ -44,8 +43,10 @@ export const remainingNeed = (o: Pick<OrderRow, 'meters' | 'allocated_m'>) => ro
 /**
  * status filter: comma list of statuses. "open" means still open for dispatch (open + partly dispatched);
  * "all" or empty = everything.
+ * sort: 'newest' (default, what people see: newest order first) or 'promise' (open first, earliest promise
+ * date first — the order the allocation agent serves them in).
  */
-export async function listOrders(q: Q, f: { status?: string | null; party_id?: unknown; role: Role; limit?: number }): Promise<OrderRow[]> {
+export async function listOrders(q: Q, f: { status?: string | null; party_id?: unknown; role: Role; limit?: number; sort?: 'newest' | 'promise' }): Promise<OrderRow[]> {
   const where: string[] = [];
   const params: unknown[] = [];
   const st = (f.status ?? '').trim();
@@ -66,7 +67,9 @@ export async function listOrders(q: Q, f: { status?: string | null; party_id?: u
   params.push(Math.min(Math.max(f.limit ?? 300, 1), 1000));
   const r = await q(
     `${ORDER_SQL} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY CASE WHEN o.status IN ('open', 'partly_dispatched') THEN 0 ELSE 1 END, o.promise_date NULLS LAST, o.id DESC
+     ORDER BY ${f.sort === 'promise'
+       ? `CASE WHEN o.status IN ('open', 'partly_dispatched') THEN 0 ELSE 1 END, o.promise_date NULLS LAST, o.id DESC`
+       : 'o.created_at DESC, o.id DESC'}
      LIMIT $${params.length}`,
     params,
   );
@@ -126,11 +129,9 @@ export async function createOrder(q: Q, b: OrderInput, actorRaw: string | null):
   const design = designIn ? (await canonicalLotAttr(q, 'design', designIn)) ?? designIn : null;
   const meters = metersValue(b.meters, 'Meters');
   if (meters == null) throw new LedgerError('Meters is required.');
-  let rate = rateValue(b.rate_per_m, 'Rate');
-  if (rate == null) {
-    rate = await rateFor(q, quality, party.id);
-    if (rate == null) warnings.push(`No rate set for ${quality}. Add one in Settings → Rates or edit the order.`);
-  }
+  // Every party gets its own rate: it is typed on each order (no rate list to fall back on).
+  const rate = rateValue(b.rate_per_m, 'Rate');
+  if (rate == null) warnings.push('No rate on this order yet. Add it before making the invoice.');
   const promise = dateValue(b.promise_date, 'Promise date');
   if (promise && promise < todayIST()) throw new LedgerError('Promise date is in the past.');
   const notes = b.notes == null || b.notes === '' ? null : String(b.notes).trim().slice(0, 500) || null;

@@ -142,9 +142,13 @@ export async function buildReport(q: Q, period: ReportPeriod, role: Role, endDat
      GROUP BY 1 ORDER BY m DESC LIMIT 10`, P);
 
   // ---- production ----
+  // Section rows list only the sections in use now (e.g. Folding, Packing); old ones still count in the totals.
+  const ACTIVE_SECTION = (col: string) =>
+    `EXISTS (SELECT 1 FROM sections sx WHERE sx.active AND lower(btrim(regexp_replace(sx.name, '\\s*section\\s*$', '', 'i'))) = lower(btrim(regexp_replace(${col}, '\\s*section\\s*$', '', 'i'))))`;
   const bySection = await q(
     `SELECT initcap(btrim(regexp_replace(process, '\\s*section\\s*$', '', 'i'))) AS name, SUM(meters_out) AS m, COUNT(*) AS c, SUM(shortage) AS s, SUM(meters_in) AS i
      FROM job_cards WHERE status = 'closed' AND ts_closed >= $1::date AND ts_closed < $2::date + 1
+       AND ${ACTIVE_SECTION('process')}
      GROUP BY 1 ORDER BY m DESC`, P);
   const byWorker = await q(
     `SELECT COALESCE(w.name, '—') AS name, MAX(jc.process) AS section, SUM(jc.meters_out) AS m, COUNT(*) AS c
@@ -161,7 +165,7 @@ export async function buildReport(q: Q, period: ReportPeriod, role: Role, endDat
   const effSec = await q(
     `SELECT initcap(btrim(regexp_replace(w.section, '\\s*section\\s*$', '', 'i'))) AS name, SUM(e.done) AS d, SUM(e.allotted) AS a
      FROM efficiency_daily e JOIN workers w ON w.id = e.worker_id
-     WHERE e.date BETWEEN $1::date AND $2::date GROUP BY 1 ORDER BY 1`, P);
+     WHERE e.date BETWEEN $1::date AND $2::date AND ${ACTIVE_SECTION('w.section')} GROUP BY 1 ORDER BY 1`, P);
   const effWorkers = await q(
     `SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE d / NULLIF(a, 0) * 100 < $3) AS below
      FROM (SELECT worker_id, SUM(done) AS d, SUM(allotted) AS a FROM efficiency_daily WHERE date BETWEEN $1::date AND $2::date GROUP BY worker_id HAVING SUM(allotted) > 0) x`,

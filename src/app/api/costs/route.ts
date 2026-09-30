@@ -1,10 +1,14 @@
 import { NextRequest } from 'next/server';
-import { query, withTransaction } from '@/lib/db';
+import { query } from '@/lib/db';
 import { requireCap } from '@/lib/apiAuth';
-import { addCost, costsOverview } from '@/lib/money/master';
-import { jsonBody, respond } from '@/lib/money/http';
+import { LedgerError } from '@/lib/ledger';
+import { costsOverview } from '@/lib/money/master';
+import { respond } from '@/lib/money/http';
 
-// GET (owner) → { sections: SectionCost[], history: CostRow[] } — current process cost ₹/m per section.
+// Process costs are turned off for now (owner's request): lot cost = purchase + grey→finished shortage.
+// The table and its old rows stay; nothing in the app reads them any more.
+
+// GET (owner) → { sections: SectionCost[], history: CostRow[] } — the old list, read-only.
 export async function GET(req: NextRequest) {
   return respond(async () => {
     await requireCap(req, 'finance.view');
@@ -12,11 +16,10 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST { section, cost_per_m, valid_from? } → { cost }
+// POST → 410 while process costs are off.
 export async function POST(req: NextRequest) {
   return respond(async () => {
-    const a = await requireCap(req, 'master.manage');
-    const b = await jsonBody(req);
-    return { cost: await withTransaction((q) => addCost(q, b, a.by)) };
+    await requireCap(req, 'master.manage');
+    throw new LedgerError('Process costs are turned off for now.', 410);
   });
 }

@@ -38,7 +38,12 @@ export interface FirmConfig {
   sections: SectionProfile[];
   rules: FirmRules;
   locationPresets: string[]; // quick-pick lot locations, e.g. Godown, Shop, Floor
+  markets: string[]; // textile markets for "market + shop + pipe" locations, e.g. RRTM
+  /** Capabilities the developer switched off per role (Developer console → Access & roles). Owner is always full. */
+  accessOff?: AccessOff;
 }
+
+export type AccessOff = { supervisor?: string[]; worker?: string[] };
 
 export const DEFAULT_RULES: FirmRules = { shortageLimitPct: 3, efficiencyTargetPct: 85, aiAutoConfirmPct: 80, manualChallanMin: 6, manualJobCardMin: 4 };
 
@@ -50,6 +55,8 @@ export const DEFAULT_CONFIG: FirmConfig = {
   sections: [],
   rules: DEFAULT_RULES,
   locationPresets: ['Godown', 'Shop', 'Floor'],
+  markets: ['RRTM'],
+  accessOff: {},
 };
 
 export const LIMITS = {
@@ -59,4 +66,5 @@ export const LIMITS = {
   aiAutoConfirmPct: { min: 50, max: 100 },
   manualMinutes: { min: 0.5, max: 120 },
   locationPresetsMax: 12,
+  marketsMax: 20,
 };

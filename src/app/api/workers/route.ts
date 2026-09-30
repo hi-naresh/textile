@@ -3,7 +3,9 @@ import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
 import { can } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
-import { cleanName } from '@/lib/settings';
+import { cleanName, invalidateSettings } from '@/lib/settings';
+import { removePerson } from '@/lib/auth/users';
+import { audit } from '@/lib/auth/audit';
 
 // GET: active workers + efficiency + CCTV. ?include_inactive=1 also returns deactivated workers (for Settings).
 // A worker gets only their own worker record (no efficiency / CCTV).
@@ -11,12 +13,12 @@ export async function GET(request: NextRequest) {
   try {
     const a = await requireUser(request);
     if (!can(a.role, 'efficiency.view')) {
-      const own = a.workerId ? await query(`SELECT * FROM workers WHERE id = $1`, [a.workerId]) : { rows: [] };
+      const own = a.workerId ? await query(`SELECT * FROM workers WHERE id = $1 AND deleted_at IS NULL`, [a.workerId]) : { rows: [] };
       return NextResponse.json({ workers: own.rows, efficiency: [], cctv: [] });
     }
     const includeInactive = request.nextUrl.searchParams.get('include_inactive') === '1' && can(a.role, 'users.manage');
     // 1. Fetch workers
-    const workersRes = await query(`SELECT * FROM workers ${includeInactive ? '' : 'WHERE active = true'} ORDER BY active DESC, name ASC`);
+    const workersRes = await query(`SELECT * FROM workers WHERE deleted_at IS NULL ${includeInactive ? '' : 'AND active = true'} ORDER BY active DESC, name ASC`);
     
     // 2. Fetch daily efficiency for the last 7 days
     const efficiencyRes = await query(`
@@ -58,7 +60,7 @@ export async function GET(request: NextRequest) {
 async function requireSection(q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null; rows: { name: string }[] }>, raw: unknown) {
   const name = cleanName(raw, 'Section', 60);
   const r = await q(`SELECT name FROM sections WHERE lower(name) = lower($1) AND active`, [name]);
-  if (!r.rowCount) throw new LedgerError(`Section "${name}" does not exist. Add it under Settings → Sections first.`);
+  if (!r.rowCount) throw new LedgerError(`Section "${name}" does not exist. Add it under My firm → Team first.`);
   return r.rows[0].name;
 }
 
@@ -87,7 +89,7 @@ export async function PATCH(request: NextRequest) {
     await requireCap(request, 'users.manage');
     const b = await readObject(request);
     const worker = await withTransaction(async (q) => {
-      const cur = await q(`SELECT id FROM workers WHERE id = $1 FOR UPDATE`, [String(b.id ?? '')]);
+      const cur = await q(`SELECT id FROM workers WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [String(b.id ?? '')]);
       if (!cur.rowCount) throw new LedgerError('Worker not found.', 404);
       if ('name' in b) await q(`UPDATE workers SET name = $1 WHERE id = $2`, [cleanName(b.name, 'Worker name'), b.id]);
       if ('section' in b) await q(`UPDATE workers SET section = $1 WHERE id = $2`, [await requireSection(q, b.section), b.id]);
@@ -95,6 +97,33 @@ export async function PATCH(request: NextRequest) {
       return (await q(`SELECT * FROM workers WHERE id = $1`, [b.id])).rows[0];
     });
     return NextResponse.json({ success: true, worker });
+  } catch (error) {
+    const { status, body } = errorResponseBody(error);
+    return NextResponse.json(body, { status });
+  }
+}
+
+// DELETE /api/workers?id=<id> (owner): remove a worker from the team. Their job cards and history keep the name;
+// the worker disappears from every list, and their sign-in (if any) is removed and signed out.
+export async function DELETE(request: NextRequest) {
+  try {
+    const a = await requireCap(request, 'users.manage');
+    const id = request.nextUrl.searchParams.get('id') ?? '';
+    const name = await withTransaction(async (q) => {
+      const cur = await q(`SELECT id, name FROM workers WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id]);
+      if (!cur.rowCount) throw new LedgerError('Worker not found.', 404);
+      await q(`UPDATE workers SET deleted_at = now(), active = false WHERE id = $1`, [id]);
+      const acc = await q(`SELECT id, worker_id, role FROM users WHERE worker_id = $1 AND deleted_at IS NULL FOR UPDATE`, [id]);
+      for (const u of acc.rows) {
+        if (u.id === a.by || u.role === 'owner') throw new LedgerError('This worker record belongs to the owner account.', 403);
+        await removePerson(q, u, a.by);
+        await audit(q, { event: 'user.deleted', actorId: a.by, targetUserId: u.id, sessionId: a.sessionId, req: request, detail: { with_worker: id } });
+      }
+      await audit(q, { event: 'worker.deleted', actorId: a.by, targetUserId: acc.rows[0]?.id ?? null, sessionId: a.sessionId, req: request, detail: { worker_id: id } });
+      return cur.rows[0].name as string;
+    });
+    invalidateSettings();
+    return NextResponse.json({ success: true, message: `${name} removed from the team` });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

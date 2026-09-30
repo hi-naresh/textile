@@ -110,7 +110,7 @@ export function Segmented<T extends string>({ value, options, onChange, label, c
 }
 
 /** Right-side drawer on desktop, bottom sheet on phones. */
-export function Sheet({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: React.ReactNode }) {
+export function Sheet({ open, title, onClose, children, wide = false }: { open: boolean; title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -120,7 +120,7 @@ export function Sheet({ open, title, onClose, children }: { open: boolean; title
   if (!open) return null;
   return (
     <div className="sheet-wrap" onClick={onClose}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+      <div className={`sheet ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
           <h2>{title}</h2>
           <button type="button" className="ib" aria-label="Close" onClick={onClose}><Icon name="x" /></button>

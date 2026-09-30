@@ -34,7 +34,7 @@ export function Floor({ ctx }: { ctx: Ctx }) {
         <Kpi label="Allotted today" value={fmtM(allot)} sub={`across ${crew.filter((x) => x.allotted > 0).length} workers`} />
         <Kpi label="Done so far" value={fmtM(done)}><Track pct={pct} tone="info" /></Kpi>
         <Kpi label="Section shortage" value={shortage == null ? '—' : `${shortage.toFixed(1)}%`} sub={`limit ${rules().shortageLimitPct}% · ${over.length} card${over.length === 1 ? '' : 's'} over`} subTone={over.length ? 'warn' : 'good'} />
-        <Kpi label="Stock value" lock value={<span className="muted">••••••</span>} sub="hidden for your role" />
+        <Kpi label="Open job cards" value={<span className="num">{openCards}</span>} sub={pending ? `${pending} photo read${pending === 1 ? '' : 's'} to confirm` : 'No reads waiting'} subTone={pending ? 'warn' : 'good'} />
       </div>
 
       <div className="grid-split">
@@ -78,7 +78,7 @@ export function Floor({ ctx }: { ctx: Ctx }) {
           ))}
           <div className="callout info">
             <span className="callout-title"><span className="num">{pending}</span> photo read{pending === 1 ? '' : 's'} to confirm</span>
-            <span className="t2 small">{activeSupervisor().sections.length ? `${activeSupervisor().sections.join(' and ')} job cards` : 'Assign sections to this supervisor in Settings'}</span>
+            <span className="t2 small">{activeSupervisor().sections.length ? `${activeSupervisor().sections.join(' and ')} job cards` : 'Ask the owner to give you sections (My firm → Team)'}</span>
             <div><button className="btn sm" onClick={() => go('review')}>Open queue</button></div>
           </div>
           {!over.length && !idle.length && <p className="muted small" style={{ margin: 0 }}><Icon name="check" size={14} /> No shortage or idle alerts.</p>}

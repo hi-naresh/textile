@@ -1,4 +1,4 @@
-// Inquiry Handling: read a free-text inquiry, check free stock + rate, draft a reply, and turn a
+// Inquiry Handling: read a free-text inquiry, check free stock, draft a reply, and turn a
 // won inquiry into an order. Deterministic first; a low-tier LLM only fills fields the rules missed.
 import type { Q } from '../db';
 import { LedgerError } from '../ledger-error';
@@ -6,7 +6,6 @@ import type { Role } from '../access';
 import type { Inquiry } from '../domain';
 import { canonicalLotAttr, metersValue, nameKey, nameValue } from '../normalize';
 import { partyByName } from '../parties';
-import { rateFor } from '../pricing';
 import { freeLotsForQuality, type LotStock } from '../stock';
 import { callGemini, geminiKey, parseJsonAnswer } from '../gemini';
 import { detectLang, type ChatLang } from '../chat/lang';
@@ -108,10 +107,11 @@ export async function stockFor(q: Q, quality: string | null, design: string | nu
   };
 }
 
-/** Stock + rate + promise date + reply draft for an inquiry's current fields. */
+/** Stock + promise date + reply draft for an inquiry's current fields.
+ *  There is no rate list (every party gets its own rate): the draft only quotes a rate the owner typed on this inquiry. */
 async function enrich(q: Q, f: { quality: string | null; design: string | null; meters: number | null; party_id: number | null; party_name: string | null; quoted_rate: number | null; lang: ChatLang }, role: Role) {
   const stock = await stockFor(q, f.quality, f.design);
-  const rate = f.quality ? (f.quoted_rate ?? (await rateFor(q, f.quality, f.party_id))) : null;
+  const rate = f.quality ? f.quoted_rate : null;
   const promise = f.quality && f.meters != null && stock.free >= f.meters ? addDays(todayIST(), 2) : null;
   const draft = replyDraft({
     lang: f.lang, party: f.party_name, quality: f.quality, design: f.design, meters: f.meters, free: stock.free,
@@ -125,7 +125,7 @@ async function view(q: Q, id: number, role: Role): Promise<InquiryView> {
   if (!r.rows[0]) throw new LedgerError(`Inquiry #${id} not found.`, 404);
   const inquiry = toInquiry(r.rows[0], role);
   const stock = await stockFor(q, inquiry.quality, inquiry.design);
-  const rate = role === 'owner' && inquiry.quality ? (inquiry.quoted_rate ?? (await rateFor(q, inquiry.quality, inquiry.party_id))) : null;
+  const rate = role === 'owner' && inquiry.quality ? inquiry.quoted_rate : null;
   const promise = inquiry.quality && inquiry.meters != null && stock.free >= inquiry.meters ? addDays(todayIST(), 2) : null;
   return { inquiry, stock, rate, promise_date: promise };
 }
@@ -260,7 +260,7 @@ export async function convertInquiry(q: Q, idRaw: unknown, b: Record<string, unk
   const meters = b.meters ?? row.meters;
   if (!quality) throw new LedgerError('Add the quality before creating the order.');
   if (meters == null || meters === '') throw new LedgerError('Add the meters before creating the order.');
-  const rate = rateValue(b.rate_per_m, 'Rate') ?? num(row.quoted_rate) ?? num(row.target_rate) ?? null; // null → createOrder uses rateFor
+  const rate = rateValue(b.rate_per_m, 'Rate') ?? num(row.quoted_rate) ?? null; // the rate the owner quoted; null → typed on the order later
   // pg returns DATE as a JS Date — read it as text.
   const nb = await q(`SELECT to_char(needed_by, 'YYYY-MM-DD') AS d FROM inquiries WHERE id = $1`, [id]);
   let promise = b.promise_date !== undefined ? b.promise_date : (nb.rows[0].d ?? null);

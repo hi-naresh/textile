@@ -1,107 +1,46 @@
 // Costing & margin (owner only). Deterministic:
-//  lot cost ₹/m = purchase (weighted avg Pu.Rate of IN movements, by grey m) + Σ process cost ₹/m per section the lot
-//  went through (job cards, cost valid at the card date) + shortage loss (grey→finished at receipt: purchase × lost m ÷ finished m; job cards: cost so far × shortage m ÷ meters out).
-//  margin per OUT movement = (selling rate − lot cost) × meters; selling rate = invoice line → order rate → rate list.
+//  lot cost ₹/m = purchase (weighted avg Pu.Rate of IN movements, by grey m)
+//               + grey→finished shortage at receipt (purchase × lost m ÷ finished m).
+//  Process costs are turned off for now (owner's request), so job cards add nothing to cost.
+//  margin per OUT movement = (selling rate − lot cost) × meters; selling rate = invoice line → order rate.
+//  There is no rate list: every party gets its own rate.
 // Everything is loaded in a few set-based queries (no per-row lookups).
 import type { Q } from '../db';
-import { sectionKey } from '../settings';
 import { round2, seq } from './validate';
 
 export interface LotCost {
   lot_id: string; quality: string | null;
   purchase: number | null; // ₹/m
-  process: { section: string; cost_per_m: number | null; meters: number }[];
+  process: { section: string; cost_per_m: number | null; meters: number }[]; // always empty while process costs are off
   process_total: number; shortage: number; total: number;
-  complete: boolean; missing: string[]; // e.g. ['purchase rate', 'process cost: Dyeing']
-}
-
-interface PriceRow { key: string; party_id: number | null; value: number; valid_from: string; id: number }
-
-/** Latest row valid on `date` (party row beats general); if none yet, the earliest known one (history set later). */
-function pick(rows: PriceRow[] | undefined, date: string, partyId: number | null = null): number | null {
-  if (!rows?.length) return null;
-  const cands = rows.filter((r) => r.party_id == null || (partyId != null && r.party_id === partyId));
-  const best = (list: PriceRow[]) => {
-    const valid = list.filter((r) => r.valid_from <= date).sort((a, b) => b.valid_from.localeCompare(a.valid_from) || b.id - a.id)[0];
-    if (valid) return valid.value;
-    const first = [...list].sort((a, b) => a.valid_from.localeCompare(b.valid_from) || a.id - b.id)[0];
-    return first ? first.value : null;
-  };
-  if (partyId != null) {
-    const own = cands.filter((r) => r.party_id === partyId);
-    if (own.length) return best(own);
-  }
-  return best(cands.filter((r) => r.party_id == null));
-}
-
-const groupBy = <T,>(rows: T[], key: (r: T) => string) => {
-  const m = new Map<string, T[]>();
-  for (const r of rows) { const k = key(r); m.set(k, [...(m.get(k) ?? []), r]); }
-  return m;
-};
-
-async function loadProcessCosts(q: Q) {
-  const r = await q(`SELECT id, section, cost_per_m, to_char(valid_from, 'YYYY-MM-DD') AS valid_from FROM process_costs`);
-  return groupBy<PriceRow>(r.rows.map((x) => ({ key: sectionKey(x.section), party_id: null, value: Number(x.cost_per_m), valid_from: x.valid_from, id: Number(x.id) })), (x) => x.key);
-}
-
-async function loadRates(q: Q) {
-  const r = await q(`SELECT id, quality, party_id, rate_per_m, to_char(valid_from, 'YYYY-MM-DD') AS valid_from FROM rates`);
-  return groupBy<PriceRow>(r.rows.map((x) => ({ key: String(x.quality).trim().toLowerCase(), party_id: x.party_id == null ? null : Number(x.party_id), value: Number(x.rate_per_m), valid_from: x.valid_from, id: Number(x.id) })), (x) => x.key);
+  complete: boolean; missing: string[]; // e.g. ['purchase rate']
 }
 
 /** Cost ₹/m for the given lots (or every lot). */
 export async function lotCosts(q: Q, lotIds?: string[]): Promise<Map<string, LotCost>> {
   const only = lotIds ? [...new Set(lotIds)] : null;
   if (only && !only.length) return new Map();
-  const [lots, buy, cards, costs] = await seq([
+  const [lots, buy] = await seq([
     () => q(`SELECT lot_id, quality FROM lots WHERE ($1::text[] IS NULL OR lot_id = ANY($1::text[]))`, [only]),
     () => q(`SELECT lot_id, SUM(purchase_rate * COALESCE(grey_meters, meters)) / NULLIF(SUM(COALESCE(grey_meters, meters)), 0) AS rate,
               SUM(COALESCE(grey_meters, meters)) AS grey, SUM(meters) AS fin
        FROM stock_movements WHERE direction = 'IN' AND purchase_rate IS NOT NULL AND ($1::text[] IS NULL OR lot_id = ANY($1::text[]))
-       GROUP BY lot_id`, [only]),
-    () => q(`SELECT lot_id, process, meters_in, meters_out, status, to_char(ts_created, 'YYYY-MM-DD') AS d
-       FROM job_cards WHERE lot_id IS NOT NULL AND ($1::text[] IS NULL OR lot_id = ANY($1::text[]))`, [only]),
-    () => loadProcessCosts(q)]);
+       GROUP BY lot_id`, [only])]);
   const buyBy = new Map<string, number>(buy.rows.map((r) => [String(r.lot_id), Number(r.rate)]));
   // Grey → finished loss at receipt: the purchase is paid on grey meters but only finished meters can be sold.
   const recvLoss = new Map<string, number>(buy.rows.map((r) => {
     const grey = Number(r.grey), fin = Number(r.fin);
     return [String(r.lot_id), fin > 0 && grey > fin ? (Number(r.rate) * (grey - fin)) / fin : 0];
   }));
-  const cardsBy = groupBy(cards.rows, (r) => String(r.lot_id));
   const out = new Map<string, LotCost>();
   for (const l of lots.rows) {
     const id = String(l.lot_id);
     const purchase = buyBy.has(id) ? round2(buyBy.get(id)!) : null;
-    const missing: string[] = [];
-    if (purchase == null) missing.push('purchase rate');
-    const lc = cardsBy.get(id) ?? [];
-    // per section: meters-weighted average of the cost valid at each card's date
-    const bySec = groupBy(lc, (c) => sectionKey(String(c.process)));
-    const process: LotCost['process'] = [];
-    for (const [k, list] of bySec) {
-      let amt = 0, m = 0, gap = false;
-      for (const c of list) {
-        const cost = pick(costs.get(k), c.d);
-        if (cost == null) { gap = true; continue; }
-        amt += cost * Number(c.meters_in); m += Number(c.meters_in);
-      }
-      const name = String(list[0].process).replace(/\s*section\s*$/i, '').trim();
-      const perM = gap || m <= 0 ? null : round2(amt / m);
-      if (perM == null) missing.push(`process cost: ${name}`);
-      process.push({ section: name, cost_per_m: perM, meters: round2(list.reduce((s, c) => s + Number(c.meters_in), 0)) });
-    }
-    const processTotal = round2(process.reduce((s, p) => s + (p.cost_per_m ?? 0), 0));
-    // shortage loss from closed cards
-    const closed = lc.filter((c) => c.status === 'closed' && c.meters_out != null);
-    const shortM = Math.max(0, closed.reduce((s, c) => s + Number(c.meters_in) - Number(c.meters_out), 0));
-    const outM = closed.reduce((s, c) => s + Number(c.meters_out), 0);
-    const soFar = (purchase ?? 0) + processTotal;
-    const shortage = round2((outM > 0 ? (soFar * shortM) / outM : 0) + (recvLoss.get(id) ?? 0));
+    const missing = purchase == null ? ['purchase rate'] : [];
+    const shortage = round2(recvLoss.get(id) ?? 0);
     out.set(id, {
-      lot_id: id, quality: l.quality ?? null, purchase, process, process_total: processTotal, shortage,
-      total: round2(soFar + shortage), complete: missing.length === 0, missing,
+      lot_id: id, quality: l.quality ?? null, purchase, process: [], process_total: 0, shortage,
+      total: round2((purchase ?? 0) + shortage), complete: missing.length === 0, missing,
     });
   }
   return out;
@@ -123,7 +62,7 @@ export interface MarginRow {
 
 export interface MarginMove {
   id: number; lot_id: string; quality: string; meters: number; date: string; party_id: number | null; party: string;
-  order_id: number | null; rate: number | null; rate_source: 'invoice' | 'order' | 'rate_list' | null; cost: LotCost | null;
+  order_id: number | null; rate: number | null; rate_source: 'invoice' | 'order' | null; cost: LotCost | null;
 }
 
 /** OUT movements in the last `days` days, each with its selling rate and lot cost. */
@@ -143,9 +82,8 @@ export async function marginMoves(q: Q, days: number): Promise<MarginMove[]> {
   );
   if (!mv.rows.length) return [];
   const dispatchIds = [...new Set(mv.rows.filter((r) => r.dispatch_id != null).map((r) => Number(r.dispatch_id)))];
-  const [inv, rates, costs] = await seq([
+  const [inv, costs] = await seq([
     () => dispatchIds.length ? q(`SELECT dispatch_id, lines FROM invoices WHERE status <> 'cancelled' AND dispatch_id = ANY($1::int[])`, [dispatchIds]) : Promise.resolve({ rows: [] as Record<string, unknown>[] }),
-    () => loadRates(q),
     () => lotCosts(q, mv.rows.map((r) => String(r.lot_id)))]);
   const lineRate = new Map<string, number>();
   for (const r of inv.rows) {
@@ -159,10 +97,6 @@ export async function marginMoves(q: Q, days: number): Promise<MarginMove[]> {
     const inv1 = r.dispatch_id != null ? lineRate.get(`${r.dispatch_id}|${r.lot_id}`) : undefined;
     if (inv1 != null) { rate = inv1; src = 'invoice'; }
     else if (r.order_rate != null && Number(r.order_rate) > 0) { rate = Number(r.order_rate); src = 'order'; }
-    else {
-      const x = pick(rates.get(String(r.quality).trim().toLowerCase()), r.d, partyId);
-      if (x != null) { rate = x; src = 'rate_list'; }
-    }
     return {
       id: Number(r.id), lot_id: String(r.lot_id), quality: String(r.quality), meters: Number(r.meters), date: r.d,
       party_id: partyId, party: r.party_name ? String(r.party_name) : '—', order_id: r.order_id == null ? null : Number(r.order_id),

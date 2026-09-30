@@ -1,5 +1,6 @@
 // Strict formats + canonical names for everything written to the ledger.
 // Used by manual entry, Excel import and photo reads, so the same lot / party / mill
+import { formatMarketLocation, parseMarketLocation } from './location';
 // is always stored the same way ("haridwar textiles " → "HARIDWAR TEXTILES" if that spelling exists).
 
 import type { Q } from './db';
@@ -49,17 +50,19 @@ type NameField = 'party' | 'mill_name' | 'weaver_name';
  * Canonical spelling: if the same name (ignoring case, spaces, dots) was used before, reuse that spelling.
  * Mills and weavers share one list (a mill can also be the weaver).
  */
-export async function canonicalName(q: Q, field: NameField, value: string | null): Promise<string | null> {
+export async function canonicalName(q: Q, field: NameField, value: string | null, excludeIds: number[] = []): Promise<string | null> {
   if (!value) return value;
   const key = nameKey(value);
   if (!key) return value;
   const cols = field === 'party' ? ['party'] : ['mill_name', 'weaver_name'];
+  // excludeIds: rows being edited don't vote for their own old spelling (ledger edit mode).
+  const skip = excludeIds.length ? ` AND NOT (id = ANY($2::int[]))` : '';
   for (const col of cols) {
     const r = await q(
       `SELECT ${col} AS name, COUNT(*) AS n FROM stock_movements
-       WHERE ${col} IS NOT NULL AND regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = $1
+       WHERE ${col} IS NOT NULL AND regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = $1${skip}
        GROUP BY ${col} ORDER BY n DESC LIMIT 1`,
-      [key],
+      excludeIds.length ? [key, excludeIds] : [key],
     );
     if (r.rows[0]) return r.rows[0].name;
   }
@@ -67,11 +70,12 @@ export async function canonicalName(q: Q, field: NameField, value: string | null
 }
 
 /** Canonical quality / design spelling from existing lots. */
-export async function canonicalLotAttr(q: Q, col: 'quality' | 'design', value: string | null): Promise<string | null> {
+export async function canonicalLotAttr(q: Q, col: 'quality' | 'design', value: string | null, excludeLots: string[] = []): Promise<string | null> {
   if (!value) return value;
+  const skip = excludeLots.length ? ` AND NOT (lot_id = ANY($2::text[]))` : '';
   const r = await q(
-    `SELECT ${col} AS v FROM lots WHERE regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = $1 GROUP BY ${col} ORDER BY COUNT(*) DESC LIMIT 1`,
-    [nameKey(value)],
+    `SELECT ${col} AS v FROM lots WHERE regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = $1${skip} GROUP BY ${col} ORDER BY COUNT(*) DESC LIMIT 1`,
+    excludeLots.length ? [nameKey(value), excludeLots] : [nameKey(value)],
   );
   return r.rows[0]?.v ?? value;
 }
@@ -85,7 +89,7 @@ export async function locationPresetsFrom(q: Q): Promise<string[]> {
 }
 
 /**
- * Only locations from the firm's fixed list (Settings → Lot locations) are accepted.
+ * Only locations from the firm's fixed list (My firm → Markets & locations) are accepted.
  * Returns the list's spelling. "Dispatched" is set by the system only.
  */
 export async function allowedLocation(q: Q, v: unknown, required: boolean): Promise<string | null> {
@@ -97,6 +101,11 @@ export async function allowedLocation(q: Q, v: unknown, required: boolean): Prom
   const presets = await locationPresetsFrom(q);
   const list = presets.some((p) => nameKey(p) === nameKey(SYSTEM_LOCATIONS.floor)) ? presets : [...presets, SYSTEM_LOCATIONS.floor];
   const hit = list.find((p) => nameKey(p) === nameKey(s));
-  if (!hit) throw new LedgerError(`"${s}" is not in the location list (${list.join(', ')}). The owner can add it in Settings → Lot locations.`);
-  return hit;
+  if (hit) return hit;
+  // Or a market address: "<market> <shop> · Pipe <pipe>" with a market from My firm → Markets.
+  const mk = await q(`SELECT markets FROM app_settings WHERE id = 1`);
+  const markets: string[] = mk.rows[0]?.markets ?? [];
+  const m = parseMarketLocation(s, markets);
+  if (m) return formatMarketLocation(m.market, m.shop, m.pipe);
+  throw new LedgerError(`"${s}" is not a known location. Use one of ${list.join(', ')}, or a market address like "${markets[0] ?? 'RRTM'} 245 · Pipe 3" (markets are set in My firm).`);
 }

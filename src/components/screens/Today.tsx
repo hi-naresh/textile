@@ -6,6 +6,7 @@ import Icon from '../Icon';
 import { Pill, Segmented, fmt, time } from '../ui';
 import type { Ctx } from '../ctx';
 import { CAPTURE_LABEL } from '@/lib/derive';
+import type { LedgerRow } from '@/lib/useLedger';
 
 // "Today" comes from the server (database date) so it matches every other today-figure in the app.
 const localToday = (ts: string | null | undefined) => !!ts && new Date(ts).toDateString() === new Date().toDateString();
@@ -24,10 +25,28 @@ export function LiveNow({ ctx }: { ctx: Ctx }) {
     floor.forEach((j) => { const x = m.get(j.process) ?? { cards: 0, meters: 0 }; x.cards++; x.meters += j.meters_in; m.set(j.process, x); });
     return Array.from(m.entries());
   }, [floor]);
+  const sum = (xs: { meters: number }[]) => xs.reduce((s, x) => s + x.meters, 0);
   const outToday = useMemo(() => d.ledger.filter((l) => l.direction === 'OUT' && l.is_today), [d.ledger]);
   const inToday = useMemo(() => d.ledger.filter((l) => l.direction === 'IN' && l.is_today), [d.ledger]);
+  // Totals and lists over ALL of today's movements (d.ledger holds only the latest rows).
+  const tIn = d.today ? { m: d.today.in_m, n: d.today.in_count } : { m: sum(inToday), n: inToday.length };
+  const tOut = d.today ? { m: d.today.out_m, n: d.today.out_count } : { m: sum(outToday), n: outToday.length };
+  const [todayRows, setTodayRows] = useState<{ dir: 'IN' | 'OUT'; rows: LedgerRow[]; more: boolean } | null>(null);
+  useEffect(() => {
+    if (tab !== 'out' && tab !== 'in') return;
+    const dir = tab === 'out' ? 'OUT' : 'IN';
+    let live = true;
+    fetch(`/api/stock/ledger?today=1&direction=${dir}&limit=50`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (live && j) setTodayRows({ dir, rows: j.rows ?? [], more: !!j.next }); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [tab, d.today]);
+  const wantDir = tab === 'out' ? 'OUT' : 'IN';
+  const liveRows: { id: number; lot_id: string; meters: number; party: string | null; mill_name: string | null; quality?: string | null; source_doc_id: string | null; ts: string }[] =
+    todayRows && todayRows.dir === wantDir ? todayRows.rows : (tab === 'out' ? outToday : inToday);
+  const listMore = !!(todayRows && todayRows.dir === wantDir && todayRows.more);
   const closedToday = useMemo(() => d.jobCards.filter((j) => j.status === 'closed' && j.closed_today), [d.jobCards]);
-  const sum = (xs: { meters: number }[]) => xs.reduce((s, x) => s + x.meters, 0);
 
   const feed = useMemo(() => {
     const items: FeedItem[] = [
@@ -51,8 +70,8 @@ export function LiveNow({ ctx }: { ctx: Ctx }) {
       </div>
       <div className="live-stats">
         <button className={`live-stat ${tab === 'floor' ? 'on' : ''}`} onClick={() => setTab('floor')}><span className="muted small">On the floor</span><span className="num strong">{fmt(sum(floor.map((j) => ({ meters: j.meters_in }))))} m</span><span className="muted tiny">{floor.length} card{floor.length === 1 ? '' : 's'}</span></button>
-        <button className={`live-stat ${tab === 'out' ? 'on' : ''}`} onClick={() => setTab('out')}><span className="muted small">Dispatched today</span><span className="num strong">{fmt(sum(outToday))} m</span><span className="muted tiny">{outToday.length} challan{outToday.length === 1 ? '' : 's'}</span></button>
-        <button className={`live-stat ${tab === 'in' ? 'on' : ''}`} onClick={() => setTab('in')}><span className="muted small">Received today</span><span className="num strong">{fmt(sum(inToday))} m</span><span className="muted tiny">{inToday.length} challan{inToday.length === 1 ? '' : 's'}</span></button>
+        <button className={`live-stat ${tab === 'out' ? 'on' : ''}`} onClick={() => setTab('out')}><span className="muted small">Dispatched today</span><span className="num strong">{fmt(tOut.m, 1)} m</span><span className="muted tiny">{tOut.n} challan{tOut.n === 1 ? '' : 's'}</span></button>
+        <button className={`live-stat ${tab === 'in' ? 'on' : ''}`} onClick={() => setTab('in')}><span className="muted small">Received today</span><span className="num strong">{fmt(tIn.m, 1)} m</span><span className="muted tiny">{tIn.n} challan{tIn.n === 1 ? '' : 's'}</span></button>
         <button className={`live-stat ${tab === 'feed' ? 'on' : ''}`} onClick={() => setTab('feed')}><span className="muted small">Activity today</span><span className="num strong">{feed.length}</span><span className="muted tiny">events</span></button>
       </div>
 
@@ -73,13 +92,14 @@ export function LiveNow({ ctx }: { ctx: Ctx }) {
       )}
       {(tab === 'out' || tab === 'in') && (
         <div className="live-list">
-          {(tab === 'out' ? outToday : inToday).map((l) => (
+          {liveRows.map((l) => (
             <div key={l.id} className="live-row">
               <div className="grow min0 stack-2"><span className="strong ellipsis">{tab === 'out' ? l.party : l.mill_name ?? '—'}</span><span className="muted small ellipsis">{l.lot_id}{l.quality ? ` · ${l.quality}` : ''}{l.source_doc_id ? ` · ${l.source_doc_id}` : ''} · {time(l.ts)}</span></div>
               <span className="num strong">{fmt(l.meters, 1)} m</span>
             </div>
           ))}
-          {!(tab === 'out' ? outToday : inToday).length && <span className="muted small">Nothing {tab === 'out' ? 'dispatched' : 'received'} yet today.</span>}
+          {listMore && <button className="linkbtn small left" onClick={() => go('stock')}>Showing the latest {liveRows.length} of {tab === 'out' ? tOut.n : tIn.n} — open the stock ledger for all</button>}
+          {!liveRows.length && <span className="muted small">Nothing {tab === 'out' ? 'dispatched' : 'received'} yet today.</span>}
         </div>
       )}
       {tab === 'feed' && (

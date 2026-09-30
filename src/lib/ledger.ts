@@ -7,7 +7,7 @@ import { markAgentsStale } from './agents/stale';
 import { trimReservations } from './stock';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, lotCode, metersValue, nameValue, SYSTEM_LOCATIONS } from './normalize';
+import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, lotCode, metersValue, nameKey, nameValue, SYSTEM_LOCATIONS } from './normalize';
 
 export { LedgerError };
 import { afterOutgoing } from './agents/hooks';
@@ -23,6 +23,80 @@ const text = (v: unknown, max = 150): string | null => {
   if (!s) return null;
   return s.slice(0, max);
 };
+
+/** SR no. (paper-register serial): whole number above 0, or null when empty. */
+export function srValue(v: unknown): number | null {
+  if (v === null || v === undefined || String(v).trim() === '') return null;
+  const s = String(v).replace(/,/g, '').trim();
+  const n = Number(s);
+  if (!/^\d+(\.0+)?$/.test(s) || !Number.isSafeInteger(n) || n <= 0) throw new LedgerError(`SR no. must be a whole number above 0 (got "${String(v).trim().slice(0, 20)}").`);
+  if (n > 2_000_000_000) throw new LedgerError(`SR no. ${n} is too large.`);
+  return n;
+}
+
+/** Pieces ("taka"): whole number, 0 or more, or null when empty. */
+export function piecesValue(v: unknown): number | null {
+  if (v === null || v === undefined || String(v).trim() === '') return null;
+  const s = String(v).replace(/,/g, '').trim();
+  const n = Number(s);
+  if (!/^\d+(\.0+)?$/.test(s) || !Number.isSafeInteger(n)) throw new LedgerError(`Pieces (taka) must be a whole number, 0 or more (got "${String(v).trim().slice(0, 20)}").`);
+  if (n > 1_000_000) throw new LedgerError(`Pieces (taka) ${n} looks too large. Check the number.`);
+  return n;
+}
+
+const DIR_WORD = { IN: 'incoming', OUT: 'outgoing' } as const;
+
+/** Next SR no. for a direction: last used + 1 (1 when none yet). */
+export async function nextSr(q: Q, direction: 'IN' | 'OUT'): Promise<{ last: number | null; next: number }> {
+  const r = await q(`SELECT MAX(sr_no) AS last FROM stock_movements WHERE direction = $1`, [direction]);
+  const last = r.rows[0]?.last == null ? null : Number(r.rows[0].last);
+  return { last, next: (last ?? 0) + 1 };
+}
+
+/** The entry already using this SR no. in this direction, if any. */
+export async function srTaken(q: Q, direction: 'IN' | 'OUT', sr: number): Promise<{ lot_id: string; ts: string } | null> {
+  const r = await q(`SELECT lot_id, to_char(ts, 'DD Mon YYYY') AS ts FROM stock_movements WHERE direction = $1 AND sr_no = $2 LIMIT 1`, [direction, sr]);
+  return r.rows[0] ?? null;
+}
+
+async function assertSrFree(q: Q, direction: 'IN' | 'OUT', sr: number | null) {
+  if (sr == null) return;
+  const hit = await srTaken(q, direction, sr);
+  if (!hit) return;
+  const { next } = await nextSr(q, direction);
+  throw new LedgerError(`SR no. ${sr} is already used on another ${DIR_WORD[direction]} entry (${hit.lot_id}, ${hit.ts}). Next free number: ${next}.`, 409);
+}
+
+const importRef = (v: unknown): string | null => {
+  const s = text(v, 60);
+  if (s && !/^[A-Za-z0-9]{6,32}:\d{1,7}$/.test(s)) throw new LedgerError('Import reference is not valid.');
+  return s;
+};
+
+// ---------- per-batch memo (Excel import: many rows in one transaction) ----------
+/**
+ * Optional cache shared by the rows of one import chunk: canonical spellings, location checks and the
+ * "agents stale" flag are looked up once per chunk instead of once per row. Only pass it inside ONE transaction.
+ */
+export interface LedgerMemo { values: Map<string, unknown>; staleMarked: boolean }
+export const newLedgerMemo = (): LedgerMemo => ({ values: new Map(), staleMarked: false });
+
+async function memoised<T>(memo: LedgerMemo | undefined, key: string, fn: () => Promise<T>): Promise<T> {
+  if (!memo) return fn();
+  if (memo.values.has(key)) return memo.values.get(key) as T;
+  const v = await fn();
+  memo.values.set(key, v);
+  return v;
+}
+const nameMemo = (memo: LedgerMemo | undefined, q: Q, field: 'party' | 'mill_name' | 'weaver_name', v: string | null) =>
+  v == null ? Promise.resolve(null) : memoised(memo, `name:${field === 'party' ? 'party' : 'mw'}:${nameKey(v)}`, () => canonicalName(q, field, v));
+const lotAttrMemo = (memo: LedgerMemo | undefined, q: Q, col: 'quality' | 'design', v: string | null) =>
+  v == null ? Promise.resolve(null) : memoised(memo, `lot:${col}:${nameKey(v)}`, () => canonicalLotAttr(q, col, v));
+async function staleOnce(q: Q, memo: LedgerMemo | undefined) {
+  if (memo?.staleMarked) return;
+  await markAgentsStale(q);
+  if (memo) memo.staleMarked = true;
+}
 
 // ---------- lookups ----------
 async function lotBalance(q: Q, lotId: string): Promise<number> {
@@ -82,6 +156,9 @@ export interface IncomingInput {
   source_doc?: unknown;
   location?: unknown;
   purchase_rate?: unknown; // ₹/m grey purchase rate (Pu.Rate), for costing
+  sr_no?: unknown; // paper-register serial, unique per direction
+  pieces?: unknown; // taka
+  import_ref?: unknown; // "<batch>:<row>" from an Excel import
   capture_event_id?: number | null;
   moved_by?: string | null;
 }
@@ -90,32 +167,38 @@ export interface IncomingInput {
  * Record incoming stock. Stock quantity (`meters`) = finished meters if given, else grey meters.
  * `requireLotDetails`: manual entry must name quality + design for a new lot; photo reads fall back to "Unknown".
  */
-export async function recordIncoming(q: Q, input: IncomingInput, opts: { requireLotDetails: boolean }) {
-  await markAgentsStale(q);
+export async function recordIncoming(q: Q, input: IncomingInput, opts: { requireLotDetails: boolean; memo?: LedgerMemo }) {
+  const memo = opts.memo;
+  await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
+  const sr = srValue(input.sr_no);
+  const pieces = piecesValue(input.pieces);
+  const ref = importRef(input.import_ref);
   const grey = metersValue(input.grey_meters, 'Grey meters');
   const finished = metersValue(input.finished_meters, 'Finished meters');
   const legacy = metersValue(input.meters, 'Meters');
   const stockMeters = finished ?? legacy ?? grey;
   if (stockMeters == null) throw new LedgerError('Enter finished meters or grey meters.');
   if (grey != null && finished != null && finished > grey * 1.1) throw new LedgerError(`Finished meters (${finished}) can't be much more than grey meters (${grey}). Check the numbers.`);
-  const mill = await canonicalName(q, 'mill_name', nameValue(input.mill_name, 'Mill'));
-  const weaver = await canonicalName(q, 'weaver_name', nameValue(input.weaver_name, 'Weaver'));
+  const mill = await nameMemo(memo, q, 'mill_name', nameValue(input.mill_name, 'Mill'));
+  const weaver = await nameMemo(memo, q, 'weaver_name', nameValue(input.weaver_name, 'Weaver'));
   const challan = challanCode(input.source_doc);
-  const givenLocation = await allowedLocation(q, input.location, false);
+  const locKey = String(input.location ?? '').trim();
+  const givenLocation = await memoised(memo, `loc:${locKey}`, () => allowedLocation(q, input.location, false));
+  await assertSrFree(q, 'IN', sr);
 
   const exists = await lockLot(q, lotId);
   if (!exists) {
-    const quality = await canonicalLotAttr(q, 'quality', nameValue(input.quality, 'Quality'));
-    const design = await canonicalLotAttr(q, 'design', nameValue(input.design, 'Design'));
+    const quality = await lotAttrMemo(memo, q, 'quality', nameValue(input.quality, 'Quality'));
+    const design = await lotAttrMemo(memo, q, 'design', nameValue(input.design, 'Design'));
     if (opts.requireLotDetails && (!quality || !design)) throw new LedgerError('Quality and design are required for a new lot.');
     await q(`INSERT INTO lots (lot_id, quality, design, grade, status) VALUES ($1, $2, $3, 'A', 'active')`, [lotId, quality ?? 'Unknown Quality', design ?? 'Unknown Design']);
   }
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id, purchase_rate)
-     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8, $9) RETURNING *`,
-    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null, metersValue(input.purchase_rate, 'Purchase rate')],
+    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id, purchase_rate, sr_no, pieces, import_ref)
+     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $11, $12) RETURNING *`,
+    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null, metersValue(input.purchase_rate, 'Purchase rate'), sr, pieces, ref],
   );
   const movement = mv.rows[0];
   // No location given (e.g. a photo read): a new lot lands in the godown; an existing lot stays where it is.
@@ -142,26 +225,34 @@ export interface OutgoingInput {
   moved_by?: string | null;
   order_id?: number | null; // set when dispatched against a known order (Logistics agent)
   dispatch_id?: number | null; // truck / parcel grouping
+  sr_no?: unknown;
+  pieces?: unknown;
+  import_ref?: unknown;
 }
 
 /** Record a dispatch. Party (destination client) is required. */
-export async function recordOutgoing(q: Q, input: OutgoingInput) {
-  await markAgentsStale(q);
+export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: LedgerMemo } = {}) {
+  const memo = opts.memo;
+  await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
+  const sr = srValue(input.sr_no);
+  const pieces = piecesValue(input.pieces);
+  const ref = importRef(input.import_ref);
   const meters = metersValue(input.meters, 'Meters');
   if (meters == null) throw new LedgerError('Meters are required.');
-  const party = await canonicalName(q, 'party', nameValue(input.party, 'Party'));
+  const party = await nameMemo(memo, q, 'party', nameValue(input.party, 'Party'));
   const challan = challanCode(input.source_doc);
   if (!party) throw new LedgerError('Party (the client receiving the goods) is required for outgoing stock.');
+  await assertSrFree(q, 'OUT', sr);
 
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`);
   const balance = await lotBalance(q, lotId);
   if (balance < meters) throw new LedgerError(`Insufficient stock. Lot ${lotId} has ${balance} m, dispatch asks for ${meters} m.`);
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id)
-     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null],
+    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id, sr_no, pieces, import_ref)
+     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null, sr, pieces, ref],
   );
   const movement = mv.rows[0];
   // Logistics agent: link the dispatch to its order / allocation, update order status (same transaction).
@@ -276,11 +367,11 @@ export async function applyCaptureRead(q: Q, type: CaptureType, data: Record<str
   if (type === 'incoming_stock') {
     // Reads taken before 26 Sep 2026 stored the supplier as `party`; treat it as the mill.
     const legacy = !data.mill_name && data.party ? { mill_name: data.party } : {};
-    await recordIncoming(q, { ...data, ...legacy, capture_event_id: eventId, moved_by: actor }, { requireLotDetails: false });
+    await recordIncoming(q, { ...data, ...legacy, import_ref: null, capture_event_id: eventId, moved_by: actor }, { requireLotDetails: false });
     return data;
   }
   if (type === 'outgoing_stock') {
-    await recordOutgoing(q, { ...data, capture_event_id: eventId, moved_by: actor });
+    await recordOutgoing(q, { ...data, import_ref: null, capture_event_id: eventId, moved_by: actor });
     return data;
   }
   const jobCardId = await resolveOpenJobCard(q, data.job_card_id, data.lot_id);
@@ -294,6 +385,12 @@ export function errorResponseBody(err: unknown): { status: number; body: { error
   if (err instanceof SyntaxError) return { status: 400, body: { error: 'The request body is not valid JSON.' } };
   // Postgres rejected the input itself (NUL byte, bad number / date text): the caller's mistake, not a server fault.
   const code = (err as { code?: string } | null)?.code;
+  // Two saves raced for the same SR no. / import row: the unique index caught it.
+  if (code === '23505') {
+    const c = (err as { constraint?: string }).constraint;
+    if (c === 'stock_movements_sr_unique') return { status: 409, body: { error: 'That SR no. was just used by another entry. Use the next number.' } };
+    if (c === 'stock_movements_import_ref_unique') return { status: 409, body: { error: 'These rows were already imported.' } };
+  }
   if (code === '22021' || code === '22P05' || code === '22P02' || code === '22003' || code === '22007' || code === '22008') {
     return { status: 400, body: { error: 'Some of the values sent are not valid.' } };
   }

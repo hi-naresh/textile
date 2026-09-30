@@ -10,7 +10,7 @@ export interface ReplyInput {
   design?: string | null;
   meters: number | null;
   free: number; // free stock of the quality (m)
-  rate: number | null; // ₹/m to quote; ignored when includeRate is false
+  rate: number | null; // ₹/m the owner typed for this inquiry (never a list rate); ignored when includeRate is false
   promise: string | null; // YYYY-MM-DD dispatch date we can promise, or null
   includeRate: boolean;
 }

@@ -1,4 +1,4 @@
-// Firm billing details (Settings → Billing) used for GST invoices, challans and statements.
+// Firm billing details (My firm → Firm & billing) used for GST invoices, challans and statements.
 import type { Q } from './db';
 
 export interface Billing {

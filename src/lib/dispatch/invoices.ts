@@ -7,7 +7,6 @@ import type { Invoice, InvoiceLine } from '../domain';
 import { LedgerError } from '../ledger-error';
 import { nextInvoiceNo, readBilling } from '../billing';
 import { partyById, partyByName } from '../parties';
-import { rateFor } from '../pricing';
 import { resolve } from '../agents/suggest';
 import { addDays, applyPaymentsFifo, computeGst, isIsoDate, partyState, r2, type GstResult } from '../gst';
 import { dbToday, textOrNull, validActor } from './common';
@@ -35,7 +34,7 @@ export function toInvoice(r: Row, paid = 0, balance?: number): Invoice & { expor
   };
 }
 
-/** Rates the caller may pass for lots/qualities without a saved rate: { [lot_id or quality]: ₹/m }. */
+/** Rates typed on the invoice: { [lot_id or quality]: ₹/m }. */
 function fallbackRate(rates: unknown, lotId: string, quality: string): number | null {
   if (!rates || typeof rates !== 'object') return null;
   const m = rates as Record<string, unknown>;
@@ -50,7 +49,8 @@ function fallbackRate(rates: unknown, lotId: string, quality: string): number | 
 export interface CreatedInvoice { invoice: Invoice; note: string | null; gst: GstResult }
 
 /**
- * GST invoice for a dispatch. Rate per line: order rate → saved rate (party, then general) → rates[lot_id | quality].
+ * GST invoice for a dispatch. Rate per line: the rate typed on the invoice (rates[lot_id | quality]), else the order's rate.
+ * There is no rate list: every party gets its own rate.
  * Must run inside the caller's transaction (takes the next invoice number).
  */
 export async function createInvoiceForDispatch(
@@ -82,13 +82,13 @@ export async function createInvoiceForDispatch(
   const lines = [];
   for (const m of mv.rows) {
     const orderRate = m.order_rate != null && Number(m.order_rate) > 0 ? Number(m.order_rate) : null;
-    const rate = orderRate ?? (await rateFor(q, m.quality, party.id, invoiceDate)) ?? fallbackRate(opts.rates, m.lot_id, m.quality);
+    const rate = fallbackRate(opts.rates, m.lot_id, m.quality) ?? orderRate;
     if (rate == null) { missing.add(m.quality); continue; }
     lines.push({ lot_id: m.lot_id, quality: m.quality, design: m.design, meters: Number(m.meters), rate });
   }
   if (missing.size) {
     const list = [...missing];
-    throw new LedgerError(`No rate for ${list.join(', ')}. Add a ₹/m rate for ${list.length > 1 ? 'these qualities' : 'this quality'} (Settings → Rates, or on the order), or enter it on the invoice.`);
+    throw new LedgerError(`No rate for ${list.join(', ')}. Type the ₹/m rate on the invoice, or add it to the order.`);
   }
 
   const billing = await readBilling(q);

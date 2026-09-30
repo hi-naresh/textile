@@ -10,6 +10,7 @@ import { query, type Q } from './db';
 import { readSession, type Session, type SessionUser } from './auth/session';
 import { AUTH } from './auth/config';
 import { audit } from './auth/audit';
+import { getFirmConfig } from './settings';
 
 const run: Q = (text, params) => query(text, params as never[]);
 
@@ -52,12 +53,14 @@ export async function requireUser(req: NextRequest): Promise<Actor> {
       event: 'dev.client_data', actorId: s.user.id, targetUserId: v.id, sessionId: s.id, req,
       detail: { method: req.method, path: req.nextUrl.pathname, query: req.nextUrl.search.slice(0, 300) || undefined },
     });
+    await getFirmConfig();
     return clientActor(s, v, s.user.id);
   }
   const u = s.user;
   if (u.status === 'pending') throw new LedgerError('Your account is waiting for the owner’s approval.', 403);
   if (u.status !== 'approved' || !isClientRole(u.role)) throw new LedgerError('You are not allowed to do this.', 403);
   if (u.mustChangePassword) throw new LedgerError('Set a new password to continue.', 403);
+  await getFirmConfig(); // loads the developer's capability switches used by can() (cached ~30 s)
   return clientActor(s, u, null);
 }
 

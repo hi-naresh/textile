@@ -25,7 +25,7 @@ export async function scanAllocation(q: Q): Promise<{ allocate: string[]; over: 
     }
   }
   // Orders are served in promise-date order; later orders only see what is left.
-  const orders = await listOrders(q, { status: 'open', role: 'owner', limit: 1000 });
+  const orders = await listOrders(q, { status: 'open', role: 'owner', limit: 1000, sort: 'promise' });
   const allocate: string[] = [];
   for (const o of orders) {
     const need = remainingNeed(o);
@@ -89,7 +89,8 @@ export const agent: AgentModule = {
     if (s.kind !== 'allocate_order') throw new LedgerError('Nothing to do for this one — dismiss it instead.');
     if (actor) {
       const u = await q(`SELECT role FROM users WHERE id = $1`, [actor]);
-      if (u.rows[0] && u.rows[0].role !== 'owner' && u.rows[0].role !== 'admin') throw new LedgerError('Only the owner can allocate fabric.', 403);
+      // Same rule as the allocate API: owner and supervisors may reserve lots (meters only, no ₹).
+      if (u.rows[0] && !['owner', 'supervisor', 'admin'].includes(u.rows[0].role)) throw new LedgerError('Only the owner or a supervisor can reserve fabric.', 403);
     }
     const orderId = Number(s.payload?.order_id);
     if (!Number.isInteger(orderId) || orderId <= 0) throw new LedgerError('This suggestion has no order.');

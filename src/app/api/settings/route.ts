@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 }
 
 // PUT (owner): update firm profile, rules and location presets. Send only the fields you change.
-// { firm_name?, firm_city?, shortage_limit_pct?, efficiency_target_pct?, ai_auto_confirm_pct?, location_presets? }
+// { firm_name?, firm_city?, shortage_limit_pct?, efficiency_target_pct?, ai_auto_confirm_pct?, location_presets?, markets? }
 export async function PUT(request: NextRequest) {
   try {
     await requireCap(request, 'settings.manage');
@@ -43,6 +43,17 @@ export async function PUT(request: NextRequest) {
       if (!list.length) throw new LedgerError('Keep at least one location.');
       if (list.length > LIMITS.locationPresetsMax) throw new LedgerError(`Up to ${LIMITS.locationPresetsMax} locations.`);
       add('location_presets', list);
+    }
+    if ('markets' in b) {
+      if (!Array.isArray(b.markets)) throw new LedgerError('markets must be a list.');
+      const list: string[] = [];
+      for (const raw of b.markets) {
+        const name = cleanName(raw, 'Market', 30).toUpperCase();
+        if (!/^[A-Z0-9][A-Z0-9 .&-]{0,29}$/.test(name)) throw new LedgerError(`Market "${name}": letters, numbers, space, dot, & or dash.`);
+        if (!list.includes(name)) list.push(name);
+      }
+      if (list.length > LIMITS.marketsMax) throw new LedgerError(`Up to ${LIMITS.marketsMax} markets.`);
+      add('markets', list);
     }
     if (!sets.length) throw new LedgerError('Nothing to update.');
 

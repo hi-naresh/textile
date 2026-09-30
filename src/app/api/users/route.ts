@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     await requireCap(req, 'users.manage');
     const [users, workers] = await Promise.all([
       listAccounts(run),
-      run(`SELECT w.id, w.name, w.section FROM workers w WHERE w.active AND NOT EXISTS (SELECT 1 FROM users u WHERE u.worker_id = w.id) ORDER BY w.name`),
+      run(`SELECT w.id, w.name, w.section FROM workers w WHERE w.active AND w.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.worker_id = w.id AND u.deleted_at IS NULL) ORDER BY w.name`),
     ]);
     return NextResponse.json({ users, unlinkedWorkers: workers.rows }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

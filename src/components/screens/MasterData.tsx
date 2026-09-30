@@ -1,6 +1,7 @@
 'use client';
 
-// Owner Settings → master data: parties, selling rates, process costs, billing & GST, agent thresholds.
+// Owner master data, shown in My firm (parties, billing & GST) and Settings (stock alert thresholds).
+// Selling rates and process costs are turned off: every party gets its own rate, typed on the order.
 import React, { useState } from 'react';
 import Icon from '../Icon';
 import { Pill, Sheet, inr } from '../ui';
@@ -8,7 +9,7 @@ import type { Ctx } from '../ctx';
 import { apiSend, useApi, who } from '@/lib/useApi';
 import { actorId } from '@/lib/useTextileData';
 import type { Party } from '@/lib/domain';
-import type { BillingSettings, CostRow, QualityRate, RateRow, SectionCost } from '@/lib/money/master';
+import type { BillingSettings } from '@/lib/money/master';
 import { gstinValid } from '@/lib/money/validate';
 import s from './Money.module.css';
 
@@ -36,40 +37,48 @@ function Toggle({ on, label, onChange }: { on: boolean; label: string; onChange:
   );
 }
 
-const shortDate = (iso: string | null) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : '—');
-const perM = (n: number | null | undefined) => (n == null ? '—' : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}/m`);
-
-export function MasterData({ ctx }: { ctx: Ctx }) {
+/** Parties (clients) with search, add and edit. Owner only. */
+export function FirmParties({ ctx }: { ctx: Ctx }) {
+  const [bump, setBump] = useState(0);
+  const key = `${ctx.d.lastSync?.getTime() ?? 0}:${bump}`;
+  const parties = useApi<{ parties: Party[] }>(ctx.role === 'owner' ? `/api/parties?all=1&${who(ctx.role, actorId(ctx.role))}` : null, key);
+  const send = useSend(ctx, () => setBump((b) => b + 1));
   if (ctx.role !== 'owner') return null;
-  return <OwnerMasterData ctx={ctx} />;
+  return <Parties list={parties.error ? [] : parties.data?.parties ?? null} error={parties.error} send={send} />;
 }
 
-function OwnerMasterData({ ctx }: { ctx: Ctx }) {
+/** Billing & GST details printed on invoices (legal name, GSTIN, address, bank, invoice numbering). */
+export function FirmBilling({ ctx }: { ctx: Ctx }) {
   const [bump, setBump] = useState(0);
-  const refresh = () => setBump((b) => b + 1);
   const key = `${ctx.d.lastSync?.getTime() ?? 0}:${bump}`;
-  const q = who(ctx.role, actorId(ctx.role));
-  const parties = useApi<{ parties: Party[] }>(`/api/parties?all=1&${q}`, key);
-  const send = useSend(ctx, refresh);
-  return (
-    <div className="settings-grid">
-      <Parties ctx={ctx} list={parties.data?.parties ?? null} send={send} />
-      <Rates ctx={ctx} refreshKey={key} parties={parties.data?.parties ?? []} send={send} />
-      <Costs ctx={ctx} refreshKey={key} send={send} />
-      <Billing ctx={ctx} refreshKey={key} send={send} />
-    </div>
-  );
+  const { data, error } = useApi<{ billing: BillingSettings }>(ctx.role === 'owner' ? `/api/settings/billing?${who(ctx.role, actorId(ctx.role))}` : null, key);
+  const send = useSend(ctx, () => setBump((b) => b + 1));
+  if (ctx.role !== 'owner') return null;
+  if (error) return <section className="card pad"><span className="muted small">{error}</span></section>;
+  if (!data) return <section className="card pad"><span className="muted small">Loading billing…</span></section>;
+  return <BillingForm key={JSON.stringify(data.billing)} b={data.billing} send={send} />;
+}
+
+/** When the inventory agent raises low-stock / ageing alerts (Settings → Rules). */
+export function StockAlerts({ ctx }: { ctx: Ctx }) {
+  const [bump, setBump] = useState(0);
+  const key = `${ctx.d.lastSync?.getTime() ?? 0}:${bump}`;
+  const { data, error } = useApi<{ billing: BillingSettings }>(ctx.role === 'owner' ? `/api/settings/billing?${who(ctx.role, actorId(ctx.role))}` : null, key);
+  const send = useSend(ctx, () => setBump((b) => b + 1));
+  if (ctx.role !== 'owner') return null;
+  if (error) return <section className="card pad"><span className="muted small">{error}</span></section>;
+  if (!data) return <section className="card pad"><span className="muted small">Loading…</span></section>;
+  return <Thresholds key={`${data.billing.low_stock_m}:${data.billing.ageing_days}`} b={data.billing} send={send} />;
 }
 
 // ---------- Parties ----------
-function Parties({ ctx, list, send }: { ctx: Ctx; list: Party[] | null; send: Send }) {
+function Parties({ list, error, send }: { list: Party[] | null; error: string | null; send: Send }) {
   const [search, setSearch] = useState('');
   const [edit, setEdit] = useState<Party | 'new' | null>(null);
   const [showAll, setShowAll] = useState(false);
   const k = search.trim().toLowerCase();
   const rows = (list ?? []).filter((p) => !k || [p.name, p.city, p.phone, p.gstin].some((x) => x?.toLowerCase().includes(k)));
   const shown = showAll || k ? rows : rows.slice(0, 12);
-  void ctx;
   return (
     <section className={`card pad stack-16 ${s.full}`}>
       <div className={s.head}>
@@ -78,6 +87,7 @@ function Parties({ ctx, list, send }: { ctx: Ctx; list: Party[] | null; send: Se
       </div>
       <input className={`input ${s.search}`} aria-label="Search parties" placeholder="Search name, city, phone or GSTIN" value={search} onChange={(e) => setSearch(e.target.value)} />
       <div className="list">
+        {error && <span className="muted small" style={{ padding: 14 }}>{error}</span>}
         {list == null && <span className="muted small" style={{ padding: 14 }}>Loading…</span>}
         {shown.map((p) => (
           <div key={p.id} className={`list-row ${p.active ? '' : 'off'}`}>
@@ -90,7 +100,7 @@ function Parties({ ctx, list, send }: { ctx: Ctx; list: Party[] | null; send: Se
             <button type="button" className="ib sm-ib" aria-label={`Edit ${p.name}`} onClick={() => setEdit(p)}><Icon name="edit" size={15} /></button>
           </div>
         ))}
-        {list && !rows.length && <span className="muted small" style={{ padding: 14 }}>{k ? 'No match.' : 'No parties yet.'}</span>}
+        {list && !error && !rows.length && <span className="muted small" style={{ padding: 14 }}>{k ? 'No match.' : 'No parties yet.'}</span>}
       </div>
       {!showAll && !k && rows.length > 12 && <button className="linkbtn" onClick={() => setShowAll(true)}>Show all {rows.length}</button>}
       <Sheet open={edit != null} title={edit === 'new' ? 'Add party' : edit ? edit.name : ''} onClose={() => setEdit(null)}>
@@ -137,132 +147,7 @@ function PartyForm({ party, send, onDone }: { party: Party | null; send: Send; o
   );
 }
 
-// ---------- Selling rates ----------
-function Rates({ ctx, refreshKey, parties, send }: { ctx: Ctx; refreshKey: string; parties: Party[]; send: Send }) {
-  const { data, error } = useApi<{ qualities: QualityRate[]; history: RateRow[] }>(`/api/rates?${who(ctx.role, actorId(ctx.role))}`, refreshKey);
-  const [open, setOpen] = useState<string | null>(null);
-  const cur = data?.qualities.find((x) => x.quality === open) ?? null;
-  const missing = data?.qualities.filter((x) => x.rate_per_m == null).length ?? 0;
-  return (
-    <section className="card pad stack-16">
-      <div className="stack-4"><h2 className="h2">Selling rates</h2><span className="muted small">₹ per meter by quality. A party’s own rate wins over the general one.</span></div>
-      {missing > 0 && <Pill tone="warn">{missing} {missing === 1 ? 'quality has' : 'qualities have'} no rate</Pill>}
-      <div className="list">
-        {error && <span className="muted small" style={{ padding: 14 }}>{error}</span>}
-        {!data && !error && <span className="muted small" style={{ padding: 14 }}>Loading…</span>}
-        {data?.qualities.map((r) => (
-          <div key={r.quality} className="list-row">
-            <div className={s.rowMain}>
-              <span className="strong">{r.quality}</span>
-              <span className="muted tiny">{r.rate_per_m == null ? 'No rate yet' : `since ${shortDate(r.valid_from)}`}{r.upcoming ? ` · ${perM(r.upcoming.rate_per_m)} from ${shortDate(r.upcoming.valid_from)}` : ''}{r.overrides.length ? ` · ${r.overrides.length} party rate${r.overrides.length === 1 ? '' : 's'}` : ''}</span>
-            </div>
-            <span className="num strong">{r.rate_per_m == null ? <Pill tone="warn">Not set</Pill> : perM(r.rate_per_m)}</span>
-            <button className="btn sm" onClick={() => setOpen(r.quality)}>Set</button>
-          </div>
-        ))}
-      </div>
-      <Sheet open={cur != null} title={cur ? `${cur.quality} · rates` : ''} onClose={() => setOpen(null)}>
-        {cur && <RatePanel key={cur.quality} q={cur} history={data!.history.filter((h) => h.quality.toLowerCase() === cur.quality.toLowerCase()).slice(0, 12)} parties={parties} send={send} />}
-      </Sheet>
-    </section>
-  );
-}
-
-function RatePanel({ q, history, parties, send }: { q: QualityRate; history: RateRow[]; parties: Party[]; send: Send }) {
-  const [rate, setRate] = useState('');
-  const [from, setFrom] = useState('');
-  const [party, setParty] = useState('');
-  const [pRate, setPRate] = useState('');
-  return (
-    <div className="stack-16">
-      <div className="stack-4"><span className="muted small">General rate now</span><span className="kpi-value num">{perM(q.rate_per_m)}</span></div>
-      <form className="stack-10" onSubmit={async (e) => { e.preventDefault(); if (await send('/api/rates', 'POST', { quality: q.quality, rate_per_m: rate, valid_from: from || undefined }, `${q.quality} rate set`)) { setRate(''); setFrom(''); } }}>
-        <div className={s.formGrid}>
-          <label className="fld">New rate ₹/m<input className="num" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} required /></label>
-          <label className="fld">From date<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><span className={s.fldHint}>Blank = today</span></label>
-        </div>
-        <div className="row-8"><button className="btn primary" type="submit" disabled={!rate.trim()}>Set general rate</button></div>
-      </form>
-      <div className="stack-10">
-        <h3 className="strong">Party rates</h3>
-        <div className="list">
-          {q.overrides.map((o) => (
-            <div key={o.party_id} className="list-row"><div className={s.rowMain}><span className="strong">{o.party_name}</span><span className="muted tiny">since {shortDate(o.valid_from)}</span></div><span className="num">{perM(o.rate_per_m)}</span></div>
-          ))}
-          {!q.overrides.length && <span className="muted small" style={{ padding: 14 }}>None — everyone gets the general rate.</span>}
-        </div>
-        <form className="add-row" onSubmit={async (e) => { e.preventDefault(); if (await send('/api/rates', 'POST', { quality: q.quality, party_id: party, rate_per_m: pRate }, 'Party rate set')) { setPRate(''); } }}>
-          <select className="input sel" aria-label="Party" value={party} onChange={(e) => setParty(e.target.value)} required>
-            <option value="">Choose party</option>
-            {parties.filter((p) => p.active).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <input className="input num" style={{ flex: '0 1 120px', height: 38 }} inputMode="decimal" aria-label="Party rate ₹/m" placeholder="₹/m" value={pRate} onChange={(e) => setPRate(e.target.value)} required />
-          <button className="btn" type="submit" disabled={!party || !pRate.trim()}>Set</button>
-        </form>
-      </div>
-      {history.length > 0 && (
-        <div className="stack-10">
-          <h3 className="strong">History</h3>
-          <div className="list">
-            {history.map((h) => (
-              <div key={h.id} className="list-row"><div className={s.rowMain}><span className="small">{h.party_name ?? 'General'}</span><span className="muted tiny">from {shortDate(h.valid_from)}</span></div><span className="num small">{perM(h.rate_per_m)}</span></div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------- Process costs ----------
-function Costs({ ctx, refreshKey, send }: { ctx: Ctx; refreshKey: string; send: Send }) {
-  const { data, error } = useApi<{ sections: SectionCost[]; history: CostRow[] }>(`/api/costs?${who(ctx.role, actorId(ctx.role))}`, refreshKey);
-  const active = ctx.d.config.sections.filter((x) => x.active).map((x) => x.name);
-  const rows = (data?.sections ?? []).filter((x) => x.active || active.some((a) => a.toLowerCase() === x.section.toLowerCase()) || x.job_cards > 0);
-  return (
-    <section className="card pad stack-16">
-      <div className="stack-4"><h2 className="h2">Process costs</h2><span className="muted small">₹ per meter each section adds. Used for lot cost and margin.</span></div>
-      <div className="list">
-        {error && <span className="muted small" style={{ padding: 14 }}>{error}</span>}
-        {!data && !error && <span className="muted small" style={{ padding: 14 }}>Loading…</span>}
-        {rows.map((r) => <CostRowForm key={`${r.section}:${r.cost_per_m}`} r={r} send={send} />)}
-        {data && !rows.length && <span className="muted small" style={{ padding: 14 }}>No sections yet.</span>}
-      </div>
-    </section>
-  );
-}
-
-function CostRowForm({ r, send }: { r: SectionCost; send: Send }) {
-  const [v, setV] = useState('');
-  return (
-    <div className="list-row wrap">
-      <div className={s.rowMain}>
-        <span className="strong">{r.section}</span>
-        <span className="muted tiny">{r.cost_per_m == null ? (r.job_cards ? `${r.job_cards} job cards, no cost yet` : 'No cost yet') : `${perM(r.cost_per_m)} since ${shortDate(r.valid_from)}`}{r.upcoming ? ` · ${perM(r.upcoming.cost_per_m)} from ${shortDate(r.upcoming.valid_from)}` : ''}</span>
-      </div>
-      {r.cost_per_m == null && r.job_cards > 0 && <Pill tone="warn">Needed</Pill>}
-      <form className={s.inlineForm} onSubmit={async (e) => { e.preventDefault(); if (await send('/api/costs', 'POST', { section: r.section, cost_per_m: v }, `${r.section} cost set`)) setV(''); }}>
-        <input className="input num" inputMode="decimal" aria-label={`${r.section} cost ₹/m`} placeholder={r.cost_per_m == null ? '₹/m' : String(r.cost_per_m)} value={v} onChange={(e) => setV(e.target.value)} />
-        <button className="btn sm" type="submit" disabled={!v.trim()}>Save</button>
-      </form>
-    </div>
-  );
-}
-
-// ---------- Billing & GST + agent thresholds ----------
-function Billing({ ctx, refreshKey, send }: { ctx: Ctx; refreshKey: string; send: Send }) {
-  const { data, error } = useApi<{ billing: BillingSettings }>(`/api/settings/billing?${who(ctx.role, actorId(ctx.role))}`, refreshKey);
-  if (error) return <section className="card pad"><span className="muted small">{error}</span></section>;
-  if (!data) return <section className="card pad"><span className="muted small">Loading billing…</span></section>;
-  const k = JSON.stringify(data.billing);
-  return (
-    <>
-      <BillingForm key={`b:${k}`} b={data.billing} send={send} />
-      <Thresholds key={`t:${k}`} b={data.billing} send={send} />
-    </>
-  );
-}
-
+// ---------- Billing & GST + stock alert thresholds ----------
 function BillingForm({ b, send }: { b: BillingSettings; send: Send }) {
   const init = {
     legal_name: b.legal_name ?? '', gstin: b.gstin ?? '', address: b.address ?? '', state_code: b.state_code ?? '', phone: b.phone ?? '',
@@ -311,11 +196,11 @@ function Thresholds({ b, send }: { b: BillingSettings; send: Send }) {
   const [age, setAge] = useState(String(b.ageing_days));
   const dirty = low !== String(b.low_stock_m) || age !== String(b.ageing_days);
   return (
-    <form className="card pad stack-16" onSubmit={(e) => { e.preventDefault(); void send('/api/settings/billing', 'PUT', { low_stock_m: low, ageing_days: age }, 'Thresholds saved'); }}>
-      <div className="stack-4"><h2 className="h2">Agent thresholds</h2><span className="muted small">When the inventory agent raises an alert.</span></div>
+    <form className="card pad stack-16" onSubmit={(e) => { e.preventDefault(); void send('/api/settings/billing', 'PUT', { low_stock_m: low, ageing_days: age }, 'Stock alerts saved'); }}>
+      <div className="stack-4"><h2 className="h2">Stock alerts</h2><span className="muted small">When the app warns you about stock.</span></div>
       <label className="fld">Low stock (meters)<input className="num" inputMode="decimal" value={low} onChange={(e) => setLow(e.target.value)} /><span className="muted small">Alert when a quality’s free stock falls below this.</span></label>
       <label className="fld">Ageing lot (days)<input className="num" inputMode="numeric" value={age} onChange={(e) => setAge(e.target.value)} /><span className="muted small">Alert when a lot has not moved for this many days.</span></label>
-      <div className="row-8"><button className="btn primary" type="submit" disabled={!dirty}>Save thresholds</button></div>
+      <div className="row-8"><button className="btn primary" type="submit" disabled={!dirty}>Save stock alerts</button></div>
     </form>
   );
 }

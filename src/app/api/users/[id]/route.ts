@@ -12,7 +12,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     await requireCap(req, 'users.manage');
     const { id } = await params;
-    const u = await run(`SELECT 1 FROM users WHERE id = $1 AND role IS DISTINCT FROM 'developer'`, [id]);
+    const u = await run(`SELECT 1 FROM users WHERE id = $1 AND role IS DISTINCT FROM 'developer' AND deleted_at IS NULL`, [id]);
     if (!u.rowCount) throw new LedgerError('User not found.', 404);
     return NextResponse.json({ sessions: await listSessions(run, id) }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // POST /api/users/<id> (owner) { action, ... }
 //   approve { role: 'supervisor'|'worker', sections?: number[], worker_id? | section? } · reject
 //   deactivate · reactivate · set_role { role, ... } · set_sections { sections } · set_phone { phone }
-//   reset_password · revoke_sessions { session_id? }
+//   reset_password · revoke_sessions { session_id? } · delete (removes a supervisor / worker from the team)
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const a = await requireCap(req, 'users.manage');

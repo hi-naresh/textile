@@ -2,13 +2,14 @@
 
 import React, { useState } from 'react';
 import Icon from '../Icon';
-import { PageHead, Pill, Segmented, dayTime } from '../ui';
+import { Pill, Segmented, dayTime } from '../ui';
 import type { Ctx } from '../ctx';
 import { apiSend, useApi } from '@/lib/useApi';
 import { formatPhone } from '@/lib/auth/phone';
+import { RemoveButton } from './MyFirm';
 
-// Owner: approve / reject sign ups (and give the role), switch people off, change role,
-// reset a forgotten password, see and end the devices someone is signed in on.
+// My firm → Team (owner): sign ups waiting for approval (top of the page), and everyone who can sign in —
+// switch people off, remove them, change role, reset a forgotten password, see and end their devices.
 
 interface Account {
   id: string; name: string; phone: string | null; role: 'owner' | 'supervisor' | 'worker' | null;
@@ -29,7 +30,9 @@ function device(ua: string | null): string {
   return `${os} · ${br}`;
 }
 
-export function Team({ ctx }: { ctx: Ctx }) {
+/** part="pending": sign ups waiting for approval (nothing when there are none) — shown first on My firm → Team.
+ *  part="people": everyone who can sign in + rejected sign ups. */
+export function UsersAndSignUps({ ctx, part }: { ctx: Ctx; part: 'pending' | 'people' }) {
   const { d } = ctx;
   const [tick, setTick] = useState(0);
   const { data, error, loading } = useApi<{ users: Account[]; unlinkedWorkers: WorkerRec[] }>('/api/users', `${d.lastSync}-${tick}`);
@@ -53,20 +56,24 @@ export function Team({ ctx }: { ctx: Ctx }) {
     }
   };
 
+  if (part === 'pending') {
+    if (!data || !pending.length) return error ? <div className="alert bad" role="alert">{error}</div> : null;
+    return (
+      <section className="card pad stack-16 approvals">
+        <div className="card-head"><h2 className="h2">Waiting for approval</h2><Pill tone="warn">{pending.length}</Pill></div>
+        <span className="muted small" style={{ marginTop: -8 }}>They signed up with their phone number. Choose their role and approve, or reject.</span>
+        {issued && <StartingPassword issued={issued} onClose={() => setIssued(null)} />}
+        {pending.map((u) => <PendingRow key={u.id} ctx={ctx} u={u} workers={data.unlinkedWorkers} act={act} />)}
+      </section>
+    );
+  }
+
   return (
-    <div className="page fade settings">
-      <PageHead title="Users & sign ups" sub="Supervisors and workers sign up with their phone number. Approve them here and choose their role." />
+    <div className="stack-16">
+      <div className="stack-4"><h2 className="h2">Sign-ins</h2><span className="muted small">Who can sign in to the app, their role and devices. New sign ups appear at the top of this page.</span></div>
       {error && <div className="alert bad" role="alert">{error}</div>}
       {issued && <StartingPassword issued={issued} onClose={() => setIssued(null)} />}
       {loading && !data && <div className="loading"><span className="spinner" />Loading…</div>}
-
-      {data && (
-        <section className="card pad stack-16">
-          <div className="card-head"><h2 className="h2">Waiting for approval</h2>{pending.length > 0 && <Pill tone="warn">{pending.length}</Pill>}</div>
-          {!pending.length && <span className="muted small">No new sign ups.</span>}
-          {pending.map((u) => <PendingRow key={u.id} ctx={ctx} u={u} workers={data.unlinkedWorkers} act={act} />)}
-        </section>
-      )}
 
       {data && (
         <section className="card pad stack-16">
@@ -196,6 +203,7 @@ function PersonRow({ ctx, u, workers, act }: { ctx: Ctx; u: Account; workers: Wo
               {!isOwner && (u.active
                 ? <button className="btn sm danger" disabled={busy} onClick={() => { if (window.confirm(`Switch ${u.name} off? They are signed out everywhere and can’t sign in.`)) run('deactivate'); }}>Switch off</button>
                 : <button className="btn sm" disabled={busy} onClick={() => run('reactivate')}>Switch on</button>)}
+              {!isOwner && <RemoveButton name={u.name} what={u.role ?? 'person'} onRemove={() => run('delete')} />}
             </div>
             <Sessions u={u} busy={busy} run={run} />
           </div>

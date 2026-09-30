@@ -1,6 +1,7 @@
 // Server-side reader/writer for per-firm settings (see src/lib/config.ts for the shape).
 import { query, type Q } from './db';
-import { DEFAULT_RULES, LIMITS, type FirmConfig, type FirmRules } from './config';
+import { DEFAULT_RULES, LIMITS, type AccessOff, type FirmConfig, type FirmRules } from './config';
+import { MATRIX, setAccessOff } from './access';
 import { LedgerError } from './ledger';
 
 const run: Q = (text, params) => query(text, params as never[]);
@@ -23,17 +24,28 @@ export async function readRules(q: Q = run): Promise<FirmRules> {
   };
 }
 
+/** app_settings.access_overrides → only known capabilities, only for supervisor / worker. */
+export function cleanAccessOff(raw: unknown): AccessOff {
+  const out: AccessOff = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const role of ['supervisor', 'worker'] as const) {
+    const list = (raw as Record<string, unknown>)[role];
+    if (Array.isArray(list)) out[role] = [...new Set(list.filter((c): c is string => typeof c === 'string' && MATRIX.some((m) => m.cap === c)))];
+  }
+  return out;
+}
+
 export async function getFirmConfig(fresh = false): Promise<FirmConfig> {
   if (!fresh && cache && Date.now() - cache.at < TTL_MS) return cache.config;
   const [settings, owner, sups, secs] = await Promise.all([
     run(`SELECT * FROM app_settings WHERE id = 1`),
-    run(`SELECT id, name FROM users WHERE role = 'owner' ORDER BY id LIMIT 1`),
+    run(`SELECT id, name FROM users WHERE role = 'owner' AND deleted_at IS NULL ORDER BY id LIMIT 1`),
     run(`SELECT u.id, u.name, u.active,
                 COALESCE(array_agg(s.name ORDER BY s.sort_order, s.name) FILTER (WHERE s.id IS NOT NULL AND s.active), '{}') AS sections
          FROM users u
          LEFT JOIN supervisor_sections ss ON ss.user_id = u.id
          LEFT JOIN sections s ON s.id = ss.section_id
-         WHERE u.role = 'supervisor'
+         WHERE u.role = 'supervisor' AND u.deleted_at IS NULL
          GROUP BY u.id, u.name, u.active
          ORDER BY u.active DESC, u.name`),
     run(`SELECT id, name, active FROM sections ORDER BY sort_order, name`),
@@ -52,7 +64,10 @@ export async function getFirmConfig(fresh = false): Promise<FirmConfig> {
       manualJobCardMin: parseFloat(st.manual_job_card_min ?? DEFAULT_RULES.manualJobCardMin),
     },
     locationPresets: st.location_presets ?? ['Godown', 'Shop', 'Floor'],
+    markets: st.markets ?? ['RRTM'],
+    accessOff: cleanAccessOff(st.access_overrides),
   };
+  setAccessOff(config.accessOff ?? {});
   cache = { at: Date.now(), config };
   return config;
 }

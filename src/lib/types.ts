@@ -50,6 +50,8 @@ export interface LedgerEntry {
   is_today?: boolean; // server's today (database date)
 }
 
+export interface TodayStock { in_m: number; in_count: number; out_m: number; out_count: number }
+
 export interface FlowDay {
   day: string; // YYYY-MM-DD
   in_m: number;

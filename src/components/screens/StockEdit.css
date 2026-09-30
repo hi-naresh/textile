@@ -1,0 +1,75 @@
+/* Stock ledger edit mode (StockEdit.tsx). Plain CSS on the app's tokens (globals.css). */
+.se-note { margin: -8px 0 0; line-height: 1.45; }
+
+/* Cells */
+.se-cell { display: inline-flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; vertical-align: middle; }
+.se-in {
+  height: 30px; width: 100%; min-width: 72px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--surface2); color: var(--text); font: 400 13px var(--font-body);
+}
+.se-in.num { font-family: var(--font-mono); }
+.se-in.r { text-align: right; }
+select.se-in { padding: 0 4px; }
+.se-in:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accentSoft); }
+.se-in.se-changed { background: var(--warnSoft); border-color: var(--warn); }
+.se-in.se-bad { background: var(--badSoft); border-color: var(--bad); }
+.se-err { font-size: 11px; line-height: 1.3; color: var(--bad); font-weight: 500; white-space: normal; text-align: left; max-width: 220px; }
+.se-stack { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.se-tbl td { vertical-align: top; }
+.se-tbl td.se-ro { color: var(--muted); }
+.se-tbl td.se-ro .pill { opacity: .75; }
+.se-lot-hint { line-height: 1.2; }
+.se-tbl tr.se-row-changed td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.ledger-tbl.se-tbl td[data-label="SR"] .se-in { width: 88px; }
+.ledger-tbl.se-tbl td[data-label="Taka"] .se-in { width: 72px; }
+.ledger-tbl.se-tbl td[data-label="Lot"] .se-in { min-width: 140px; }
+
+/* Sticky "N changes · Save · Discard" */
+.se-bar {
+  position: sticky; bottom: 16px; z-index: 25; display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px 10px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow);
+  margin-right: 60px; /* clear of the floating chat button */
+}
+.se-bar-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.se-bar-hint { overflow: hidden; text-overflow: ellipsis; }
+
+/* "Edited" marker + history popover */
+.se-mark-wrap { position: relative; display: inline-flex; margin-left: 6px; vertical-align: middle; }
+.se-mark {
+  display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface2); color: var(--muted); font: 500 11px var(--font-body); cursor: pointer;
+}
+.se-mark:hover { color: var(--text); }
+.se-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: min(300px, 80vw); display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow);
+  text-align: left; font-family: var(--font-body); font-weight: 400; white-space: normal;
+}
+.se-pop-row { display: flex; flex-direction: column; gap: 1px; overflow-wrap: anywhere; }
+.se-pop .btn { align-self: flex-end; }
+
+/* Save or discard? */
+.se-overlay { position: fixed; inset: 0; z-index: 70; background: var(--overlay); display: flex; align-items: center; justify-content: center; padding: 16px; animation: fadeIn .15s ease; }
+.se-dialog { width: min(420px, 100%); }
+.se-dialog h2 { margin: 0; font-size: 18px; }
+.se-dialog p { margin: 0; }
+.se-dlg-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* Phone: the table is a stack of cards (.rtbl); inputs take the right-hand side of each line */
+@media (max-width: 760px) {
+  .se-note { margin-top: -12px; }
+  .rtbl.se-tbl td { align-items: flex-start; }
+  .rtbl.se-tbl td::before { padding-top: 6px; }
+  .rtbl.se-tbl td > .se-cell, .rtbl.se-tbl td > .se-stack { width: 62%; max-width: 62%; flex: 0 0 62%; }
+  .rtbl.se-tbl .se-stack .se-cell { width: 100%; }
+  .ledger-tbl.se-tbl td[data-label] .se-in { width: 100%; min-width: 0; height: 36px; font-size: 15px; }
+  .se-tbl .se-in { min-width: 0; height: 36px; font-size: 15px; }
+  .se-stack { text-align: right; }
+  .se-err { max-width: none; text-align: right; }
+  .se-tbl tr.se-row-changed td:first-child { box-shadow: none; }
+  .se-tbl tr.se-row-changed { box-shadow: inset 3px 0 0 var(--warn); }
+  .se-bar { margin-right: 0; bottom: calc(84px + max(8px, env(safe-area-inset-bottom) - 18px)); }
+  .se-bar-hint { display: none; }
+  .se-mark-wrap { margin-left: 8px; }
+  .se-pop { left: auto; right: 0; }
+}

@@ -35,6 +35,7 @@ const PATHS: Record<string, React.ReactNode> = {
   compact: (<path d="M4 7h16M4 12h16M4 17h16M9 4v16" />),
   check: (<path d="M5 12l5 5 9-10" />),
   x: (<path d="M6 6l12 12M18 6L6 18" />),
+  trash: (<><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" /><path d="M9 7V4h6v3" /></>),
   arrow: (<path d="M5 12h14M13 6l6 6-6 6" />),
   filter: (<path d="M3 5h18l-7 8v6l-4 2v-8z" />),
   more: (<><circle cx="5" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="19" cy="12" r="1.2" /></>),

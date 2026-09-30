@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, LedgerEntry, Lot, Toast, ToastTone, Worker } from './types';
+import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, TodayStock, LedgerEntry, Lot, Toast, ToastTone, Worker } from './types';
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
 import { DEFAULT_CONFIG, type FirmConfig } from './config';
 
@@ -39,6 +39,8 @@ export interface StockEntry {
   party: string;
   // both
   source_doc: string;
+  sr_no: string; // paper-register serial (suggested: last + 1)
+  pieces: string; // taka, optional
 }
 
 /**
@@ -77,6 +79,7 @@ export function useTextileData() {
   const [lots, setLots] = useState<Lot[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [flow, setFlow] = useState<FlowDay[]>([]);
+  const [today, setToday] = useState<TodayStock | null>(null);
   const [config, setConfigState] = useState<FirmConfig>(DEFAULT_CONFIG);
   const [status, setStatus] = useState<Features | null>(null);
 
@@ -121,7 +124,7 @@ export function useTextileData() {
     try {
       const [settings, stock, jc, wk, cap] = await Promise.all([
         getJson<{ config: FirmConfig }>('/api/settings'),
-        getJson<{ lots: Lot[]; ledger: LedgerEntry[]; flow?: FlowDay[]; names?: KnownNames }>('/api/stock'),
+        getJson<{ lots: Lot[]; ledger: LedgerEntry[]; flow?: FlowDay[]; today?: TodayStock; names?: KnownNames }>('/api/stock'),
         getJson<{ jobCards: JobCard[]; allotments: Allotment[] }>('/api/job-cards'),
         getJson<{ workers: Worker[]; efficiency: EfficiencyRecord[]; cctv: CctvActivity[] }>('/api/workers'),
         getJson<{ events: CaptureEvent[] }>('/api/capture'),
@@ -131,6 +134,7 @@ export function useTextileData() {
       setLots(stock.lots || []);
       setLedger(stock.ledger || []);
       setFlow(stock.flow || []);
+      setToday(stock.today ?? null);
       setNames(stock.names || { mills: [], weavers: [], parties: [] });
       setJobCards(jc.jobCards || []);
       setAllotments(jc.allotments || []);
@@ -171,10 +175,12 @@ export function useTextileData() {
   }, [refresh, showToast]);
 
   const addStock = (role: Role, form: StockEntry) => {
+    const both = { sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role) };
     const body = form.direction === 'IN'
-      ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, source_doc: form.source_doc, location: form.location, quality: form.quality, design: form.design, moved_by: actorId(role) }
-      : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, source_doc: form.source_doc, moved_by: actorId(role) };
-    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${form.lot_id} received into ${form.location || 'Godown'}` : `${form.meters} m of ${form.lot_id} dispatched to ${form.party}`);
+      ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, ...both }
+      : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, ...both };
+    const sr = form.sr_no.trim() ? `SR ${form.sr_no.trim()} · ` : '';
+    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'Godown'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`);
   };
 
   const moveLot = (role: Role, lotId: string, location: string, note: string) =>
@@ -232,23 +238,10 @@ export function useTextileData() {
   };
 
   // ---------- Excel ----------
-  const importStock = async (role: Role, file: File): Promise<{ ok: boolean; rows?: { row: number; error: string }[] }> => {
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('role', role);
-      const by = actorId(role);
-      if (by) fd.append('moved_by', by);
-      const res = await fetch('/api/stock/import', { method: 'POST', body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { showToast(data?.error || 'Import failed.', 'danger'); return { ok: false, rows: data?.rows }; }
-      showToast(`Imported ${data.imported.in} incoming + ${data.imported.out} outgoing`, 'success');
-      await refresh();
-      return { ok: true };
-    } catch {
-      showToast('Network error during import.', 'danger');
-      return { ok: false };
-    }
+  // The import itself runs from the StockImport screen (check → chunked commit, src/lib/stockImportClient.ts).
+  const afterImport = async (saved: number) => {
+    showToast(`${saved.toLocaleString('en-IN')} row${saved === 1 ? '' : 's'} imported`, 'success');
+    await refresh();
   };
 
   // ---------- Settings (owner) ----------
@@ -274,6 +267,9 @@ export function useTextileData() {
       updateSection: (id: number, body: Record<string, unknown>) => save('/api/settings/sections', 'PATCH', { id, ...body }, 'Section saved'),
       addWorker: (name: string, section: string) => save('/api/workers', 'POST', { name, section }, `${name} added`),
       updateWorker: (id: string, body: Record<string, unknown>) => save('/api/workers', 'PATCH', { id, ...body }, 'Worker saved'),
+      // Remove from the team (their history keeps the name). A worker's sign-in goes with the worker record.
+      removeWorker: (id: string, name: string) => save(`/api/workers?id=${encodeURIComponent(id)}`, 'DELETE', {}, `${name} removed from the team`),
+      removeSupervisor: (id: string, name: string) => save(`/api/users/${encodeURIComponent(id)}`, 'POST', { action: 'delete' }, `${name} removed from the team`),
       knowledge: async (): Promise<KnowledgeDoc[]> => (await getJson<{ docs: KnowledgeDoc[] }>('/api/knowledge')).docs,
       addKnowledge: (title: string, body: string) => save('/api/knowledge', 'POST', { title, body }, 'Note added'),
       updateKnowledge: (id: number, body: Record<string, unknown>) => save('/api/knowledge', 'PATCH', { id, ...body }, 'Note saved'),
@@ -307,9 +303,9 @@ export function useTextileData() {
 
   return {
     config, settingsApi, status, checkStatus,
-    lots, ledger, flow, names, jobCards, allotments, workers, efficiency, cctv, captures,
+    lots, ledger, flow, today, names, jobCards, allotments, workers, efficiency, cctv, captures,
     loading, dbOk, lastSync, toast, showToast, refresh,
-    value, importStock,
+    value, afterImport,
     addStock, moveLot, lotHistory, createJobCard, closeJobCard, confirmCapture, rejectCapture, uploadCapture,
     messages, ask, clearChat,
   };

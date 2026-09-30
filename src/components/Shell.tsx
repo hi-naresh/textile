@@ -4,8 +4,9 @@ import React, { useState, useSyncExternalStore } from 'react';
 import Icon, { Logo } from './Icon';
 import { Sheet, initials } from './ui';
 import type { Ctx } from './ctx';
-import { MOBILE_PRIMARY, NAV, can, captureInScope, sectionName, type Role, activeSupervisor, owner, firm, withFirm } from '@/lib/access';
+import { MOBILE_PRIMARY, navFor, can, sectionName, type Role, activeSupervisor, owner, firm, withFirm } from '@/lib/access';
 import type { Worker } from '@/lib/types';
+import { AttentionPanel, useAttentionCount } from './AgentInbox';
 
 export function shiftName(d = new Date()) {
   const h = d.getHours();
@@ -38,15 +39,20 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
   const [more, setMore] = useState(false);
   const [search, setSearch] = useState('');
   const who = whoAmI(role, me, ctx.account.name);
-  const nav = NAV[role];
-  const pending = d.captures.filter((c) => c.status === 'pending' && captureInScope(role, c.type)).length;
+  const nav = navFor(role);
   const groups = Array.from(new Set(nav.map((n) => n.group)));
-  const primary = MOBILE_PRIMARY[role];
+  const primary = MOBILE_PRIMARY[role].filter((t) => nav.some((n) => n.tab === t));
   const moreItems = nav.filter((n) => !primary.includes(n.tab));
   const minute = useMinute();
   const now = minute == null ? null : new Date(minute * 60_000);
   const today = now ? now.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }) : null;
   const chatOk = can(role, 'chat.use');
+  const bellOk = role !== 'worker';
+  const count = useAttentionCount(ctx);
+  const attention = count.total;
+  const bellLabel = attention ? `Needs your attention: ${count.alerts} alert${count.alerts === 1 ? '' : 's'}, ${count.reads} photo read${count.reads === 1 ? '' : 's'} to review` : 'Nothing needs your attention';
+  // Alerts first; if only photo reads are waiting, open straight on the review queue.
+  const openBell = () => ctx.openAttention(count.alerts === 0 && count.reads > 0 ? 'review' : 'alerts');
 
   return (
     <div className="shell">
@@ -68,7 +74,6 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
                 <button key={n.tab} className={`nav ${tab === n.tab ? 'on' : ''}`} aria-current={tab === n.tab ? 'page' : undefined} onClick={() => go(n.tab)}>
                   <Icon name={n.icon} />
                   <span className="grow">{withFirm(n.label)}</span>
-                  {n.tab === 'review' && pending > 0 && <span className="pill warn num">{pending}</span>}
                 </button>
               ))}
             </div>
@@ -88,12 +93,7 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
           ) : <div />}
           <div className="grow" />
           {now && <span className="pill neutral tall hide-md"><Icon name="clock" size={14} strokeWidth={2} />{today} · {shiftName(now)}</span>}
-          {role !== 'worker' && (
-            <button className="ib bell" aria-label={`${pending} reads waiting for review`} onClick={() => go('review')}>
-              <Icon name="bell" />
-              {pending > 0 && <span className="bell-dot" />}
-            </button>
-          )}
+          {bellOk && <BellButton count={attention} label={bellLabel} open={ctx.attention != null} onClick={openBell} />}
         </header>
 
         {/* ---------- Mobile header ---------- */}
@@ -101,6 +101,9 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
           <div className="m-row">
             <Logo size={30} />
             <div className="stack-0 grow min0"><span className="brand-name">{firm().name}</span><span className="muted tiny ellipsis">{who.name} · {who.title}</span></div>
+            {bellOk && (
+              <BellButton count={attention} label={bellLabel} open={ctx.attention != null} onClick={openBell} phone />
+            )}
             {chatOk && (
               <button className="ib m-chat" aria-label="Open chat" onClick={openChat}><Icon name="chat" size={20} strokeWidth={2} /></button>
             )}
@@ -122,7 +125,7 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
             const n = nav.find((x) => x.tab === t)!;
             return (
               <button key={t} className={`tab ${tab === t ? 'on' : ''}`} aria-current={tab === t ? 'page' : undefined} onClick={() => go(t)}>
-                <span className="tab-dot"><Icon name={n.icon} size={20} />{t === 'review' && pending > 0 && <span className="tab-badge num">{pending}</span>}</span>
+                <span className="tab-dot"><Icon name={n.icon} size={20} /></span>
                 {n.short}
               </button>
             );
@@ -135,6 +138,8 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
         </nav>
       </div>
 
+      {bellOk && <AttentionPanel ctx={ctx} />}
+
       <Sheet open={more} title="More" onClose={() => setMore(false)}>
         <div className="stack-4">
           {moreItems.map((n) => (
@@ -145,6 +150,16 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
         </div>
       </Sheet>
     </div>
+  );
+}
+
+/** Bell with a count badge; opens the "Needs your attention" panel (Alerts · Review queue). */
+function BellButton({ count, label, open, onClick, phone = false }: { count: number; label: string; open: boolean; onClick: () => void; phone?: boolean }) {
+  return (
+    <button className={`ib bell ${phone ? 'm-chat' : ''}`} aria-label={label} aria-haspopup="dialog" aria-expanded={open} onClick={onClick}>
+      <Icon name="bell" size={phone ? 20 : undefined} strokeWidth={phone ? 2 : undefined} />
+      {count > 0 && <span className="bell-count num">{count > 99 ? '99+' : count}</span>}
+    </button>
   );
 }
 

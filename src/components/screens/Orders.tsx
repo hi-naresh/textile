@@ -2,7 +2,7 @@
 
 // Orders & inquiries (Phase 2 — Sales). Inquiry Handling, Order Management and Fabric Allocation.
 // Owner: everything. Supervisor: log inquiries + reply drafts (no ₹), view orders in meters only.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, PageHead, Pill, Segmented, Sheet, Track, dayTime, fmt, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
@@ -36,7 +36,7 @@ const SOURCES: { value: Inquiry['source']; label: string }[] = [
   { value: 'whatsapp', label: 'WhatsApp' }, { value: 'phone', label: 'Phone' }, { value: 'visit', label: 'Visit' }, { value: 'other', label: 'Other' },
 ];
 
-const todayLocal = () => new Date().toLocaleDateString('en-CA');
+const todayLocal = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // firm's day (India), same as the server
 const shortDate = (iso: string | null) => {
   if (!iso) return '—';
   const d = new Date(`${iso}T00:00:00`);
@@ -70,9 +70,15 @@ const qualitiesOf = (ctx: Ctx) => Array.from(new Set(ctx.d.lots.map((l) => l.qua
 export function Orders({ ctx }: { ctx: Ctx }) {
   // Deep link from an agent alert: #order=41 opens that order, #inquiry=7 the inquiries list.
   const link = { order: useTakeHash('order'), inquiry: useTakeHash('inquiry') };
-  const [view, setView] = useState<'inquiries' | 'orders'>(link.order ? 'orders' : 'inquiries');
+  const canInq = can(ctx.role, 'inquiry.handle');
+  const canOrders = can(ctx.role, 'orders.view');
+  const [viewState, setView] = useState<'inquiries' | 'orders'>(link.order ? 'orders' : 'inquiries');
+  // A part switched off for this role (developer console) is hidden, not shown with an error.
+  const view: 'inquiries' | 'orders' = !canInq ? 'orders' : !canOrders ? 'inquiries' : viewState;
   const [openOrder, setOpenOrder] = useState<number | null>(link.order ? Number(link.order) || null : null);
   const [newOrder, setNewOrder] = useState(false);
+  const [orderStatus, setOrderStatus] = useState<OrderFilter>('open');
+  const [created, setCreated] = useState<OrderRow[]>([]); // shown at the top straight away, before the list reloads
   const manage = can(ctx.role, 'orders.manage');
   const parties = useParties(ctx);
 
@@ -87,13 +93,18 @@ export function Orders({ ctx }: { ctx: Ctx }) {
         {manage && view === 'orders' && <button className="btn primary" onClick={() => setNewOrder(true)}><Icon name="plus" size={16} strokeWidth={2} />New order</button>}
       </PageHead>
       <div className="toolbar">
-        <Segmented label="Show" className="fit" value={view} onChange={setView} options={[{ value: 'inquiries', label: 'Inquiries' }, { value: 'orders', label: 'Orders' }]} />
+        {canInq && canOrders && <Segmented label="Show" className="fit" value={view} onChange={setView} options={[{ value: 'inquiries', label: 'Inquiries' }, { value: 'orders', label: 'Orders' }]} />}
       </div>
       {view === 'inquiries'
         ? <Inquiries ctx={ctx} parties={parties} onOrder={showOrder} />
-        : <OrdersList ctx={ctx} onOpen={setOpenOrder} />}
+        : <OrdersList ctx={ctx} status={orderStatus} setStatus={setOrderStatus} created={created} onOpen={setOpenOrder} />}
       {openOrder != null && <OrderSheet ctx={ctx} id={openOrder} onClose={() => setOpenOrder(null)} />}
-      {newOrder && <NewOrderSheet ctx={ctx} parties={parties} onClose={() => setNewOrder(false)} onCreated={(id) => { setNewOrder(false); setOpenOrder(id); }} />}
+      {newOrder && <NewOrderSheet ctx={ctx} parties={parties} onClose={() => setNewOrder(false)} onCreated={(o) => {
+        setNewOrder(false);
+        setCreated((c) => [o, ...c.filter((x) => x.id !== o.id)]);
+        if (orderStatus !== 'open' && orderStatus !== 'all') setOrderStatus('open');
+        setOpenOrder(o.id);
+      }} />}
     </div>
   );
 }
@@ -110,6 +121,13 @@ function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<ty
   const [current, setCurrent] = useState<InquiryView | null>(null);
   const [filter, setFilter] = useState<'all' | Inquiry['status']>('all');
   const list = useApi<{ inquiries: InquiryRow[] }>(`/api/inquiries?status=${filter}&${who(role, actor)}`, d.lastSync);
+  // A just-read inquiry goes to the top straight away (the list reloads in the background). Newest first.
+  const [fresh, setFresh] = useState<InquiryRow[]>([]);
+  const rows = useMemo(() => {
+    const server = list.data?.inquiries ?? [];
+    const extra = fresh.filter((f) => (filter === 'all' || f.status === filter) && !server.some((x) => x.id === f.id));
+    return [...extra, ...server].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
+  }, [list.data, fresh, filter]);
 
   const read = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,6 +136,8 @@ function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<ty
     try {
       const res = await apiSend<InquiryView>('/api/inquiries', 'POST', { raw_text: text, source, party_name: party || undefined, role, actor });
       setCurrent(res);
+      setFresh((f) => [res.inquiry, ...f.filter((x) => x.id !== res.inquiry.id)]);
+      if (filter !== 'all' && filter !== res.inquiry.status) setFilter('all');
       setText('');
       setParty('');
       list.reload();
@@ -162,7 +182,7 @@ function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<ty
         <button className="btn primary big" type="submit" disabled={busy}>{busy ? 'Reading…' : 'Read inquiry'}</button>
       </form>
 
-      {current && <InquiryCard key={`${current.inquiry.id}-${current.inquiry.updated_at}`} ctx={ctx} view={current} parties={parties} onChange={(v) => { setCurrent(v); list.reload(); }} onOrder={onOrder} onClose={() => setCurrent(null)} />}
+      {current && <InquiryCard key={`${current.inquiry.id}-${current.inquiry.updated_at}`} ctx={ctx} view={current} parties={parties} onChange={(v) => { setCurrent(v); setFresh((f) => f.map((x) => (x.id === v.inquiry.id ? v.inquiry : x))); list.reload(); }} onOrder={onOrder} onClose={() => setCurrent(null)} />}
 
       <section className="card flush">
         <div className="card-head pad-x">
@@ -177,7 +197,7 @@ function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<ty
         </div>
         {list.error && <div className="alert bad" style={{ margin: '0 16px 16px' }}>{list.error}</div>}
         <div>
-          {(list.data?.inquiries ?? []).map((i) => (
+          {rows.map((i) => (
             <button key={i.id} type="button" className={`list-row ${s.inqRow}`} onClick={() => open(i.id)}>
               <div className="stack-2 grow" style={{ minWidth: 0 }}>
                 <span className="strong">{i.party_name || 'Party not known'}{i.order_id ? <span className="muted small"> · order #{i.order_id}</span> : null}</span>
@@ -187,7 +207,7 @@ function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<ty
               <Pill tone={INQ_STATUS[i.status].tone}>{INQ_STATUS[i.status].label}</Pill>
             </button>
           ))}
-          {!list.loading && !list.error && !(list.data?.inquiries ?? []).length && <div className="muted center small" style={{ padding: 20 }}>No inquiries yet</div>}
+          {!list.loading && !list.error && !rows.length && <div className="muted center small" style={{ padding: 20 }}>No inquiries yet</div>}
         </div>
       </section>
     </div>
@@ -294,7 +314,7 @@ function InquiryCard({ ctx, view, parties, onChange, onOrder, onClose }: {
         <div className="two-col">
           <label className="fld">Design (optional)<input value={f.design} onChange={set('design')} autoComplete="off" /></label>
           {owner
-            ? <label className="fld">Rate to quote ₹/m<input className="num" inputMode="decimal" value={f.quoted_rate} onChange={set('quoted_rate')} placeholder={view.rate != null ? String(view.rate) : 'No rate set'} /></label>
+            ? <label className="fld">Rate for this party ₹/m (optional)<input className="num" inputMode="decimal" value={f.quoted_rate} onChange={set('quoted_rate')} placeholder="Put in the reply only if typed" /></label>
             : <div />}
         </div>
         {Object.keys(found).length > 0 && (
@@ -309,7 +329,6 @@ function InquiryCard({ ctx, view, parties, onChange, onOrder, onClose }: {
           {i.quality && i.meters != null && (view.stock.free >= i.meters
             ? <Pill tone="good">Enough{view.promise_date ? ` · can send by ${shortDate(view.promise_date)}` : ''}</Pill>
             : view.stock.free > 0 ? <Pill tone="warn">{m(short)} short</Pill> : <Pill tone="bad">Not in stock</Pill>)}
-          {owner && i.quality && <span className="muted small">Rate {view.rate != null ? rs(view.rate) : 'not set'}</span>}
         </div>
         {view.stock.lots.length > 0 && (
           <div className="d">
@@ -376,12 +395,18 @@ function PromiseCell({ o }: { o: Order }) {
   return <span>{shortDate(o.promise_date)}</span>;
 }
 
-function OrdersList({ ctx, onOpen }: { ctx: Ctx; onOpen: (id: number) => void }) {
+type OrderFilter = 'open' | 'dispatched' | 'cancelled' | 'all';
+
+function OrdersList({ ctx, status, setStatus, created, onOpen }: { ctx: Ctx; status: OrderFilter; setStatus: (s: OrderFilter) => void; created: OrderRow[]; onOpen: (id: number) => void }) {
   const { role, d } = ctx;
   const owner = can(role, 'orders.manage');
-  const [status, setStatus] = useState<'open' | 'dispatched' | 'cancelled' | 'all'>('open');
-  const { data, error, loading } = useApi<{ orders: OrderRow[] }>(`/api/orders?status=${status}&${who(role, actorId(role))}`, d.lastSync);
-  const rows = data?.orders ?? [];
+  const { data, error, loading } = useApi<{ orders: OrderRow[] }>(`/api/orders?status=${status}&${who(role, actorId(role))}`, `${d.lastSync?.getTime() ?? 0}:${created.length}`);
+  // Newest first; a just-created order shows at the top even before the list reloads.
+  const rows = useMemo(() => {
+    const server = data?.orders ?? [];
+    const extra = created.filter((o) => (status === 'all' || (status === 'open' ? isActive(o) : o.status === status)) && !server.some((x) => x.id === o.id));
+    return [...extra, ...server].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
+  }, [data, created, status]);
   const pending = rows.filter(isActive).reduce((acc, o) => acc + Math.max(0, o.meters - o.dispatched_m), 0);
   const late = rows.filter(isLate).length;
 
@@ -418,32 +443,13 @@ function OrdersList({ ctx, onOpen }: { ctx: Ctx; onOpen: (id: number) => void })
   );
 }
 
-function NewOrderSheet({ ctx, parties, onClose, onCreated }: { ctx: Ctx; parties: ReturnType<typeof useParties>; onClose: () => void; onCreated: (id: number) => void }) {
+function NewOrderSheet({ ctx, parties, onClose, onCreated }: { ctx: Ctx; parties: ReturnType<typeof useParties>; onClose: () => void; onCreated: (o: OrderRow) => void }) {
   const { role, d } = ctx;
   const actor = actorId(role);
   const [f, setF] = useState({ party: '', quality: '', design: '', meters: '', rate_per_m: '', promise_date: '', notes: '' });
-  const [rateTouched, setRateTouched] = useState(false);
-  const [suggested, setSuggested] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const qualities = useMemo(() => qualitiesOf(ctx), [ctx]);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF((x) => ({ ...x, [k]: e.target.value }));
-
-  // Prefill the rate from Settings → Rates for this quality (+ party).
-  useEffect(() => {
-    const q = f.quality.trim();
-    if (!q) return;
-    const t = setTimeout(() => {
-      fetch(`/api/orders/rate?quality=${encodeURIComponent(q)}${f.party.trim() ? `&party=${encodeURIComponent(f.party.trim())}` : ''}&${who(role, actor)}`, { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j) => {
-          const rate = j?.rate ?? null;
-          setSuggested(rate);
-          if (!rateTouched) setF((x) => ({ ...x, rate_per_m: rate == null ? '' : String(rate) }));
-        })
-        .catch(() => undefined);
-    }, 350);
-    return () => clearTimeout(t);
-  }, [f.quality, f.party, rateTouched, role, actor]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -452,7 +458,7 @@ function NewOrderSheet({ ctx, parties, onClose, onCreated }: { ctx: Ctx; parties
     try {
       const res = await apiSend<{ order: OrderRow; warnings: string[] }>('/api/orders', 'POST', { ...f, rate_per_m: f.rate_per_m || null, promise_date: f.promise_date || null, role, actor });
       d.showToast(`Order #${res.order.id} created.${res.warnings.length ? ` ${res.warnings.join(' ')}` : ''}`, res.warnings.length ? 'warning' : 'success');
-      onCreated(res.order.id);
+      onCreated(res.order);
     } catch (err) {
       d.showToast(err instanceof Error ? err.message : 'Could not create the order.', 'danger');
     } finally {
@@ -477,10 +483,9 @@ function NewOrderSheet({ ctx, parties, onClose, onCreated }: { ctx: Ctx; parties
         <div className="two-col">
           <label className="fld">Meters<input className="num" inputMode="decimal" value={f.meters} onChange={set('meters')} placeholder="0" /></label>
           <label className="fld">Rate ₹/m
-            <input className="num" inputMode="decimal" value={f.rate_per_m} onChange={(e) => { setRateTouched(true); set('rate_per_m')(e); }} placeholder="No rate set" />
+            <input className="num" inputMode="decimal" value={f.rate_per_m} onChange={set('rate_per_m')} placeholder="For this party" />
           </label>
         </div>
-        {suggested != null && rateTouched && Number(f.rate_per_m) !== suggested && <span className="muted small hint">Usual rate: ₹{fmt(suggested, 2)}/m</span>}
         <label className="fld">Promise date<input type="date" min={todayLocal()} value={f.promise_date} onChange={set('promise_date')} /></label>
         <label className="fld">Notes<textarea className="input" rows={2} value={f.notes} onChange={set('notes')} /></label>
         <button className="btn primary big" type="submit" disabled={busy}>Create order</button>

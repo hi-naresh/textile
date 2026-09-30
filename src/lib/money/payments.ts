@@ -38,7 +38,7 @@ export async function recordPayment(q: Q, b: Record<string, unknown>, actor: str
   const party = await findParty(q, b.party, b.party_id);
   if (!party) {
     if (b.party == null && b.party_id == null) throw new LedgerError('Choose the party who paid.');
-    throw new LedgerError(`Party "${String(b.party ?? b.party_id)}" not found. Add it in Settings → Parties first.`, 404);
+    throw new LedgerError(`Party "${String(b.party ?? b.party_id)}" not found. Add it in My firm → Parties first.`, 404);
   }
   // One payment at a time per party, so FIFO settlement never races.
   await q(`SELECT id FROM parties WHERE id = $1 FOR UPDATE`, [party.id]);

@@ -12,13 +12,14 @@ import { actorId } from '@/lib/useTextileData';
 import { apiSend, useApi, who } from '@/lib/useApi';
 import type { Allocation, Dispatch as DispatchRow, Invoice, Order, Party } from '@/lib/domain';
 import s from './Dispatch.module.css';
+import { LotPicker } from '../LotPicker';
 
 type InvoiceRow = Invoice & { days_overdue: number; exported_at: string | null };
 type View = 'dispatches' | 'invoices';
 
 const key = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, '');
 const rupees = (n: number) => `₹ ${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const todayLocal = () => new Date().toLocaleDateString('en-CA');
+const todayLocal = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // firm's day (India), same as the server
 const monthStart = () => `${todayLocal().slice(0, 8)}01`;
 const shortDate = (iso: string | null) => {
   if (!iso) return '—';
@@ -68,12 +69,14 @@ function DispatchList({ ctx, tick, onChanged }: { ctx: Ctx; tick: number; onChan
   const rows = data?.dispatches ?? [];
   const q = who(ctx.role, actor);
 
-  const createInvoice = async (d: DispatchRow) => {
+  const [invFor, setInvFor] = useState<DispatchRow | null>(null);
+  const createInvoice = async (d: DispatchRow, rates: Record<string, number>) => {
     setBusy(d.id);
     try {
-      const r = await apiSend<{ invoice: Invoice; note: string | null }>('/api/invoices', 'POST', { dispatch_id: d.id, role: ctx.role, actor });
+      const r = await apiSend<{ invoice: Invoice; note: string | null }>('/api/invoices', 'POST', { dispatch_id: d.id, rates, role: ctx.role, actor });
       ctx.d.showToast(`Invoice ${r.invoice.invoice_no} · ${rupees(r.invoice.total)}`);
       if (r.note) ctx.d.showToast(r.note, 'warning');
+      setInvFor(null);
       onChanged();
     } catch (e) {
       ctx.d.showToast(e instanceof Error ? e.message : 'Could not create the invoice.', 'danger');
@@ -115,7 +118,7 @@ function DispatchList({ ctx, tick, onChanged }: { ctx: Ctx; tick: number; onChan
                   </td>
                   {owner && (
                     <td data-label="Invoice" className="num">
-                      {d.invoice_no ?? <button className="btn sm" disabled={busy === d.id} onClick={() => createInvoice(d)}>{busy === d.id ? 'Creating…' : 'Create'}</button>}
+                      {d.invoice_no ?? <button className="btn sm" disabled={busy === d.id} onClick={() => setInvFor(d)}>{busy === d.id ? 'Creating…' : 'Create'}</button>}
                     </td>
                   )}
                   <td data-label="Documents" className="r">
@@ -131,7 +134,40 @@ function DispatchList({ ctx, tick, onChanged }: { ctx: Ctx; tick: number; onChan
           </table>
         </section>
       )}
+      <Sheet open={invFor != null} title={invFor ? `Invoice for ${invFor.party_name ?? 'dispatch'}` : ''} onClose={() => setInvFor(null)}>
+        {invFor && <InvoiceRates ctx={ctx} dispatch={invFor} busy={busy === invFor.id} onCreate={(rates) => createInvoice(invFor, rates)} />}
+      </Sheet>
     </>
+  );
+}
+
+/** Rates for a new invoice: typed per quality; blank uses the order's rate. There is no rate list. */
+function InvoiceRates({ ctx, dispatch, busy, onCreate }: { ctx: Ctx; dispatch: DispatchRow; busy: boolean; onCreate: (rates: Record<string, number>) => void }) {
+  const q = who(ctx.role, actorId(ctx.role));
+  const orderApi = useApi<{ order: Order }>(dispatch.order_id ? `/api/orders/${dispatch.order_id}?${q}` : null);
+  const order = orderApi.data?.order ?? null;
+  const qualities = [...new Set(dispatch.lots.map((id) => ctx.d.lots.find((l) => l.lot_id === id)?.quality).filter((x): x is string => !!x))];
+  const [rates, setRates] = useState<Record<string, string>>({});
+  const orderRate = (ql: string) => (order && key(order.quality) === key(ql) && order.rate_per_m ? order.rate_per_m : null);
+  const missing = qualities.filter((ql) => !(parseFloat(rates[ql] ?? '') > 0) && orderRate(ql) == null);
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onCreate(Object.fromEntries(Object.entries(rates).filter(([, x]) => parseFloat(x) > 0).map(([k, x]) => [k, parseFloat(x)])));
+  };
+  return (
+    <form className="stack-16" onSubmit={submit}>
+      <span className="muted small">{fmt(dispatch.meters, 1)} m · challan {dispatch.challan_no ?? '—'}{dispatch.order_id ? ` · order #${dispatch.order_id}` : ''}</span>
+      <span className="muted small hint">Type the ₹/m rate for this party. Leave blank to use the order’s rate.</span>
+      <div className={s.rates}>
+        {qualities.map((ql) => (
+          <label key={ql} className="fld">{ql} ₹/m
+            <input className="num" inputMode="decimal" value={rates[ql] ?? ''} placeholder={orderRate(ql) != null ? String(orderRate(ql)) : 'Rate needed'} onChange={(e) => setRates({ ...rates, [ql]: e.target.value })} />
+          </label>
+        ))}
+        {!qualities.length && <span className="muted small">Lots of this dispatch are not loaded. Refresh and try again.</span>}
+      </div>
+      <button className="btn primary big" type="submit" disabled={busy || !qualities.length || missing.length > 0}>{busy ? 'Creating…' : 'Create invoice'}</button>
+    </form>
   );
 }
 
@@ -262,11 +298,7 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
             const over = lot != null && parseFloat(l.meters) > lot.balance;
             return (
               <div key={i} className={s.line}>
-                <select aria-label={`Lot ${i + 1}`} value={l.lot_id} onChange={(e) => setLine(i, { lot_id: e.target.value })}>
-                  <option value="">Pick a lot</option>
-                  {l.lot_id && !stock.some((x) => x.lot_id === l.lot_id) && <option value={l.lot_id}>{l.lot_id}</option>}
-                  {stock.map((x) => <option key={x.lot_id} value={x.lot_id}>{x.lot_id} · {x.quality} · {fmt(x.balance, 1)} m</option>)}
-                </select>
+                <div className="stack-2 min0"><LotPicker ariaLabel={`Lot ${i + 1}`} lots={stock} value={l.lot_id} onChange={(v) => setLine(i, { lot_id: v })} placeholder="Lot no." /></div>
                 <input aria-label={`Meters ${i + 1}`} className={over ? s.over : ''} inputMode="decimal" value={l.meters} placeholder="Meters" onChange={(e) => setLine(i, { meters: e.target.value })} />
                 <button type="button" className="btn icon-only" aria-label="Remove line" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ ...EMPTY_LINE }]))}><Icon name="x" size={16} /></button>
                 {lot && (
@@ -301,11 +333,11 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
           <label className="check"><input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)} />Create GST invoice</label>
           {invoice && qualities.length > 0 && (
             <>
-              <span className="muted small hint">Rate comes from the order, then Settings → Rates. Fill in only if none is set.</span>
+              <span className="muted small hint">Type the ₹/m rate for this party. Leave blank to use the order’s rate.</span>
               <div className={s.rates}>
                 {qualities.map((ql) => (
                   <label key={ql} className="fld">{ql} ₹/m
-                    <input className="num" inputMode="decimal" value={rates[ql] ?? ''} placeholder={order && key(order.quality) === key(ql) && order.rate_per_m ? String(order.rate_per_m) : 'Saved rate'} onChange={(e) => setRates({ ...rates, [ql]: e.target.value })} />
+                    <input className="num" inputMode="decimal" value={rates[ql] ?? ''} placeholder={order && key(order.quality) === key(ql) && order.rate_per_m ? String(order.rate_per_m) : 'Rate needed'} onChange={(e) => setRates({ ...rates, [ql]: e.target.value })} />
                   </label>
                 ))}
               </div>

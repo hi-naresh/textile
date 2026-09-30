@@ -27,7 +27,7 @@ export async function listAccounts(q: Q): Promise<AccountRow[]> {
             u.must_change_password, u.rejected_count, u.last_login_at, u.created_at,
             (SELECT count(*)::int FROM auth_sessions a WHERE a.user_id = u.id AND a.revoked_at IS NULL AND a.expires_at > now()) AS live_sessions
      FROM users u LEFT JOIN workers w ON w.id = u.worker_id
-     WHERE u.role IS DISTINCT FROM 'developer' AND u.role IS DISTINCT FROM 'admin'
+     WHERE u.role IS DISTINCT FROM 'developer' AND u.role IS DISTINCT FROM 'admin' AND u.deleted_at IS NULL
      ORDER BY (u.status = 'pending') DESC, u.active DESC, CASE u.role WHEN 'owner' THEN 0 WHEN 'supervisor' THEN 1 WHEN 'worker' THEN 2 ELSE 3 END, u.name`,
   );
   return r.rows;
@@ -47,7 +47,7 @@ interface Ctx { q: Q; by: string; sessionId: string; req: NextRequest; asDevelop
 async function loadForUpdate(q: Q, id: string) {
   const r = await q(`SELECT * FROM users WHERE id = $1 FOR UPDATE`, [id]);
   const u = r.rows[0];
-  if (!u || u.role === 'developer' || u.role === 'admin') throw new LedgerError('User not found.', 404);
+  if (!u || u.role === 'developer' || u.role === 'admin' || u.deleted_at) throw new LedgerError('User not found.', 404);
   return u;
 }
 
@@ -72,7 +72,7 @@ async function setSections(q: Q, userId: string, sections: unknown) {
 /** A worker account needs a worker record: link an existing unlinked one, or create one in a section. */
 async function workerRecordFor(q: Q, userId: string, name: string, b: Record<string, unknown>): Promise<string> {
   if (typeof b.worker_id === 'string' && b.worker_id) {
-    const w = await q(`SELECT id FROM workers WHERE id = $1 AND active`, [b.worker_id]);
+    const w = await q(`SELECT id FROM workers WHERE id = $1 AND active AND deleted_at IS NULL`, [b.worker_id]);
     if (!w.rowCount) throw new LedgerError('That worker record does not exist.');
     const taken = await q(`SELECT 1 FROM users WHERE worker_id = $1 AND id <> $2`, [b.worker_id, userId]);
     if (taken.rowCount) throw new LedgerError('That worker record already belongs to another account.');
@@ -97,7 +97,20 @@ async function applyRole(q: Q, u: { id: string; name: string }, role: Assignable
   }
 }
 
-export type AccountAction = 'approve' | 'reject' | 'deactivate' | 'reactivate' | 'set_role' | 'set_sections' | 'set_phone' | 'reset_password' | 'revoke_sessions';
+export type AccountAction = 'approve' | 'reject' | 'deactivate' | 'reactivate' | 'set_role' | 'set_sections' | 'set_phone' | 'reset_password' | 'revoke_sessions' | 'delete';
+
+/**
+ * Removes a supervisor / worker from the team. History (job cards, challans, audit) keeps their name, so the row
+ * is kept but hidden everywhere: signed out, no phone (the number can be used again), no password, no sections.
+ * A worker's floor record goes with them.
+ */
+export async function removePerson(q: Q, u: { id: string; worker_id: string | null }, by: string): Promise<number> {
+  await q(`DELETE FROM supervisor_sections WHERE user_id = $1`, [u.id]);
+  const ended = await revokeUserSessions(q, u.id, 'deleted', by);
+  await q(`UPDATE users SET deleted_at = now(), active = false, phone = NULL, password_hash = NULL, must_change_password = false WHERE id = $1`, [u.id]);
+  if (u.worker_id) await q(`UPDATE workers SET deleted_at = now(), active = false WHERE id = $1 AND deleted_at IS NULL`, [u.worker_id]);
+  return ended;
+}
 
 export interface ActionResult { message: string; /** One-time starting password to hand over (set_phone for a new login, reset_password). */ temp_password?: string }
 
@@ -196,9 +209,15 @@ async function accountActionInner(c: Ctx, id: string, action: AccountAction, b: 
       await log('session.revoked', { all: true, sessions_ended: ended });
       return `${ended} device${ended === 1 ? '' : 's'} signed out`;
     }
+    case 'delete': {
+      if (isSelf || ownerAccount) throw new LedgerError('The owner account can’t be deleted.', 403);
+      const ended = await removePerson(q, u, by);
+      await log('user.deleted', { role: u.role, status: u.status, worker_id: u.worker_id, sessions_ended: ended });
+      return `${u.name} removed from the team`;
+    }
     default:
       throw new LedgerError('Unknown action.');
   }
 }
 
-export const ACCOUNT_ACTIONS: AccountAction[] = ['approve', 'reject', 'deactivate', 'reactivate', 'set_role', 'set_sections', 'set_phone', 'reset_password', 'revoke_sessions'];
+export const ACCOUNT_ACTIONS: AccountAction[] = ['approve', 'reject', 'deactivate', 'reactivate', 'set_role', 'set_sections', 'set_phone', 'reset_password', 'revoke_sessions', 'delete'];

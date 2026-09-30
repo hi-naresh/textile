@@ -47,7 +47,7 @@ export async function PATCH(request: NextRequest) {
     const b = await readObject(request);
     const id = typeof b.id === 'string' ? b.id : '';
     await withTransaction(async (q) => {
-      const u = await q(`SELECT role, active FROM users WHERE id = $1 FOR UPDATE`, [id]);
+      const u = await q(`SELECT role, active FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id]);
       if (!u.rowCount) throw new LedgerError('User not found.', 404);
       const role = u.rows[0].role;
       if (role !== 'owner' && role !== 'supervisor') throw new LedgerError('Only the owner and supervisors are managed here.');

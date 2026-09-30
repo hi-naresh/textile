@@ -49,7 +49,7 @@ export function computeGst(input: { lines: GstLineInput[]; hsn: string; gstRateP
   const taxable = r2(lines.reduce((s, l) => s + l.amount, 0));
   let note: string | null = null;
   if (!input.partyState) note = "Party's state is not known, so this is taxed as within the state (CGST + SGST). Add the party's state or GSTIN to fix.";
-  else if (!input.firmState) note = "Firm's state is not set in Settings → Billing, so this is taxed as within the state (CGST + SGST).";
+  else if (!input.firmState) note = "Firm's state is not set in My firm → Firm & billing, so this is taxed as within the state (CGST + SGST).";
   const intraState = !input.partyState || !input.firmState || input.partyState === input.firmState;
   const pct = input.gstRatePct;
   let cgst = 0, sgst = 0, igst = 0;

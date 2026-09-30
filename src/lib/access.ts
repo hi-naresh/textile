@@ -1,5 +1,5 @@
 // Role hierarchy, data scope and control permissions.
-// Single source of truth: the Access & roles screen renders MATRIX,
+// Single source of truth: the developer console's Access & roles renders MATRIX (and can switch capabilities off),
 // and every screen gates data/actions through can() and the scope helpers.
 //
 // The role comes from the signed-in account. The API routes enforce the same rules on the
@@ -8,7 +8,7 @@
 // except through "View as".
 
 import type { CaptureType, JobCard } from './types';
-import { DEFAULT_CONFIG, type FirmConfig, type SupervisorProfile } from './config';
+import { DEFAULT_CONFIG, type AccessOff, type FirmConfig, type SupervisorProfile } from './config';
 
 export type Role = 'owner' | 'supervisor' | 'worker';
 
@@ -26,12 +26,16 @@ export const ROLE_LABEL: Record<Role, string> = {
 let current: FirmConfig = DEFAULT_CONFIG;
 let previewSupervisorId: string | null = null;
 
-export function setFirmConfig(c: FirmConfig) { current = c; }
+let accessOff: AccessOff = {};
+export function setFirmConfig(c: FirmConfig) { current = c; accessOff = c.accessOff ?? {}; }
+/** Server: capabilities switched off by the developer (loaded with the firm settings on each request). */
+export function setAccessOff(a: AccessOff) { accessOff = a ?? {}; }
 export function firmConfig(): FirmConfig { return current; }
 export function firm() { return current.firm; }
 export function owner() { return current.owner; }
 export function rules() { return current.rules; }
 export function locationPresets() { return current.locationPresets; }
+export function markets() { return current.markets ?? []; }
 /** Locations a person can pick: the firm's fixed list (+ Floor, used by job cards). */
 export function allLocations(): string[] {
   const l = current.locationPresets;
@@ -123,7 +127,7 @@ type Level = 'Full' | 'View' | 'Full + override' | 'Via job cards' | 'Section' |
 
 export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string; owner: Level; supervisor: Level; worker: Level }[] = [
   { layer: 'Data', cap: 'stock.quantity', label: 'Stock quantities (meters)', owner: 'Full', supervisor: 'Section lots', worker: '—' },
-  { layer: 'Data', cap: 'stock.value', label: 'Stock value, party rates (₹)', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Data', cap: 'stock.value', label: 'Money figures (₹)', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Data', cap: 'jobs.view', label: 'Job cards & shortage', owner: 'Full', supervisor: 'Section', worker: '—' },
   { layer: 'Data', cap: 'efficiency.view', label: 'Worker efficiency', owner: 'Full', supervisor: 'Section crew', worker: '—' },
   { layer: 'Data', cap: 'cctv.view', label: 'CCTV activity', owner: 'Full', supervisor: 'Section crew', worker: '—' },
@@ -143,13 +147,27 @@ export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string
   { layer: 'Control', cap: 'orders.allocate', label: 'Reserve / release lots for orders', owner: 'Full', supervisor: 'Meters only', worker: '—' },
   { layer: 'Control', cap: 'orders.manage', label: 'Create orders, set rates', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'dispatch.manage', label: 'Record dispatches, print challans', owner: 'Full', supervisor: 'Full', worker: '—' },
-  { layer: 'Control', cap: 'master.manage', label: 'Parties, rates, costs, billing', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'master.manage', label: 'Parties, billing & GST', owner: 'Full', supervisor: '—', worker: '—' },
 ];
 
-export function can(role: Role, cap: Capability): boolean {
+/** What the role has out of the box (the MATRIX), before any developer switches. */
+export function canByDefault(role: Role, cap: Capability): boolean {
   const row = MATRIX.find((m) => m.cap === cap);
   return !!row && row[role] !== '—';
 }
+
+/**
+ * The developer can switch a capability OFF for supervisors or workers (never grant more than the default,
+ * never change the owner) — Developer console → Access & roles. Enforced on the server too (apiAuth loads the switches).
+ */
+export function can(role: Role, cap: Capability): boolean {
+  if (!canByDefault(role, cap)) return false;
+  if (role === 'owner') return true;
+  return !(accessOff[role] ?? []).includes(cap);
+}
+
+/** Capabilities that can't be switched off for a role, because the role's app would stop working without them. */
+export const ACCESS_LOCKED: Partial<Record<Role, Capability[]>> = { worker: ['capture.create'] };
 
 export function levelTone(level: string): 'good' | 'warn' | 'info' | 'neutral' {
   if (level.startsWith('Full')) return 'good';
@@ -160,7 +178,7 @@ export function levelTone(level: string): 'good' | 'warn' | 'info' | 'neutral' {
 
 // ---------- Navigation ----------
 export type Tab =
-  | 'overview' | 'stock' | 'jobs' | 'review' | 'capture' | 'people' | 'access' | 'team' | 'settings'
+  | 'overview' | 'stock' | 'jobs' | 'review' | 'capture' | 'people' | 'firm' | 'settings'
   | 'floor' | 'allot'
   | 'orders' | 'dispatch' | 'money' | 'reports';
 
@@ -170,32 +188,30 @@ export interface NavItem {
   short: string; // bottom bar label
   icon: string;
   group: string;
+  cap?: Capability | Capability[]; // hidden unless the role has this (any of the list), e.g. after the developer switched it off
 }
 
 export const NAV: Record<Role, NavItem[]> = {
   owner: [
     { tab: 'overview', label: 'Overview', short: 'Home', icon: 'grid', group: 'Business' },
-    { tab: 'stock', label: 'Stock ledger', short: 'Stock', icon: 'box', group: 'Business' },
-    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'Business' },
-    { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'Business' },
-    { tab: 'capture', label: 'Capture', short: 'Capture', icon: 'camera', group: 'Business' },
-    { tab: 'orders', label: 'Orders & inquiries', short: 'Orders', icon: 'cart', group: 'Sales' },
-    { tab: 'dispatch', label: 'Dispatch & documents', short: 'Dispatch', icon: 'truck', group: 'Sales' },
-    { tab: 'money', label: 'Money', short: 'Money', icon: 'rupee', group: 'Sales' },
-    { tab: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', group: 'Sales' },
-    { tab: 'people', label: 'People & CCTV', short: 'People', icon: 'users', group: 'Admin' },
-    { tab: 'team', label: 'Users & sign ups', short: 'Users', icon: 'userPlus', group: 'Admin' },
-    { tab: 'access', label: 'Access & roles', short: 'Access', icon: 'shield', group: 'Admin' },
+    { tab: 'stock', label: 'Stock ledger', short: 'Stock', icon: 'box', group: 'Business', cap: 'stock.quantity' },
+    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'Business', cap: 'jobs.view' },
+    { tab: 'capture', label: 'Capture', short: 'Capture', icon: 'camera', group: 'Business', cap: 'capture.create' },
+    { tab: 'orders', label: 'Orders & inquiries', short: 'Orders', icon: 'cart', group: 'Sales', cap: ['orders.view', 'inquiry.handle'] },
+    { tab: 'dispatch', label: 'Dispatch & documents', short: 'Dispatch', icon: 'truck', group: 'Sales', cap: 'dispatch.manage' },
+    { tab: 'money', label: 'Money', short: 'Money', icon: 'rupee', group: 'Sales', cap: 'finance.view' },
+    { tab: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', group: 'Sales', cap: 'reports.view' },
+    { tab: 'people', label: 'People & CCTV', short: 'People', icon: 'users', group: 'Admin', cap: 'efficiency.view' },
+    { tab: 'firm', label: 'My firm', short: 'My firm', icon: 'factory', group: 'Admin', cap: 'settings.manage' },
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Admin' },
   ],
   supervisor: [
     { tab: 'floor', label: 'Floor today', short: 'Floor', icon: 'factory', group: 'My sections' },
-    { tab: 'capture', label: 'Capture challan', short: 'Capture', icon: 'camera', group: 'My sections' },
-    { tab: 'review', label: 'Review queue', short: 'Review', icon: 'scan', group: 'My sections' },
-    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'My sections' },
-    { tab: 'allot', label: 'Allot work', short: 'Allot', icon: 'userPlus', group: 'My sections' },
-    { tab: 'orders', label: 'Orders & inquiries', short: 'Orders', icon: 'cart', group: 'Sales' },
-    { tab: 'dispatch', label: 'Dispatch', short: 'Dispatch', icon: 'truck', group: 'Sales' },
+    { tab: 'capture', label: 'Capture challan', short: 'Capture', icon: 'camera', group: 'My sections', cap: 'capture.create' },
+    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'My sections', cap: 'jobs.view' },
+    { tab: 'allot', label: 'Allot work', short: 'Allot', icon: 'userPlus', group: 'My sections', cap: 'work.allot' },
+    { tab: 'orders', label: 'Orders & inquiries', short: 'Orders', icon: 'cart', group: 'Sales', cap: ['orders.view', 'inquiry.handle'] },
+    { tab: 'dispatch', label: 'Dispatch', short: 'Dispatch', icon: 'truck', group: 'Sales', cap: 'dispatch.manage' },
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Me' },
   ],
   worker: [
@@ -206,15 +222,20 @@ export const NAV: Record<Role, NavItem[]> = {
 
 // Bottom bar on phones: these tabs, the rest go in "More".
 export const MOBILE_PRIMARY: Record<Role, Tab[]> = {
-  owner: ['overview', 'capture', 'review', 'stock'],
-  supervisor: ['floor', 'capture', 'review', 'jobs'],
+  owner: ['overview', 'stock', 'capture', 'orders'],
+  supervisor: ['floor', 'capture', 'jobs', 'allot'],
   worker: ['capture', 'settings'],
 };
 
 export const HOME_TAB: Record<Role, Tab> = { owner: 'overview', supervisor: 'floor', worker: 'capture' };
 
+/** Menu for a role: its NAV minus anything the developer switched off. */
+export function navFor(role: Role): NavItem[] {
+  return NAV[role].filter((n) => !n.cap || (Array.isArray(n.cap) ? n.cap.some((c) => can(role, c)) : can(role, n.cap)));
+}
+
 export function tabAllowed(role: Role, tab: Tab): boolean {
-  return NAV[role].some((n) => n.tab === tab);
+  return navFor(role).some((n) => n.tab === tab);
 }
 
 /** Labels may contain {firm}, replaced with the firm's name. */

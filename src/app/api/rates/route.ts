@@ -1,10 +1,14 @@
 import { NextRequest } from 'next/server';
-import { query, withTransaction } from '@/lib/db';
+import { query } from '@/lib/db';
 import { requireCap } from '@/lib/apiAuth';
-import { addRate, ratesOverview } from '@/lib/money/master';
-import { jsonBody, respond } from '@/lib/money/http';
+import { LedgerError } from '@/lib/ledger';
+import { ratesOverview } from '@/lib/money/master';
+import { respond } from '@/lib/money/http';
 
-// GET (owner) → { qualities: QualityRate[], history: RateRow[] } — current general rate + party overrides per quality.
+// Selling rates are turned off (owner: every party gets a different rate, so there is no list to keep).
+// The table and its old rows stay; nothing in the app reads them any more.
+
+// GET (owner) → { qualities: QualityRate[], history: RateRow[] } — the old rate list, read-only.
 export async function GET(req: NextRequest) {
   return respond(async () => {
     await requireCap(req, 'finance.view');
@@ -12,11 +16,10 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST { quality, party_id?, rate_per_m, valid_from? } → { rate }
+// POST → 410: rates are typed on each order (or on the invoice) instead.
 export async function POST(req: NextRequest) {
   return respond(async () => {
-    const a = await requireCap(req, 'master.manage');
-    const b = await jsonBody(req);
-    return { rate: await withTransaction((q) => addRate(q, b, a.by)) };
+    await requireCap(req, 'master.manage');
+    throw new LedgerError('Selling rates are turned off. Type the rate on the order or the invoice.', 410);
   });
 }

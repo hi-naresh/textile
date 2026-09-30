@@ -17,7 +17,7 @@ function whenText(days: number): string {
 }
 
 export async function scanOrders(q: Q, today = todayIST()): Promise<{ due: string[]; overdue: string[] }> {
-  const orders = await listOrders(q, { status: 'open', role: 'owner', limit: 1000 });
+  const orders = await listOrders(q, { status: 'open', role: 'owner', limit: 1000, sort: 'promise' });
   const due: string[] = [];
   const overdue: string[] = [];
   for (const o of orders) {

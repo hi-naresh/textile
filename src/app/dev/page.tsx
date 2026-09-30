@@ -8,10 +8,12 @@ import { fetchMe, installAuthFetch, logout, type Me } from '@/lib/authClient';
 import { apiSend, useApi } from '@/lib/useApi';
 import { formatPhone } from '@/lib/auth/phone';
 import type { SystemStatus } from '@/lib/types';
+import { Toggle } from '@/components/screens/MyFirm';
+import { levelTone, type Capability } from '@/lib/access';
 
 // Developer console: everything technical lives here and nowhere in the client app —
 // service health, connections, AI usage + cost, technical errors, accounts, "View as", audit trail.
-type Tab = 'health' | 'usage' | 'errors' | 'users' | 'audit';
+type Tab = 'health' | 'usage' | 'errors' | 'users' | 'access' | 'audit';
 
 export default function DevConsole() {
   const [me, setMe] = useState<Me | null>(null);
@@ -39,11 +41,12 @@ export default function DevConsole() {
         </div>
       )}
       <Segmented label="Section" value={tab} onChange={setTab} className="fit"
-        options={[{ value: 'health', label: 'Health' }, { value: 'usage', label: 'AI usage & cost' }, { value: 'errors', label: 'Errors' }, { value: 'users', label: 'Users & view as' }, { value: 'audit', label: 'Audit trail' }]} />
+        options={[{ value: 'health', label: 'Health' }, { value: 'usage', label: 'AI usage & cost' }, { value: 'errors', label: 'Errors' }, { value: 'users', label: 'Users & view as' }, { value: 'access', label: 'Access & roles' }, { value: 'audit', label: 'Audit trail' }]} />
       {tab === 'health' && <Health />}
       {tab === 'usage' && <Usage />}
       {tab === 'errors' && <Errors />}
       {tab === 'users' && <Users onViewAs={() => window.location.assign('/')} />}
+      {tab === 'access' && <AccessRoles />}
       {tab === 'audit' && <Audit />}
     </div>
   );
@@ -299,6 +302,73 @@ function Audit() {
           ))}
         </tbody>
       </table></div>
+    </section>
+  );
+}
+
+// ---------- Access & roles: who sees what; switch capabilities off / on for supervisors and workers ----------
+type Lvl = string;
+interface AccessData {
+  matrix: { layer: string; cap: Capability; label: string; owner: Lvl; supervisor: Lvl; worker: Lvl }[];
+  off: { supervisor?: string[]; worker?: string[] };
+  locked: { supervisor?: string[]; worker?: string[] };
+}
+
+function AccessRoles() {
+  const [tick, setTick] = useState(0);
+  const { data, error } = useApi<AccessData>('/api/dev/access', tick);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const flip = async (role: 'supervisor' | 'worker', cap: Capability, on: boolean) => {
+    setBusy(`${role}:${cap}`);
+    try {
+      const r = await apiSend<{ message: string }>('/api/dev/access', 'PUT', { role, cap, on });
+      setMsg({ ok: true, text: r.message });
+      setTick((t) => t + 1);
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : 'Could not save.' });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const cell = (m: AccessData['matrix'][number], role: 'supervisor' | 'worker') => {
+    const level = m[role];
+    if (level === '—') return <span className="muted">—</span>;
+    const off = (data?.off[role] ?? []).includes(m.cap);
+    const locked = (data?.locked[role] ?? []).includes(m.cap);
+    return (
+      <div className="row-8 access-cell">
+        <Pill tone={off ? 'neutral' : levelTone(level)}>{off ? 'Off' : level}</Pill>
+        {locked ? <span className="muted tiny" title="Needed for this role's app to work">always on</span>
+          : <Toggle on={!off} label={`${m.label} for ${role}s`} onChange={(v) => { if (!busy) void flip(role, m.cap, v); }} />}
+      </div>
+    );
+  };
+  return (
+    <section className="card pad stack-14">
+      <div className="stack-4">
+        <h2 className="h2">Access & roles</h2>
+        <span className="muted small">Who sees what. Switch a capability off for supervisors or workers and their menus, screens and APIs follow within about 30 seconds (their app picks it up on its next refresh). The owner always has full access; nothing can be given beyond these levels.</span>
+      </div>
+      {msg && <div className={`alert ${msg.ok ? 'good' : 'bad'}`} role="status">{msg.text}</div>}
+      {error && <div className="alert bad" role="alert">{error}</div>}
+      {!data && !error && <div className="loading"><span className="spinner" />Loading…</div>}
+      {data && (
+        <div className="dev-scroll"><table className="dev-table access-table">
+          <thead><tr><th>Layer</th><th>Capability</th><th>Owner</th><th>Supervisor</th><th>Worker</th></tr></thead>
+          <tbody>
+            {data.matrix.map((m) => (
+              <tr key={m.cap}>
+                <td className="muted">{m.layer}</td>
+                <td className="strong">{m.label}</td>
+                <td><Pill tone={levelTone(m.owner)}>{m.owner}</Pill></td>
+                <td>{cell(m, 'supervisor')}</td>
+                <td>{cell(m, 'worker')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      )}
     </section>
   );
 }

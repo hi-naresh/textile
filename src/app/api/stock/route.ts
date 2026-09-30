@@ -65,7 +65,20 @@ export async function GET(request: NextRequest) {
       ORDER BY d
     `);
 
+    // 4. Today's totals over ALL of today's movements (the ledger above is only the latest 100 rows)
+    const todayRes = await query(`
+      SELECT
+        COALESCE(SUM(meters) FILTER (WHERE direction = 'IN'), 0) AS in_m,
+        COUNT(*) FILTER (WHERE direction = 'IN') AS in_count,
+        COALESCE(SUM(meters) FILTER (WHERE direction = 'OUT'), 0) AS out_m,
+        COUNT(*) FILTER (WHERE direction = 'OUT') AS out_count
+      FROM stock_movements
+      WHERE ts >= CURRENT_DATE AND ts < CURRENT_DATE + 1
+    `);
+    const t = todayRes.rows[0];
+
     return NextResponse.json({
+      today: { in_m: parseFloat(t.in_m), in_count: Number(t.in_count), out_m: parseFloat(t.out_m), out_count: Number(t.out_count) },
       lots: balanceRes.rows.map(row => ({
         ...row,
         balance: parseFloat(row.balance)
@@ -99,6 +112,7 @@ export async function GET(request: NextRequest) {
 // POST (owner): Add a manual stock movement.
 // IN:  lot_id, grey_meters and/or finished_meters, mill_name, weaver_name, source_doc, location, quality + design (new lot)
 // OUT: lot_id, meters, party (destination client, required), source_doc
+// Both: sr_no (optional, whole number > 0, unique per direction → 409 when taken), pieces (optional taka, whole number ≥ 0)
 export async function POST(request: NextRequest) {
   try {
     const a = await requireCap(request, 'ledger.edit');
@@ -107,10 +121,12 @@ export async function POST(request: NextRequest) {
     if (direction !== 'IN' && direction !== 'OUT') {
       return NextResponse.json({ error: 'direction must be IN or OUT.' }, { status: 400 });
     }
+    // import_ref is only set by the Excel import.
+    const input = { ...body, import_ref: null, capture_event_id: null, moved_by: a.by };
     const movement = await withTransaction((q) =>
       direction === 'IN'
-        ? recordIncoming(q, { ...body, capture_event_id: null, moved_by: a.by }, { requireLotDetails: true })
-        : recordOutgoing(q, { ...body, capture_event_id: null, moved_by: a.by })
+        ? recordIncoming(q, input, { requireLotDetails: true })
+        : recordOutgoing(q, input)
     );
     return NextResponse.json({ success: true, movement });
   } catch (error) {

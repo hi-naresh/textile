@@ -168,7 +168,7 @@ function ReminderPanel({ ctx, party }: { ctx: Ctx; party: PartyCredit }) {
       </div>
       {error && <span className="small" style={{ color: 'var(--bad)' }}>{error}</span>}
       <textarea className={s.draft} aria-label="Reminder text" readOnly value={loading && !data ? 'Preparing…' : data?.text ?? ''} />
-      {!party.phone && <span className="muted small">No phone saved for {party.name}. WhatsApp will ask you to pick the chat. Add the number in Settings → Parties.</span>}
+      {!party.phone && <span className="muted small">No phone saved for {party.name}. WhatsApp will ask you to pick the chat. Add the number in My firm → Parties.</span>}
       <div className="row-8" style={{ flexWrap: 'wrap' }}>
         <button className="btn" disabled={!data} onClick={copy}>Copy</button>
         <a className={`btn primary ${!data ? 'disabled' : ''}`} aria-disabled={!data} href={data?.whatsapp_url ?? '#'} target="_blank" rel="noreferrer">Open WhatsApp</a>
@@ -261,7 +261,7 @@ function Payments({ ctx, refreshKey, onSaved }: { ctx: Ctx; refreshKey: string; 
 
 // ---------- Margin ----------
 const hint = (missing: string[]) => {
-  const words = missing.map((m) => (m.startsWith('process cost: ') ? `${m.slice(14)} cost` : m));
+  const words = missing.map((m) => (m === 'selling rate' ? 'rate on the order or invoice' : m));
   return `Add ${[...new Set(words)].slice(0, 3).join(', ')}${words.length > 3 ? '…' : ''}`;
 };
 
@@ -283,7 +283,7 @@ function Margin({ ctx, refreshKey }: { ctx: Ctx; refreshKey: string }) {
           <Kpi label="Sales" value={inr(t.revenue)} sub={`${fmt(t.meters)} m dispatched`} lock />
           <Kpi label="Cost" value={inr(t.cost)} sub={t.complete ? 'All costs known' : 'Some costs missing'} subTone={t.complete ? 'good' : 'warn'} lock />
           <Kpi label="Margin" value={rs(t.margin)} sub={t.margin_pct == null ? '—' : `${t.margin_pct}% of sales`} subTone={t.margin_pct != null && t.margin_pct < 3 ? 'bad' : 'good'} lock />
-          <Kpi label="Not priced" value={`${fmt(t.unpriced_m)} m`} sub={t.unpriced_m ? 'No selling rate — left out of ₹' : 'Every dispatch priced'} subTone={t.unpriced_m ? 'warn' : 'good'} />
+          <Kpi label="Not priced" value={`${fmt(t.unpriced_m)} m`} sub={t.unpriced_m ? 'No rate on the order or invoice — left out of ₹' : 'Every dispatch priced'} subTone={t.unpriced_m ? 'warn' : 'good'} />
         </div>
       )}
       {data && (
@@ -306,7 +306,7 @@ function Margin({ ctx, refreshKey }: { ctx: Ctx; refreshKey: string }) {
           </table>
         </section>
       )}
-      <span className="muted small">Cost = purchase rate + process costs + shortage loss. Rows marked in amber are missing a cost or rate, so their margin looks higher than it is.</span>
+      <span className="muted small">Cost = purchase rate + grey→finished shortage. Sales use the rate on the invoice, else on the order. Rows in amber are missing a purchase rate or a sale rate, so their margin is not exact.</span>
     </>
   );
 }

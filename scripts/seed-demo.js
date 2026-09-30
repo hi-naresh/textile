@@ -6,7 +6,7 @@
 //   with challans, 2 job cards (one open for the worker to capture) and 3 knowledge notes for chat.
 // - `npm run db:seed-demo -- --history` also adds ~2 years of sample receipts and dispatches across
 //   several qualities (for the stock-flow charts) plus a few of today's movements.
-// - Phase 2 sample data (once): billing/GST details, party details, selling rates, process costs,
+// - Phase 2 sample data (once): billing/GST details, party details,
 //   purchase rates, a few orders, inquiries, invoices and payments — so the agents have work to show.
 // - Refuses to run against a non-local database unless ALLOW_DEMO_SEED=1 is set
 //   (so demo data never lands in a firm's live database by accident).
@@ -33,6 +33,9 @@ const ACCOUNTS = {
   supervisor: { id: 'usr-demo-sup', name: 'Ramesh Patel', section: 'Folding' },
   worker: { id: 'usr-demo-wrk', name: 'Suresh Rathod', workerId: 'wrk-demo-01', section: 'Folding' },
 };
+
+// Sections the firm runs (owner: "just Folding and Packing at the moment").
+const DEMO_SECTIONS = ['Folding', 'Packing'];
 
 const LOTS = [
   {
@@ -69,9 +72,12 @@ async function main() {
   try {
     await c.query('BEGIN');
 
-    // Section for the supervisor + worker
-    await c.query(`INSERT INTO sections (name, sort_order) SELECT $1::varchar, 99 WHERE NOT EXISTS (SELECT 1 FROM sections WHERE lower(name) = lower($1::varchar))`, [ACCOUNTS.supervisor.section]);
-    const sec = await c.query(`SELECT id FROM sections WHERE lower(name) = lower($1)`, [ACCOUNTS.supervisor.section]);
+    // The firm's sections: only Folding and Packing are in use (others stay off, see migration 008).
+    for (const [i, name] of DEMO_SECTIONS.entries()) {
+      await c.query(`INSERT INTO sections (name, sort_order) SELECT $1::varchar, $2::int WHERE NOT EXISTS (SELECT 1 FROM sections WHERE lower(name) = lower($1::varchar))`, [name, i + 1]);
+    }
+    await c.query(`UPDATE sections SET active = (lower(name) = ANY($1::text[])) WHERE active IS DISTINCT FROM (lower(name) = ANY($1::text[]))`, [DEMO_SECTIONS.map((x) => x.toLowerCase())]);
+    const secs = await c.query(`SELECT id FROM sections WHERE lower(name) = ANY($1::text[])`, [DEMO_SECTIONS.map((x) => x.toLowerCase())]);
 
     // Owner (keeps a name already set in Settings)
     await c.query(`INSERT INTO users (id, name, role) VALUES ($1, $2, 'owner') ON CONFLICT (id) DO NOTHING`, [ACCOUNTS.owner.id, ACCOUNTS.owner.name]);
@@ -79,7 +85,9 @@ async function main() {
 
     // Supervisor
     await c.query(`INSERT INTO users (id, name, role) VALUES ($1, $2, 'supervisor') ON CONFLICT (id) DO NOTHING`, [ACCOUNTS.supervisor.id, ACCOUNTS.supervisor.name]);
-    await c.query(`INSERT INTO supervisor_sections (user_id, section_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [ACCOUNTS.supervisor.id, sec.rows[0].id]);
+    for (const r of secs.rows) {
+      await c.query(`INSERT INTO supervisor_sections (user_id, section_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [ACCOUNTS.supervisor.id, r.id]);
+    }
 
     // Worker: a worker record + an app account linked to it
     await c.query(`INSERT INTO workers (id, name, section) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`, [ACCOUNTS.worker.workerId, ACCOUNTS.worker.name, ACCOUNTS.worker.section]);
@@ -245,20 +253,14 @@ async function seedPhase2(c) {
       [name, gstin(st, pan), st, city, phone, limit, days],
     );
   }
-  // Selling rates ₹/m and grey purchase rates ₹/m by quality
-  const RATES = { 'Poly-Crepe': [68, 41], Georgette: [92, 58], 'Rayon Print': [74, 45], Chiffon: [85, 52], Satin: [110, 70], 'DON-2': [21, 13.5] };
-  for (const [q, [sell, buy]] of Object.entries(RATES)) {
-    await c.query(`INSERT INTO rates (quality, rate_per_m, valid_from) VALUES ($1, $2, CURRENT_DATE - 400)`, [q, sell]);
+  // Grey purchase rates ₹/m by quality (selling rates are typed per order: every party gets its own rate).
+  const BUY = { 'Poly-Crepe': 41, Georgette: 58, 'Rayon Print': 45, Chiffon: 52, Satin: 70, 'DON-2': 13.5 };
+  for (const [q, buy] of Object.entries(BUY)) {
     await c.query(
       `UPDATE stock_movements sm SET purchase_rate = $2 FROM lots l
        WHERE l.lot_id = sm.lot_id AND sm.direction = 'IN' AND sm.purchase_rate IS NULL AND lower(l.quality) = lower($1)`,
       [q, buy],
     );
-  }
-  await c.query(`INSERT INTO rates (quality, party_id, rate_per_m, valid_from) SELECT 'Georgette', id, 89, CURRENT_DATE - 60 FROM parties WHERE name = 'Mumbai Retailers'`);
-  const COSTS = { Weaving: 9, Dyeing: 6.5, Printing: 8, Folding: 1.2 };
-  for (const [sec, cost] of Object.entries(COSTS)) {
-    await c.query(`INSERT INTO process_costs (section, cost_per_m, valid_from) SELECT name, $2, CURRENT_DATE - 400 FROM sections WHERE lower(name) = lower($1)`, [sec, cost]);
   }
   // Orders (one due tomorrow, one overdue, one comfortable) + inquiries
   const pid = async (name) => (await c.query(`SELECT id FROM parties WHERE name = $1`, [name])).rows[0].id;
@@ -302,7 +304,7 @@ async function seedPhase2(c) {
   // Payments cover the oldest invoices first (same rule as the app)
   await c.query(`UPDATE invoices i SET status = 'paid' WHERE status = 'open' AND total <= (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.party_id = i.party_id)
     - (SELECT COALESCE(SUM(total), 0) FROM invoices o WHERE o.party_id = i.party_id AND o.status <> 'cancelled' AND (o.invoice_date, o.id) < (i.invoice_date, i.id))`);
-  console.log('[seed-demo] Phase 2 sample data added (billing, parties, rates, costs, 3 orders, 2 inquiries, 6 invoices, 3 payments).');
+  console.log('[seed-demo] Phase 2 sample data added (billing, parties, purchase rates, 3 orders, 2 inquiries, 6 invoices, 3 payments).');
 }
 
 main().catch((e) => {
