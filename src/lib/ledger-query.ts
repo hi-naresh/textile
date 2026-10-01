@@ -1,7 +1,9 @@
 // Stock ledger filtering, shared by GET /api/stock/ledger (paged) and GET /api/stock/export (Excel).
 // Server-side only. Filters combine with AND; `q` is free text (every word must match somewhere:
 // lot, quality, design, party, mill, weaver, challan, SR no. or the location the movement put the lot in).
+// Page 1 + the next pages are keyset-paged on (ts, id); counts are capped (see cappedCount).
 import type { Q } from './db';
+import { cappedCount } from './lots-query';
 
 export interface LedgerFilters {
   q: string | null;
@@ -39,6 +41,10 @@ export function filtersFrom(sp: URLSearchParams): LedgerFilters {
 /** Escape LIKE wildcards so "50%" matches literally. */
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
+// Text matching goes through sm.search_doc: lower-case lot no., quality, design, party, mill, weaver, challan and the
+// location the movement put the lot in, kept by triggers (migration 010) and trigram-indexed, so a rare challan or lot
+// is found without walking the whole ledger. Lot / party filters test search_doc first (index) and then the column.
+
 /** WHERE clause over `sm` (stock_movements) joined with `l` (lots). Params start at $1. */
 export function whereFor(f: LedgerFilters): { sql: string; params: unknown[] } {
   const parts: string[] = [];
@@ -47,18 +53,16 @@ export function whereFor(f: LedgerFilters): { sql: string; params: unknown[] } {
   if (f.direction) parts.push(`sm.direction = ${p(f.direction)}`);
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
   if (f.design) parts.push(`lower(l.design) = lower(${p(f.design)})`);
-  if (f.lot) parts.push(`sm.lot_id ILIKE ${p(like(f.lot))}`);
-  if (f.party) parts.push(`sm.party ILIKE ${p(like(f.party))}`);
+  if (f.lot) { const w = p(like(f.lot.toLowerCase())); parts.push(`sm.search_doc LIKE ${w} AND lower(sm.lot_id) LIKE ${w}`); }
+  if (f.party) { const w = p(like(f.party.toLowerCase())); parts.push(`sm.search_doc LIKE ${w} AND lower(sm.party) LIKE ${w}`); }
   if (f.from) parts.push(`sm.ts >= ${p(f.from)}::date`);
   if (f.to) parts.push(`sm.ts < ${p(f.to)}::date + 1`);
   if (f.today) parts.push(`sm.ts >= CURRENT_DATE AND sm.ts < CURRENT_DATE + 1`);
   if (f.q) {
-    for (const word of f.q.split(' ').slice(0, 6)) {
+    for (const word of f.q.toLowerCase().split(' ').slice(0, 6)) {
       const w = p(like(word));
       const sr = /^\d{1,9}$/.test(word) ? ` OR sm.sr_no = ${p(Number(word))}` : '';
-      parts.push(`(sm.lot_id ILIKE ${w} OR l.quality ILIKE ${w} OR l.design ILIKE ${w} OR sm.party ILIKE ${w} OR sm.mill_name ILIKE ${w}
-        OR sm.weaver_name ILIKE ${w} OR sm.source_doc_id ILIKE ${w}${sr}
-        OR EXISTS (SELECT 1 FROM lot_locations ll WHERE ll.lot_id = sm.lot_id AND ll.stock_movement_id = sm.id AND ll.location ILIKE ${w}))`);
+      parts.push(sr ? `(sm.search_doc LIKE ${w}${sr})` : `sm.search_doc LIKE ${w}`);
     }
   }
   return { sql: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params };
@@ -114,6 +118,13 @@ export async function ledgerPage(q: Q, f: LedgerFilters, opts: { limit: number; 
     where += `${where ? ' AND' : 'WHERE'} (sm.ts, sm.id) < ($${params.length - 1}::timestamp, $${params.length})`;
   }
   params.push(opts.limit + 1);
+  // First page: the capped count runs alongside the page (one round trip); used only when the page is full —
+  // a short first page is the whole answer. Never an exact count over millions of rows.
+  const joinForCount = /\bl\./.test(w.sql);
+  const counting = opts.cursor ? null : joinForCount
+    ? cappedCount(q, 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', w.sql, w.params)
+    : cappedCount(q, 'stock_movements sm', `${w.sql ? `${w.sql} AND` : 'WHERE'} sm.lot_id IS NOT NULL`, w.params);
+  counting?.catch(() => {});
   const r = await q(
     `SELECT ${COLS} FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id ${where}
      ORDER BY sm.ts DESC, sm.id DESC LIMIT $${params.length}`,
@@ -123,11 +134,12 @@ export async function ledgerPage(q: Q, f: LedgerFilters, opts: { limit: number; 
   const page = r.rows.slice(0, opts.limit);
   const last = page[page.length - 1];
   let total: number | null = null;
-  if (!opts.cursor) {
-    const c = await q(`SELECT COUNT(*)::int AS n FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id ${w.sql}`, w.params);
-    total = c.rows[0].n;
+  let capped = false;
+  if (counting) {
+    if (!more) total = page.length;
+    else ({ total, capped } = await counting);
   }
-  return { rows: page.map(toRow), next: more && last ? encodeCursor(last.ts_key, Number(last.id)) : null, total };
+  return { rows: page.map(toRow), next: more && last ? encodeCursor(last.ts_key, Number(last.id)) : null, total, total_capped: capped };
 }
 
 /** These movements as ledger rows (after an edit), newest first. */
@@ -150,9 +162,9 @@ export async function ledgerAll(q: Q, f: LedgerFilters, cap = 100_000) {
   return r.rows.map(toRow);
 }
 
-/** Distinct qualities / designs for the filter dropdowns, and which designs each quality has. */
+/** Distinct qualities / designs for the filter dropdowns, and which designs each quality has (lot_facets: one row per pair). */
 export async function ledgerFacets(q: Q) {
-  const r = await q(`SELECT quality, design FROM lots GROUP BY quality, design ORDER BY quality, design`);
+  const r = await q(`SELECT quality, design FROM lot_facets ORDER BY quality, design`);
   const byQuality: Record<string, string[]> = {};
   const designs = new Set<string>();
   for (const x of r.rows) {

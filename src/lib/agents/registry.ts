@@ -1,5 +1,7 @@
 // All Phase 2 agents. Each module lives in its own file and exports `agent: AgentModule`.
+// What each one is for, its default on/off and its quiet days: catalog.ts.
 import type { AgentKey, AgentModule } from './types';
+import { AGENT_INFO } from './catalog';
 import { agent as inquiry } from './inquiry';
 import { agent as orders } from './orders';
 import { agent as allocation } from './allocation';
@@ -12,7 +14,6 @@ import { agent as credit } from './credit';
 
 export const AGENTS: Record<AgentKey, AgentModule> = { inquiry, orders, allocation, inventory, logistics, documents, costing, reports, credit };
 
-export const AGENT_LABEL: Record<AgentKey, string> = {
-  inquiry: 'Inquiries', orders: 'Orders', allocation: 'Allocation', inventory: 'Inventory', logistics: 'Dispatch',
-  documents: 'Documents', costing: 'Costing', reports: 'Reports', credit: 'Credit',
-};
+export const AGENT_LABEL: Record<AgentKey, string> = Object.fromEntries(
+  (Object.keys(AGENTS) as AgentKey[]).map((k) => [k, AGENT_INFO[k].label]),
+) as Record<AgentKey, string>;

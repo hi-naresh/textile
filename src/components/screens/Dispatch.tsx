@@ -3,16 +3,17 @@
 // Dispatch & documents (Phase 2 — Logistics & Dispatch + Document Generation agents).
 // Owner + supervisor: record dispatches, print challan / packing list. Owner only: GST invoices,
 // Tally invoices, Tally export, party statements (₹). Supervisors never see ₹ here.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, PageHead, Pill, Segmented, Sheet, dayTime, fmt, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
 import { can } from '@/lib/access';
 import { actorId } from '@/lib/useTextileData';
-import { apiSend, useApi, who } from '@/lib/useApi';
+import { apiSend, flashWhenReady, useApi, useHashLink, who } from '@/lib/useApi';
 import type { Allocation, Dispatch as DispatchRow, Invoice, Order, Party } from '@/lib/domain';
 import s from './Dispatch.module.css';
 import { LotPicker } from '../LotPicker';
+import { useLotSearch, useLotsById } from '@/lib/useLots';
 
 type InvoiceRow = Invoice & { days_overdue: number; exported_at: string | null };
 type View = 'dispatches' | 'invoices';
@@ -35,6 +36,24 @@ export function Dispatch({ ctx }: { ctx: Ctx }) {
   const [tick, setTick] = useState(0);
   const bump = () => setTick((t) => t + 1);
   const v: View = owner ? view : 'dispatches';
+  // Deep links (search, agent alerts): #dispatch=ID highlights that dispatch, #invoice=ID that invoice (owner).
+  const dispatchLink = useHashLink('dispatch');
+  const invoiceLink = useHashLink('invoice');
+  const [focus, setFocus] = useState<{ id: number; n: number } | null>(null);
+  useEffect(() => {
+    const id = Number(dispatchLink.value);
+    if (!id) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a deep link arrived: show that dispatch
+    setView('dispatches');
+    setFocus({ id, n: dispatchLink.n });
+  }, [dispatchLink]);
+  useEffect(() => {
+    const id = Number(invoiceLink.value);
+    if (!id || !owner) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a deep link arrived: show that invoice
+    setView('invoices');
+    return flashWhenReady(`[data-invoice="${id}"]`, 5000);
+  }, [invoiceLink, owner]);
 
   return (
     <div className="page fade">
@@ -48,7 +67,7 @@ export function Dispatch({ ctx }: { ctx: Ctx }) {
           <Segmented label="View" value={view} onChange={setView} options={[{ value: 'dispatches', label: 'Dispatches' }, { value: 'invoices', label: 'Invoices' }]} />
         </div>
       )}
-      {v === 'dispatches' ? <DispatchList ctx={ctx} tick={tick} onChanged={bump} /> : <InvoiceList ctx={ctx} tick={tick} onChanged={bump} />}
+      {v === 'dispatches' ? <DispatchList ctx={ctx} tick={tick} onChanged={bump} focus={focus} /> : <InvoiceList ctx={ctx} tick={tick} onChanged={bump} />}
       <Sheet open={newOpen} title="New dispatch" onClose={() => setNewOpen(false)}>
         {newOpen && <DispatchForm ctx={ctx} onDone={() => { setNewOpen(false); bump(); }} />}
       </Sheet>
@@ -60,10 +79,16 @@ export function Dispatch({ ctx }: { ctx: Ctx }) {
 }
 
 // ---------------- Dispatch list ----------------
-function DispatchList({ ctx, tick, onChanged }: { ctx: Ctx; tick: number; onChanged: () => void }) {
+function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: number; onChanged: () => void; focus?: { id: number; n: number } | null }) {
   const owner = can(ctx.role, 'finance.view');
   const actor = actorId(ctx.role);
   const [days, setDays] = useState<'7' | '30' | '90'>('30');
+  useEffect(() => {
+    if (!focus) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a linked dispatch may be older than 30 days
+    setDays('90');
+    return flashWhenReady(`[data-dispatch="${focus.id}"]`, 5000);
+  }, [focus]);
   const [busy, setBusy] = useState<number | null>(null);
   const { data, error, loading } = useApi<{ dispatches: DispatchRow[] }>(`/api/dispatches?days=${days}&${who(ctx.role, actor)}`, `${ctx.d.lastSync}-${tick}`);
   const rows = data?.dispatches ?? [];
@@ -106,7 +131,7 @@ function DispatchList({ ctx, tick, onChanged }: { ctx: Ctx; tick: number; onChan
             </thead>
             <tbody>
               {rows.map((d) => (
-                <tr key={d.id}>
+                <tr key={d.id} data-dispatch={d.id}>
                   <td data-label="Date" className="num t2">{dayTime(d.dispatched_at)}</td>
                   <td data-label="Party" className="strong">{d.party_name ?? '—'}{d.order_id ? <div className="muted small">Order #{d.order_id}</div> : null}</td>
                   <td data-label="Lots"><div className="num">{d.lots.slice(0, 3).join(', ')}{d.lots.length > 3 ? ` +${d.lots.length - 3}` : ''}</div></td>
@@ -146,7 +171,8 @@ function InvoiceRates({ ctx, dispatch, busy, onCreate }: { ctx: Ctx; dispatch: D
   const q = who(ctx.role, actorId(ctx.role));
   const orderApi = useApi<{ order: Order }>(dispatch.order_id ? `/api/orders/${dispatch.order_id}?${q}` : null);
   const order = orderApi.data?.order ?? null;
-  const qualities = [...new Set(dispatch.lots.map((id) => ctx.d.lots.find((l) => l.lot_id === id)?.quality).filter((x): x is string => !!x))];
+  const lotInfo = useLotsById(dispatch.lots, ctx.d.stockRev);
+  const qualities = [...new Set(dispatch.lots.map((id) => lotInfo.get(id)?.quality).filter((x): x is string => !!x))];
   const [rates, setRates] = useState<Record<string, string>>({});
   const orderRate = (ql: string) => (order && key(order.quality) === key(ql) && order.rate_per_m ? order.rate_per_m : null);
   const missing = qualities.filter((ql) => !(parseFloat(rates[ql] ?? '') > 0) && orderRate(ql) == null);
@@ -201,10 +227,12 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
   const order = orders.find((o) => String(o.id) === orderId) ?? null;
   const orderDetail = useApi<{ order: Order; allocations: Allocation[] }>(order ? `/api/orders/${order.id}?${q}` : null);
 
-  const stock = useMemo(() => d.lots.filter((l) => l.balance > 0), [d.lots]);
-  const lotOf = (id: string) => d.lots.find((l) => l.lot_id === id);
+  // Lot details come from the server for just the lots on this dispatch (+ reserved ones), never the whole list.
+  const lotInfo = useLotsById([...lines.map((l) => l.lot_id), ...(orderDetail.data?.allocations ?? []).map((a) => a.lot_id)], d.stockRev);
+  const lotOf = (id: string) => { const x = lotInfo.get(id.trim()); return x ? { ...x, balance: x.balance ?? 0 } : undefined; };
+  const sameQuality = useLotSearch('', { inStock: true, quality: order?.quality ?? '', limit: 8 + lines.length, enabled: !!order, refreshKey: d.stockRev });
   const totalM = lines.reduce((t, l) => t + (parseFloat(l.meters) || 0), 0);
-  const suggested = order ? stock.filter((l) => key(l.quality) === key(order.quality) && !lines.some((x) => x.lot_id === l.lot_id)).slice(0, 8) : [];
+  const suggested = order ? (sameQuality.lots ?? []).map((l) => ({ ...l, balance: l.balance ?? 0 })).filter((l) => !lines.some((x) => x.lot_id === l.lot_id)).slice(0, 8) : [];
   const reserved = (orderDetail.data?.allocations ?? []).filter((a) => a.status === 'reserved' && a.meters - a.dispatched_m > 0);
   const qualities = [...new Set(lines.map((l) => lotOf(l.lot_id)?.quality).filter((x): x is string => !!x))];
 
@@ -298,7 +326,7 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
             const over = lot != null && parseFloat(l.meters) > lot.balance;
             return (
               <div key={i} className={s.line}>
-                <div className="stack-2 min0"><LotPicker ariaLabel={`Lot ${i + 1}`} lots={stock} value={l.lot_id} onChange={(v) => setLine(i, { lot_id: v })} placeholder="Lot no." /></div>
+                <div className="stack-2 min0"><LotPicker ariaLabel={`Lot ${i + 1}`} value={l.lot_id} onChange={(v) => setLine(i, { lot_id: v })} placeholder="Lot no." refreshKey={d.stockRev} /></div>
                 <input aria-label={`Meters ${i + 1}`} className={over ? s.over : ''} inputMode="decimal" value={l.meters} placeholder="Meters" onChange={(e) => setLine(i, { meters: e.target.value })} />
                 <button type="button" className="btn icon-only" aria-label="Remove line" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ ...EMPTY_LINE }]))}><Icon name="x" size={16} /></button>
                 {lot && (
@@ -403,7 +431,7 @@ function InvoiceList({ ctx, tick, onChanged }: { ctx: Ctx; tick: number; onChang
               {rows.map((inv) => {
                 const overdue = (inv.status === 'open' || inv.status === 'part_paid') && inv.days_overdue > 0;
                 return (
-                  <tr key={inv.id}>
+                  <tr key={inv.id} data-invoice={inv.id}>
                     <td data-label="Invoice" className="num strong">{inv.invoice_no}{inv.source === 'tally' && <div className="muted small">Tally</div>}</td>
                     <td data-label="Date" className="num t2 d">{shortDate(inv.invoice_date)}</td>
                     <td data-label="Party">{inv.party_name}</td>

@@ -18,7 +18,7 @@ function Preferences({ ctx }: { ctx: Ctx }) {
       {ctx.role === 'owner' && (
         <div className="fld">Screen density
           <Segmented label="Screen density" value={ctx.density} onChange={ctx.setDensity} className="fit" options={[{ value: 'compact', label: 'Compact' }, { value: 'detailed', label: 'Detailed' }]} />
-          <span className="muted small">Compact hides charts, the sections table and detail columns.</span>
+          <span className="muted small">Compact shows shorter lists and hides extra detail columns.</span>
         </div>
       )}
       <div className="fld">Theme

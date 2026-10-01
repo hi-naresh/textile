@@ -5,12 +5,13 @@ import { lotsSheet, toBuffer } from '@/lib/excel';
 import { requireCap } from '@/lib/apiAuth';
 import { errorResponseBody, nextSr } from '@/lib/ledger';
 import { filtersFrom, ledgerAll } from '@/lib/ledger-query';
+import { lotFiltersFrom, lotsAll } from '@/lib/lots-query';
 import { challanSheet, importTemplate, newBook } from '@/lib/stock-import';
 
 // Owner only (₹-free, but the whole ledger).
 // GET /api/stock/export?kind=challans[&q=&direction=IN|OUT&quality=&design=&lot=&party=&from=YYYY-MM-DD&to=YYYY-MM-DD]
 //     → .xlsx of every challan matching the same filters as the ledger screen (S.No first, SR no., pieces, location)
-// GET /api/stock/export?kind=lots       → lot balances + locations
+// GET /api/stock/export?kind=lots[&q=&in_stock=1&status=] → lot balances + locations (same filters as Lots & balance)
 // GET /api/stock/export?kind=template   → blank import template for manual stock entry
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -31,13 +32,8 @@ export async function GET(req: NextRequest) {
       importTemplate(wb, locs, cfg.markets ?? [], { IN: i.next, OUT: o.next });
       name = 'stock-import-template.xlsx';
     } else if (kind === 'lots') {
-      const r = await query(
-        `SELECT l.lot_id, l.quality, l.design,
-                COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) FROM stock_movements WHERE lot_id = l.lot_id), 0) AS balance,
-                (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS location
-         FROM lots l ORDER BY l.lot_id`,
-      );
-      lotsSheet(wb, r.rows);
+      // Same filters as the Lots & balance view (q, in_stock, status); balance + location live on the lot row.
+      lotsSheet(wb, await lotsAll((text, params) => query(text, params), lotFiltersFrom(sp)));
       name = `lots-${day}.xlsx`;
     } else if (kind === 'challans') {
       const f = filtersFrom(sp);

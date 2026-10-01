@@ -10,12 +10,14 @@ import { Pill, Segmented, Sheet, fmtM } from './ui';
 import { ReviewQueue } from './screens/Shared';
 import type { Ctx } from './ctx';
 import { captureInScope, inSupervisorScope, jobInScope, rules, type Role, type Tab } from '@/lib/access';
-import { apiSend } from '@/lib/useApi';
+import { apiSend, openLink } from '@/lib/useApi';
 import { actorId } from '@/lib/useTextileData';
 
 export interface Suggestion {
   id: number; agent: string; kind: string; severity: 'info' | 'warn' | 'bad'; title: string; detail: string | null;
   target_type: string | null; target_id: string | null; action_label: string | null; owner_only: boolean;
+  /** hint: what the button will do · dismiss_label: meaning of dismiss (e.g. "Not for an order") · choices: other buttons. */
+  payload?: { hint?: string; dismiss_label?: string; open_label?: string; choices?: { value: number; label: string }[] } & Record<string, unknown> | null;
 }
 
 /** Open agent suggestions for the signed-in role (loaded by page.tsx, shared through ctx). */
@@ -28,23 +30,31 @@ export function useAgentFeed(role: Role, refreshKey: unknown): AgentFeed {
   useEffect(() => {
     if (role === 'worker') return;
     let alive = true;
+    let retry: ReturnType<typeof setTimeout> | null = null;
     fetch(`/api/agents/suggestions?role=${role}`, { cache: 'no-store' })
-      .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j?.error || 'Could not load.'); return j as { suggestions: Suggestion[] }; })
-      .then((j) => { if (alive) { setList(j.suggestions ?? []); setLoaded(true); } })
+      .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j?.error || 'Could not load.'); return j as { suggestions: Suggestion[]; refreshing?: boolean }; })
+      .then((j) => {
+        if (!alive) return;
+        setList(j.suggestions ?? []); setLoaded(true);
+        // The agents are checking in the background: ask again once they are done.
+        if (j.refreshing) retry = setTimeout(() => { if (alive) setTick((t) => t + 1); }, 4000);
+      })
       .catch(() => { if (alive) setLoaded(true); });
-    return () => { alive = false; };
+    return () => { alive = false; if (retry) clearTimeout(retry); };
   }, [role, refreshKey, tick]);
   const reload = useCallback(() => setTick((t) => t + 1), []);
   return { list, loaded, reload };
 }
 
 const AGENT_LABEL: Record<string, string> = {
-  inquiry: 'Inquiries', orders: 'Orders', allocation: 'Allocation', inventory: 'Inventory', logistics: 'Dispatch',
-  documents: 'Documents', costing: 'Costing', reports: 'Reports', credit: 'Credit',
+  inquiry: 'Inquiries', orders: 'Orders', allocation: 'Reservations', inventory: 'Stock', logistics: 'Dispatch',
+  documents: 'Invoices', costing: 'Margin', reports: 'Reports', credit: 'Payments',
 };
 
 /** Where "Open" takes you for each kind of target. Screens read the hash to open the right item. */
 function destination(s: Suggestion, role: Role): { tab: Tab; hash?: string } | null {
+  // Old-stock summary: the full list of old lots is in Reports → Inventory (not one lot's ledger).
+  if (s.kind === 'ageing_stock') return role === 'owner' ? { tab: 'reports', hash: 'inventory=ageing' } : null;
   switch (s.target_type) {
     case 'order': return { tab: 'orders', hash: `order=${s.target_id}` };
     case 'inquiry': return { tab: 'orders', hash: `inquiry=${s.target_id}` };
@@ -53,7 +63,7 @@ function destination(s: Suggestion, role: Role): { tab: Tab; hash?: string } | n
     case 'report': return role === 'owner' ? { tab: 'reports', hash: `report=${s.target_id}` } : null;
     case 'quality': case 'mill': return role === 'owner' ? { tab: 'reports' } : null;
     case 'section': return role === 'owner' ? { tab: 'firm', hash: 'firm=team' } : null;
-    case 'lot': return role === 'owner' ? { tab: 'stock' } : null;
+    case 'lot': return role === 'owner' ? { tab: 'stock', hash: s.target_id ? `ledger=${encodeURIComponent(new URLSearchParams({ view: 'moves', lot: s.target_id, focus: s.target_id }).toString())}` : undefined } : null;
     default: return null;
   }
 }
@@ -68,14 +78,13 @@ export default function AgentInbox({ ctx, limit = 8, empty = null, onNavigate }:
   const open = (s: Suggestion) => {
     const dest = destination(s, role);
     if (!dest) return;
-    if (dest.hash) window.history.replaceState(null, '', `#${dest.hash}`);
     onNavigate?.();
-    go(dest.tab);
+    openLink(go, dest.tab, dest.hash); // sets the hash + tells an already-open screen to read it
   };
-  const decide = async (s: Suggestion, action: 'accept' | 'reject') => {
+  const decide = async (s: Suggestion, action: 'accept' | 'reject', choice?: number) => {
     setBusy(s.id);
     try {
-      const r = await apiSend<{ message: string }>('/api/agents/suggestions', 'POST', { id: s.id, action, role, actor: actorId(role) });
+      const r = await apiSend<{ message: string }>('/api/agents/suggestions', 'POST', { id: s.id, action, choice, role, actor: actorId(role) });
       d.showToast(r.message, 'success');
       agents.reload();
       if (action === 'accept') {
@@ -98,11 +107,19 @@ export default function AgentInbox({ ctx, limit = 8, empty = null, onNavigate }:
           <div className="grow min0">
             <div className="attn-title">{s.title}</div>
             <div className="attn-sub"><Pill className="agent-tag">{AGENT_LABEL[s.agent] ?? s.agent}</Pill>{s.detail ? ` ${s.detail}` : ''}</div>
+            {s.payload?.hint && <div className="attn-hint">{s.payload.hint}</div>}
           </div>
           <div className="attn-actions">
             {s.action_label && <button className="btn sm primary" disabled={busy === s.id} onClick={() => decide(s, 'accept')}>{s.action_label}</button>}
-            {!s.action_label && destination(s, role) && <button className="btn sm" onClick={() => open(s)}>Open</button>}
-            <button className="ib sm-ib" aria-label="Dismiss" title="Dismiss" disabled={busy === s.id} onClick={() => decide(s, 'reject')}><Icon name="x" size={14} /></button>
+            {s.action_label && s.payload?.choices?.map((c) => <button key={c.value} className="btn sm attn-alt" disabled={busy === s.id} onClick={() => decide(s, 'accept', c.value)}>{c.label}</button>)}
+            {destination(s, role) && (
+              s.action_label
+                ? <button className="linkbtn small attn-open" onClick={() => open(s)}>{s.payload?.open_label ?? (s.target_type === 'order' ? 'Open order' : 'Open')}</button>
+                : <button className="btn sm" onClick={() => open(s)}>{s.payload?.open_label ?? 'Open'}</button>
+            )}
+            {s.payload?.dismiss_label
+              ? <button className="btn sm" disabled={busy === s.id} onClick={() => decide(s, 'reject')}>{s.payload.dismiss_label}</button>
+              : <button className="ib sm-ib" aria-label="Dismiss" title="Dismiss" disabled={busy === s.id} onClick={() => decide(s, 'reject')}><Icon name="x" size={14} /></button>}
           </div>
         </div>
       ))}
@@ -138,11 +155,16 @@ export function useAttentionItems(ctx: Ctx, opts: { reads?: boolean } = {}): Att
     crew.filter((x) => x.cam && x.cam.active_pct < 60).slice(0, 2).forEach((x) =>
       items.push({ key: `idle-${x.worker.id}`, tone: 'warn', title: `${x.worker.name} idle ${Math.round(x.cam!.idle_min)} min`, sub: `CCTV · ${x.cam!.station} · ${x.section}`, action: 'View', tab: owner ? 'people' : 'floor' }));
     if (owner) {
-      d.lots.filter((l) => l.balance > 0 && l.balance < 200).slice(0, 1).forEach((l) =>
-        items.push({ key: `low-${l.lot_id}`, tone: 'info', title: `${l.lot_id} running low`, sub: `${fmtM(l.balance)} left · ${l.quality}`, action: 'Ledger', tab: 'stock' }));
+      (d.stockSummary?.low_lots ?? []).slice(0, 1).forEach((l) =>
+        items.push({
+          key: `low-${l.lot_id}`, tone: 'info', title: `${l.lot_id} running low — ${fmtM(l.balance)} left`,
+          sub: `${l.quality} · below your low-stock level, so it may not cover the next order. "Open lot" shows this lot's entries in the Stock ledger.`,
+          action: 'Open lot', tab: 'stock',
+          hash: `ledger=${encodeURIComponent(new URLSearchParams({ view: 'moves', lot: l.lot_id, focus: l.lot_id }).toString())}`,
+        }));
     }
     return items;
-  }, [role, d.jobCards, d.captures, d.lots, days, withReads, ctx.signups]);
+  }, [role, d.jobCards, d.captures, d.stockSummary, days, withReads, ctx.signups]);
 }
 
 /** The full list: floor items first, then agent suggestions. */
@@ -157,7 +179,7 @@ export function AttentionList({ ctx, onNavigate, emptyText = 'All clear. Nothing
             <div className="attn-title">{a.title}</div>
             <div className="attn-sub">{a.sub}</div>
           </div>
-          <button className="btn sm" onClick={() => { if (a.hash) window.history.replaceState(null, '', `#${a.hash}`); onNavigate?.(); ctx.go(a.tab); }}>{a.action}</button>
+          <button className="btn sm" onClick={() => { onNavigate?.(); if (a.hash) openLink(ctx.go, a.tab, a.hash); else ctx.go(a.tab); }}>{a.action}</button>
         </div>
       ))}
       <AgentInbox ctx={ctx} onNavigate={onNavigate} empty={items.length === 0 ? <p className="muted" style={{ margin: 0 }}>{emptyText}</p> : null} />

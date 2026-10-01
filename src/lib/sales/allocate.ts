@@ -38,18 +38,32 @@ export function pickLots(lots: LotStock[], need: number): { lot: LotStock; meter
   let k = 0;
   let acc = 0;
   while (k < bySize.length && acc < need - 0.001) { acc += bySize[k].free; k++; }
-  const canCover = (rest: LotStock[], slots: number, needLeft: number) =>
-    needLeft <= 0.001 || [...rest].sort((a, b) => b.free - a.free).slice(0, slots).reduce((s, l) => s + l.free, 0) >= needLeft - 0.001;
+  // Available lots kept sorted biggest first once, so "can the rest still cover it?" is O(k), not a sort per lot
+  // (a quality can have thousands of lots). Same result as sorting `available` minus the candidate each time.
+  let bySizeAvail = bySize;
+  const canCover = (skip: LotStock, slots: number, needLeft: number) => {
+    if (needLeft <= 0.001) return true;
+    let sum = 0;
+    let taken = 0;
+    for (const l of bySizeAvail) {
+      if (taken >= slots) break;
+      if (l === skip) continue;
+      sum += l.free;
+      taken++;
+    }
+    return sum >= needLeft - 0.001;
+  };
   const picks: { lot: LotStock; meters: number }[] = [];
   let remaining = need;
   let available = [...pool]; // already oldest first
   while (remaining > 0.001 && picks.length < k && available.length) {
     const slotsAfter = k - picks.length - 1;
-    const choice = available.find((l) => canCover(available.filter((x) => x !== l), slotsAfter, remaining - l.free)) ?? available[0];
+    const choice = available.find((l) => canCover(l, slotsAfter, remaining - l.free)) ?? available[0];
     const take = round2(Math.min(choice.free, remaining));
     picks.push({ lot: choice, meters: take });
     remaining = round2(remaining - take);
     available = available.filter((x) => x !== choice);
+    bySizeAvail = bySizeAvail.filter((x) => x !== choice);
   }
   return picks;
 }

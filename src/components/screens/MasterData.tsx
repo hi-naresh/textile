@@ -2,11 +2,11 @@
 
 // Owner master data, shown in My firm (parties, billing & GST) and Settings (stock alert thresholds).
 // Selling rates and process costs are turned off: every party gets its own rate, typed on the order.
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Icon from '../Icon';
 import { Pill, Sheet, inr } from '../ui';
 import type { Ctx } from '../ctx';
-import { apiSend, useApi, who } from '@/lib/useApi';
+import { apiSend, flashWhenReady, useApi, who } from '@/lib/useApi';
 import { actorId } from '@/lib/useTextileData';
 import type { Party } from '@/lib/domain';
 import type { BillingSettings } from '@/lib/money/master';
@@ -38,13 +38,14 @@ function Toggle({ on, label, onChange }: { on: boolean; label: string; onChange:
 }
 
 /** Parties (clients) with search, add and edit. Owner only. */
-export function FirmParties({ ctx }: { ctx: Ctx }) {
+/** `link`: open this party (deep link #firm=parties&party=ID from search). */
+export function FirmParties({ ctx, link = null }: { ctx: Ctx; link?: { id: number; n: number } | null }) {
   const [bump, setBump] = useState(0);
   const key = `${ctx.d.lastSync?.getTime() ?? 0}:${bump}`;
   const parties = useApi<{ parties: Party[] }>(ctx.role === 'owner' ? `/api/parties?all=1&${who(ctx.role, actorId(ctx.role))}` : null, key);
   const send = useSend(ctx, () => setBump((b) => b + 1));
   if (ctx.role !== 'owner') return null;
-  return <Parties list={parties.error ? [] : parties.data?.parties ?? null} error={parties.error} send={send} />;
+  return <Parties list={parties.error ? [] : parties.data?.parties ?? null} error={parties.error} send={send} link={link} />;
 }
 
 /** Billing & GST details printed on invoices (legal name, GSTIN, address, bank, invoice numbering). */
@@ -72,10 +73,23 @@ export function StockAlerts({ ctx }: { ctx: Ctx }) {
 }
 
 // ---------- Parties ----------
-function Parties({ list, error, send }: { list: Party[] | null; error: string | null; send: Send }) {
+function Parties({ list, error, send, link }: { list: Party[] | null; error: string | null; send: Send; link: { id: number; n: number } | null }) {
   const [search, setSearch] = useState('');
   const [edit, setEdit] = useState<Party | 'new' | null>(null);
   const [showAll, setShowAll] = useState(false);
+  // Deep link: filter the list to that party, highlight its row and open its details (once the list is in).
+  const [handled, setHandled] = useState<{ id: number; n: number } | null>(null);
+  const linked = link && link !== handled ? list?.find((p) => p.id === link.id) ?? null : null;
+  useEffect(() => {
+    if (!link || link === handled || !list) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- a deep link arrived: open that party */
+    setHandled(link);
+    if (!linked) return;
+    setSearch(linked.name);
+    setEdit(linked);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    flashWhenReady(`[data-party-row="${linked.id}"]`, 3000); // not cancelled on re-run: `handled` changes right away
+  }, [link, handled, list, linked]);
   const k = search.trim().toLowerCase();
   const rows = (list ?? []).filter((p) => !k || [p.name, p.city, p.phone, p.gstin].some((x) => x?.toLowerCase().includes(k)));
   const shown = showAll || k ? rows : rows.slice(0, 12);
@@ -90,7 +104,7 @@ function Parties({ list, error, send }: { list: Party[] | null; error: string | 
         {error && <span className="muted small" style={{ padding: 14 }}>{error}</span>}
         {list == null && <span className="muted small" style={{ padding: 14 }}>Loading…</span>}
         {shown.map((p) => (
-          <div key={p.id} className={`list-row ${p.active ? '' : 'off'}`}>
+          <div key={p.id} data-party-row={p.id} className={`list-row ${p.active ? '' : 'off'}`}>
             <div className={s.rowMain}>
               <span className="strong">{p.name}</span>
               <span className="muted tiny">{[p.city, p.phone, p.gstin].filter(Boolean).join(' · ') || 'No details yet'}</span>

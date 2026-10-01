@@ -12,6 +12,16 @@ export interface Lot {
   location_ts: string | null;
 }
 
+/** Stock on hand at a glance (GET /api/stock). low_lots: 0 < balance < the firm's low-stock level, 20 lowest. */
+export interface StockSummary {
+  on_hand_m: number;
+  active_lots: number;
+  low_lots: { lot_id: string; quality: string; balance: number }[];
+}
+
+/** One page of lots (GET /api/lots). total: first page only; total_capped → show "10,000+". */
+export interface LotsPage { rows: Lot[]; next: string | null; total: number | null; total_capped: boolean }
+
 export type LocationStage = 'arrival' | 'job_card' | 'returned' | 'dispatch' | 'moved';
 
 export interface LotLocationEntry {

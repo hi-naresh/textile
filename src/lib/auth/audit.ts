@@ -8,7 +8,7 @@ export type AuditEvent =
   | 'signup' | 'signup.approved' | 'signup.rejected'
   | 'user.deactivated' | 'user.reactivated' | 'user.role_changed' | 'user.sections_changed'
   | 'user.created' | 'user.updated' | 'user.deleted' | 'worker.deleted'
-  | 'access.changed'
+  | 'access.changed' | 'agent.settings'
   | 'password.changed' | 'password.reset'
   | 'session.revoked' | 'session.reuse_detected'
   | 'view_as.start' | 'view_as.stop' | 'dev.client_data';

@@ -2,98 +2,18 @@
 
 import React, { useState } from 'react';
 import Icon from '../Icon';
-import { Kpi, PageHead, Pill, Segmented, Sheet, Track, dayTime, effTone, fmt, fmtM, inr, initials, time } from '../ui';
+import { PageHead, Pill, Segmented, Sheet, Track, dayTime, effTone, fmt, inr, initials } from '../ui';
 import { LotLocationPanel } from './Shared';
 import { LedgerFilterBar } from './StockLedger';
 import { EMPTY_FILTERS, filtersActive, ledgerParams, useDebounced, useLedger, type LedgerFilterState, type LedgerRow } from '@/lib/useLedger';
+import { EMPTY_LOT_FILTERS, lotParams, useLots, type LotFilterState } from '@/lib/useLots';
+import { flashWhenReady, useHashLink } from '@/lib/useApi';
 import { EditBar, EditCell, EditedMarker, LOT_STATUSES, NO_DRAFTS, UnsavedDialog, checkCell, countDrafts, gridKeyDown, setDraft, str, type Drafts, type OnEdit, type RowDraft } from './StockEdit';
-import { LiveNow, StockFlow } from './Today';
-import { AttentionList, useAttentionCount } from '../AgentInbox';
 import type { LedgerEntry, Lot } from '@/lib/types';
 import type { Ctx } from '../ctx';
-import { can, supervisorFor, rules, owner } from '@/lib/access';
-import { STAGE_LABEL, camStatus, locationTone, sectionRows } from '@/lib/derive';
+import { can } from '@/lib/access';
+import { STAGE_LABEL, camStatus, locationTone } from '@/lib/derive';
 
-const greeting = () => {
-  const h = new Date().getHours();
-  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
-};
-
-// ---------------- Overview ----------------
-export function Overview({ ctx }: { ctx: Ctx }) {
-  const { d, days } = ctx;
-  const onHand = d.lots.reduce((s, l) => s + Math.max(0, l.balance), 0);
-  const activeLots = d.lots.filter((l) => l.balance > 0).length;
-  const today = d.flow[d.flow.length - 1];
-  const allot = days.reduce((s, x) => s + x.allotted, 0);
-  const done = days.reduce((s, x) => s + x.done, 0);
-  const floorEff = allot > 0 ? (done / allot) * 100 : null;
-  const target = rules().efficiencyTargetPct;
-  const flaggedWorkers = days.filter((x) => x.eff != null && x.eff < target).length;
-  const sections = sectionRows(days, d.jobCards);
-  const n = useAttentionCount(ctx);
-  const attention = n.alerts + (n.reads ? 1 : 0); // the list below shows waiting photo reads as one line
-
-  return (
-    <div className="page fade">
-      <PageHead title={`${greeting()}, ${owner().name.split(' ')[0]}`} sub={`${sections.filter((s) => s.open > 0).length} section${sections.filter((s) => s.open > 0).length === 1 ? '' : 's'} running${d.lastSync ? ` · synced ${time(d.lastSync.toISOString())}` : ''}`}>
-        <button className="btn" onClick={() => d.refresh()}><Icon name="refresh" size={16} strokeWidth={2} />Refresh</button>
-        <button className="btn primary" onClick={() => ctx.openSheet('stock')}><Icon name="plus" size={16} strokeWidth={2} />New entry</button>
-      </PageHead>
-
-      <div className="grid-kpi">
-        <Kpi label="Stock on hand" value={fmtM(onHand)} sub={`${activeLots} active lots`} />
-        <Kpi label="Dispatched today" value={fmtM(today?.out_m ?? 0)} sub={`In today: ${fmtM(today?.in_m ?? 0)}`} />
-        <Kpi label="Floor efficiency" value={floorEff == null ? '—' : `${floorEff.toFixed(1)}%`} sub={floorEff == null ? 'No work allotted today' : flaggedWorkers ? `${flaggedWorkers} worker${flaggedWorkers > 1 ? 's' : ''} below ${target}%` : 'Everyone on track'} subTone={flaggedWorkers ? 'warn' : 'good'} />
-        <TimeSavedKpi ctx={ctx} />
-      </div>
-
-      <div className="grid-split">
-        <LiveNow ctx={ctx} />
-        <section className="card pad stack-14">
-          <div className="card-head"><h2>Needs your attention</h2>{attention > 0 && <Pill tone="bad"><span className="num">{attention}</span></Pill>}</div>
-          <AttentionList ctx={ctx} />
-        </section>
-      </div>
-
-      <StockFlow ctx={ctx} />
-
-      <section className="card flush d">
-          <div className="card-head pad-x"><h2>Sections</h2><span className="muted small">today, live</span></div>
-          <table className="tbl rtbl">
-            <thead><tr><th>Section</th><th>Supervisor</th><th className="r">Open cards</th><th style={{ width: 180 }}>Efficiency</th><th className="r">Shortage</th></tr></thead>
-            <tbody>
-              {sections.map((s) => (
-                <tr key={s.name}>
-                  <td data-label="Section" className="strong">{s.name}</td>
-                  <td data-label="Supervisor" className="t2">{supervisorFor(s.name)}</td>
-                  <td data-label="Open cards" className="r num">{s.open}</td>
-                  <td data-label="Efficiency">{s.eff == null ? <span className="muted">No allotment</span> : <div className="bar-row"><Track pct={s.eff} tone={effTone(s.eff)} /><span className="num small">{s.eff}%</span></div>}</td>
-                  <td data-label="Shortage" className="r"><Pill tone={s.shortTone}><span className="num">{s.shortage == null ? '—' : `${s.shortage.toFixed(1)}%`}</span></Pill></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-
-    </div>
-  );
-}
-
-function TimeSavedKpi({ ctx }: { ctx: Ctx }) {
-  const v = ctx.d.value?.month;
-  const hours = v ? v.savedMin / 60 : 0;
-  return (
-    <Kpi
-      label="Time saved · 30 days"
-      value={v ? (hours >= 1 ? `${fmt(hours, 1)} h` : `${fmt(v.savedMin, 0)} min`) : '—'}
-      sub={v ? (v.captures ? `${v.captures} photo read${v.captures === 1 ? '' : 's'} vs manual entry` : 'No confirmed photo reads yet') : 'Loading…'}
-      subTone={v && v.savedMin > 0 ? 'good' : undefined}
-    />
-  );
-}
-
-// ---------------- Stock ledger ----------------
 type SavedLot = { lot_id: string; quality: string; design: string; grade: string | null; status: string | null };
 type Problem = { target: 'movement' | 'lot'; id: number | string; field: string; message: string };
 
@@ -106,15 +26,46 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   const [filters, setFilters] = useState<LedgerFilterState>(EMPTY_FILTERS);
   const [lotSheet, setLotSheet] = useState<string | null>(null);
   const applied = useDebounced(filters, 300); // typing in search / lot waits 300 ms
-  const lg = useLedger(applied, d.lastSync?.getTime());
+  // Lists reload only when stock changed on the server (d.stockRev), not on every app refresh.
+  const lg = useLedger(applied, d.stockRev);
   const today = d.flow[d.flow.length - 1];
-  const lotIds = React.useMemo(() => d.lots.map((l) => l.lot_id), [d.lots]);
-  const [lotQ, setLotQ] = useState('');
-  const [lotCap, setLotCap] = useState(200);
-  const lotRows = React.useMemo(() => {
-    const t = lotQ.trim().toLowerCase();
-    return t ? d.lots.filter((l) => l.lot_id.toLowerCase().includes(t) || (l.quality ?? '').toLowerCase().includes(t) || (l.design ?? '').toLowerCase().includes(t) || (l.location ?? '').toLowerCase().includes(t)) : d.lots;
-  }, [d.lots, lotQ]);
+  // Lots & balance: filtered + paged on the server (GET /api/lots); nothing loads until the view is opened.
+  const [lotFilters, setLotFilters] = useState<LotFilterState>(EMPTY_LOT_FILTERS);
+  const lotApplied = useDebounced(lotFilters, 250);
+  const lt = useLots(lotApplied, d.stockRev, view === 'lots');
+
+  // Deep link: #ledger=<view=moves|lots&q=&lot=&direction=&quality=&design=&party=&from=&to=&focus=>
+  const link = useHashLink('ledger');
+  const [focus, setFocus] = useState<{ id: string; view: 'moves' | 'lots' } | null>(null);
+  const flashCancel = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => {
+    if (link.value == null) return;
+    const p = new URLSearchParams(link.value);
+    const g = (k: string) => (p.get(k) ?? '').trim();
+    const v = g('view') === 'lots' ? 'lots' : 'moves';
+    const dir = g('direction').toUpperCase();
+    /* eslint-disable react-hooks/set-state-in-effect -- applying a deep link once per link */
+    if (v === 'lots') {
+      setLotFilters({ ...EMPTY_LOT_FILTERS, q: g('q') || g('lot') });
+    } else {
+      setFilters({ ...EMPTY_FILTERS, q: g('q'), lot: g('lot'), direction: dir === 'IN' || dir === 'OUT' ? dir : '', quality: g('quality'), design: g('design'), party: g('party'), from: g('from'), to: g('to') });
+    }
+    setView(v);
+    setFocus(g('focus') ? { id: g('focus'), view: v } : null);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [link.n, link.value]);
+  // Scroll to + briefly highlight the linked row once its list has loaded.
+  const listLoading = view === 'lots' ? lt.loading : lg.loading;
+  React.useEffect(() => {
+    if (!focus || focus.view !== view || listLoading) return;
+    const id = focus.id;
+    const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, '');
+    const sel = view === 'lots' ? `tr[data-lot="${esc}"]` : /^\d+$/.test(id) ? `tr[data-mv="${esc}"], tr[data-lot="${esc}"]` : `tr[data-lot="${esc}"]`;
+    flashCancel.current?.();
+    flashCancel.current = flashWhenReady(sel, 6000); // polls until the (filtered) rows show the item
+    setFocus(null); // eslint-disable-line react-hooks/set-state-in-effect -- one-shot
+  }, [focus, view, listLoading]);
+  React.useEffect(() => () => flashCancel.current?.(), []);
 
   // ----- edit mode: drafts (only cells that differ), server problems, save -----
   const [drafts, setDrafts] = useState<Drafts>(NO_DRAFTS);
@@ -180,8 +131,10 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       }
       if (!res.ok) throw new Error(data?.error || 'Could not save. Nothing was changed.');
       lg.patchRows(data.rows ?? [], (data.lots ?? []) as SavedLot[]);
-      lg.holdRefresh(); // the data refresh below must not reload the ledger pages
-      await d.refresh(); // lots / balances elsewhere stay in sync
+      lt.patchLots((data.lots ?? []) as Partial<Lot>[]);
+      lg.holdRefresh(); // the refresh below must not reload the loaded pages (rows are patched in place)
+      lt.holdRefresh();
+      await d.refreshStock(); // summary / names / qualities stay in sync (only the small stock snapshot)
       discard();
       const n = Number(data.saved ?? 0);
       d.showToast(n ? `Saved ${n} ${n === 1 ? 'change' : 'changes'}` : 'Nothing changed');
@@ -196,19 +149,25 @@ export function Stock({ ctx }: { ctx: Ctx }) {
 
   // Infinite scroll: load the next page when the end of the table comes into view.
   const endRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasMore, loadMore, loading, loadingMore } = lg;
+  const cur = view === 'lots' ? lt : lg;
+  const { hasMore, loadMore, loading, loadingMore } = cur;
   React.useEffect(() => {
     const el = endRef.current;
     if (!el || !hasMore || loading || typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadMore(); }, { rootMargin: '400px 0px' });
     io.observe(el);
     return () => io.disconnect();
-  }, [hasMore, loadMore, loading, loadingMore]);
+  }, [hasMore, loadMore, loading, loadingMore, view]);
 
   const qs = ledgerParams(applied).toString();
-  const exportHref = view === 'lots' ? '/api/stock/export?kind=lots' : `/api/stock/export?kind=challans${qs ? `&${qs}` : ''}`;
+  const lqs = lotParams(lotApplied).toString();
+  const exportHref = view === 'lots' ? `/api/stock/export?kind=lots${lqs ? `&${lqs}` : ''}` : `/api/stock/export?kind=challans${qs ? `&${qs}` : ''}`;
   const active = filtersActive(applied);
+  const lotActive = lqs !== '';
   const n = (x: number) => x.toLocaleString('en-IN');
+  // "12,345" or, past the count cap, "10,000+"
+  const countText = (total: number | null, capped: boolean) => (total == null ? '' : `${n(total)}${capped ? '+' : ''}`);
+  const left = (total: number | null, capped: boolean, shown: number) => (capped ? 'more' : `${n(Math.max(0, (total ?? 0) - shown))} left`);
   const cols = rate ? 11 : 10;
 
   return (
@@ -235,11 +194,11 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       )}
       {view === 'moves' ? (
         <>
-          <LedgerFilterBar value={filters} onChange={(f) => guard(() => setFilters(f))} facets={lg.facets} lots={lotIds} />
+          <LedgerFilterBar value={filters} onChange={(f) => guard(() => setFilters(f))} facets={lg.facets} />
           <div className="lf-count small t2" aria-live="polite">
-            {lg.loading ? 'Loading…'
+            {lg.loading ? (lg.rows.length ? 'Searching…' : 'Loading…')
               : lg.total == null ? ''
-              : <><span className="num strong">{n(lg.total)}</span> {lg.total === 1 ? 'movement' : 'movements'}{active ? ' match' : ''}{lg.total > lg.rows.length ? <> · showing {n(lg.rows.length)}</> : null}</>}
+              : <><span className="num strong">{countText(lg.total, lg.totalCapped)}</span> {lg.total === 1 && !lg.totalCapped ? 'movement' : 'movements'}{active ? ' match' : ''}{lg.totalCapped || lg.total > lg.rows.length ? <> · showing {n(lg.rows.length)}</> : null}</>}
           </div>
           {lg.error && <div className="alert bad" role="alert">{lg.error}</div>}
           <section className={`card flush ${lg.loading && lg.rows.length ? 'lf-stale' : ''}`}>
@@ -257,7 +216,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
             </div>
             {lg.hasMore && (
               <div ref={endRef} className="lf-more">
-                <button type="button" className="btn sm" disabled={lg.loadingMore} onClick={() => lg.loadMore()}>{lg.loadingMore ? 'Loading…' : `Load more (${n(Math.max(0, (lg.total ?? 0) - lg.rows.length))} left)`}</button>
+                <button type="button" className="btn sm" disabled={lg.loadingMore} onClick={() => lg.loadMore()}>{lg.loadingMore ? 'Loading…' : `Load more (${left(lg.total, lg.totalCapped, lg.rows.length)})`}</button>
               </div>
             )}
           </section>
@@ -267,24 +226,35 @@ export function Stock({ ctx }: { ctx: Ctx }) {
         <div className="lf" role="search" aria-label="Find a lot">
           <label className="lf-search">
             <Icon name="search" size={16} />
-            <input type="search" value={lotQ} onChange={(e) => { setLotQ(e.target.value); setLotCap(200); }} placeholder="Search lot, quality, design, location…" aria-label="Search lots" />
+            <input type="search" value={lotFilters.q} onChange={(e) => { const q = e.target.value; guard(() => setLotFilters((f) => ({ ...f, q }))); }} placeholder="Search lot, quality, design, location…" aria-label="Search lots" />
           </label>
+          <div className="lf-row">
+            <Segmented label="Stock" value={lotFilters.stock || 'all'} onChange={(v) => guard(() => setLotFilters((f) => ({ ...f, stock: v === 'in' ? 'in' : '' })))}
+              options={[{ value: 'all', label: 'All lots' }, { value: 'in', label: 'In stock' }]} />
+          </div>
         </div>
-        <div className="lf-count small t2" aria-live="polite"><span className="num strong">{n(lotRows.length)}</span> {lotRows.length === 1 ? 'lot' : 'lots'}{lotRows.length > lotCap ? <> · showing {n(lotCap)}</> : null}</div>
-        <section className="card flush">
+        <div className="lf-count small t2" aria-live="polite">
+          {lt.loading ? (lt.rows.length ? 'Searching…' : 'Loading…')
+            : lt.total == null ? ''
+            : <><span className="num strong">{countText(lt.total, lt.totalCapped)}</span> {lt.total === 1 && !lt.totalCapped ? 'lot' : 'lots'}{lotActive ? ' match' : ''}{lt.totalCapped || lt.total > lt.rows.length ? <> · showing {n(lt.rows.length)}</> : null}</>}
+        </div>
+        {lt.error && <div className="alert bad" role="alert">{lt.error}</div>}
+        <section className={`card flush ${lt.loading && lt.rows.length ? 'lf-stale' : ''}`}>
           <div className="ledger-scroll">
           <table className={`tbl rtbl ${editing ? 'se-tbl' : ''}`} onKeyDown={editing ? gridKeyDown : undefined}>
             <thead><tr><th className="r">S.No</th><th>Lot</th><th>Quality</th><th className={editing ? '' : 'd'}>Design</th><th className={editing ? '' : 'd'}>Grade</th><th className={editing ? '' : 'd'}>Status</th><th>Location</th><th className="r">Balance</th><th className="r">Action</th></tr></thead>
             <tbody>
-              {lotRows.slice(0, lotCap).map((l, i) => (
+              {lt.rows.map((l, i) => (
                 <LotRow key={l.lot_id} l={l} i={i} editing={editing} onEdit={onEdit} draft={drafts.l[l.lot_id]} probs={problems.l[l.lot_id]} onMove={setLotSheet} />
               ))}
-              {!lotRows.length && <tr><td colSpan={9} className="muted center">{lotQ.trim() ? 'No lots match' : 'No lots yet'}</td></tr>}
+              {!lt.rows.length && !lt.loading && <tr><td colSpan={9} className="muted center">{lotActive ? 'No lots match' : 'No lots yet'}</td></tr>}
             </tbody>
           </table>
           </div>
-          {lotRows.length > lotCap && (
-            <div className="lf-more"><button type="button" className="btn sm" onClick={() => setLotCap((c) => c + 500)}>Show more ({n(lotRows.length - lotCap)} left)</button></div>
+          {lt.hasMore && (
+            <div ref={endRef} className="lf-more">
+              <button type="button" className="btn sm" disabled={lt.loadingMore} onClick={() => lt.loadMore()}>{lt.loadingMore ? 'Loading…' : `Show more (${left(lt.total, lt.totalCapped, lt.rows.length)})`}</button>
+            </div>
           )}
         </section>
         </>
@@ -319,7 +289,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
   const source = <div className="muted tiny">{l.capture_event_id ? 'Photo' : l.imported ? 'Excel' : 'Manual'}</div>;
   if (!editing) {
     return (
-      <tr>
+      <tr data-mv={l.id} data-lot={l.lot_id}>
         <td data-label="SR" className="r num strong">
           {l.sr_no ?? <span className="muted">—</span>}
           {canEdit && l.edited ? <EditedMarker target="movement" id={l.id} /> : null}
@@ -346,7 +316,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
       onEdit={onEdit} list={list} hint={`Changes ${label.toLowerCase()} for every row of lot ${l.lot_id}`} />
   );
   return (
-    <tr className={draft || lotDraft ? 'se-row-changed' : undefined}>
+    <tr data-mv={l.id} data-lot={l.lot_id} className={draft || lotDraft ? 'se-row-changed' : undefined}>
       <td data-label="SR" className="r">{cell('sr_no', 'SR no.', { num: true })}</td>
       <td data-label="Time" className="num t2 se-ro">{dayTime(l.ts)}</td>
       <td data-label="Dir" className="se-ro"><Pill tone={l.direction === 'IN' ? 'info' : 'warn'}>{l.direction}</Pill></td>
@@ -382,7 +352,7 @@ const LotRow = React.memo(function LotRow({ l, i, editing, onEdit, draft, probs,
       {...extra} options={extra.options && !extra.options.includes(l[field] ?? '') ? [l[field] ?? '', ...extra.options] : extra.options} />
   );
   return (
-    <tr className={editing && draft ? 'se-row-changed' : undefined}>
+    <tr data-lot={l.lot_id} className={editing && draft ? 'se-row-changed' : undefined}>
       <td data-label="S.No" className="r num muted">{i + 1}</td>
       <td data-label="Lot" className="num strong">{l.lot_id}</td>
       {editing ? (

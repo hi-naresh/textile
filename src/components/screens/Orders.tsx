@@ -2,13 +2,13 @@
 
 // Orders & inquiries (Phase 2 — Sales). Inquiry Handling, Order Management and Fabric Allocation.
 // Owner: everything. Supervisor: log inquiries + reply drafts (no ₹), view orders in meters only.
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, PageHead, Pill, Segmented, Sheet, Track, dayTime, fmt, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
 import { can } from '@/lib/access';
 import { actorId } from '@/lib/useTextileData';
-import { apiSend, useApi, useTakeHash, who } from '@/lib/useApi';
+import { apiSend, flashWhenReady, useApi, useHashLink, who } from '@/lib/useApi';
 import type { Allocation, Inquiry, Order, Party } from '@/lib/domain';
 import s from './Orders.module.css';
 
@@ -64,20 +64,50 @@ function useParties(ctx: Ctx) {
   }, [data, ctx.d.names.parties]);
 }
 
-const qualitiesOf = (ctx: Ctx) => Array.from(new Set(ctx.d.lots.map((l) => l.quality).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+const qualitiesOf = (ctx: Ctx) => ctx.d.qualities; // distinct lot qualities, sorted (GET /api/stock)
 
 // =====================================================================
 export function Orders({ ctx }: { ctx: Ctx }) {
-  // Deep link from an agent alert: #order=41 opens that order, #inquiry=7 the inquiries list.
-  const link = { order: useTakeHash('order'), inquiry: useTakeHash('inquiry') };
+  // Deep links (search, agent alerts): #order=41 opens that order, #inquiry=7 opens that inquiry,
+  // #orders=party%3D6%26name%3D… shows one party's orders. They also work while this screen is already open.
+  const orderLink = useHashLink('order');
+  const inqLink = useHashLink('inquiry');
+  const partyLink = useHashLink('orders');
   const canInq = can(ctx.role, 'inquiry.handle');
   const canOrders = can(ctx.role, 'orders.view');
-  const [viewState, setView] = useState<'inquiries' | 'orders'>(link.order ? 'orders' : 'inquiries');
+  const [viewState, setView] = useState<'inquiries' | 'orders'>(orderLink.value || partyLink.value ? 'orders' : 'inquiries');
   // A part switched off for this role (developer console) is hidden, not shown with an error.
   const view: 'inquiries' | 'orders' = !canInq ? 'orders' : !canOrders ? 'inquiries' : viewState;
-  const [openOrder, setOpenOrder] = useState<number | null>(link.order ? Number(link.order) || null : null);
+  const [openOrder, setOpenOrder] = useState<number | null>(null);
   const [newOrder, setNewOrder] = useState(false);
   const [orderStatus, setOrderStatus] = useState<OrderFilter>('open');
+  const [party, setParty] = useState<{ id: number; name: string } | null>(null); // "show one party's orders"
+  const [inqOpen, setInqOpen] = useState<{ id: number; n: number } | null>(null);
+  /* eslint-disable react-hooks/set-state-in-effect -- a deep link arrived: open that item */
+  useEffect(() => {
+    const id = Number(orderLink.value);
+    if (!id) return;
+    setView('orders');
+    setParty(null);
+    setOpenOrder(id);
+    return flashWhenReady(`[data-order="${id}"]`, 3000);
+  }, [orderLink]);
+  useEffect(() => {
+    const id = Number(inqLink.value);
+    if (!id) return;
+    setView('inquiries');
+    setInqOpen({ id, n: inqLink.n });
+  }, [inqLink]);
+  useEffect(() => {
+    if (!partyLink.value) return;
+    const p = new URLSearchParams(partyLink.value);
+    const id = Number(p.get('party'));
+    if (!id) return;
+    setParty({ id, name: p.get('name') || `Party ${id}` });
+    setOrderStatus('all');
+    setView('orders');
+  }, [partyLink]);
+  /* eslint-enable react-hooks/set-state-in-effect */
   const [created, setCreated] = useState<OrderRow[]>([]); // shown at the top straight away, before the list reloads
   const manage = can(ctx.role, 'orders.manage');
   const parties = useParties(ctx);
@@ -96,8 +126,8 @@ export function Orders({ ctx }: { ctx: Ctx }) {
         {canInq && canOrders && <Segmented label="Show" className="fit" value={view} onChange={setView} options={[{ value: 'inquiries', label: 'Inquiries' }, { value: 'orders', label: 'Orders' }]} />}
       </div>
       {view === 'inquiries'
-        ? <Inquiries ctx={ctx} parties={parties} onOrder={showOrder} />
-        : <OrdersList ctx={ctx} status={orderStatus} setStatus={setOrderStatus} created={created} onOpen={setOpenOrder} />}
+        ? <Inquiries ctx={ctx} parties={parties} onOrder={showOrder} link={inqOpen} />
+        : <OrdersList ctx={ctx} status={orderStatus} setStatus={setOrderStatus} created={created} onOpen={setOpenOrder} party={party} onClearParty={() => setParty(null)} />}
       {openOrder != null && <OrderSheet ctx={ctx} id={openOrder} onClose={() => setOpenOrder(null)} />}
       {newOrder && <NewOrderSheet ctx={ctx} parties={parties} onClose={() => setNewOrder(false)} onCreated={(o) => {
         setNewOrder(false);
@@ -111,7 +141,7 @@ export function Orders({ ctx }: { ctx: Ctx }) {
 
 // =====================================================================
 // Inquiries
-function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<typeof useParties>; onOrder: (id: number) => void }) {
+function Inquiries({ ctx, parties, onOrder, link }: { ctx: Ctx; parties: ReturnType<typeof useParties>; onOrder: (id: number) => void; link: { id: number; n: number } | null }) {
   const { role, d } = ctx;
   const actor = actorId(role);
   const [text, setText] = useState('');
@@ -150,17 +180,22 @@ function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<ty
     }
   };
 
-  const open = async (id: number) => {
+  const open = async (id: number, fromLink = false) => {
     try {
       const res = await fetch(`/api/inquiries/${id}?${who(role, actor)}`, { cache: 'no-store' });
       const j = await res.json();
       if (!res.ok) throw new Error(j?.error || 'Could not load.');
       setCurrent(j);
-      if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+      // From a link (search / "Needs your attention"): bring the inquiry and its reply into view and mark it.
+      if (fromLink) flashWhenReady(`[data-inquiry-card="${id}"]`, 3000);
+      else if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       d.showToast(err instanceof Error ? err.message : 'Could not load.', 'danger');
     }
   };
+  const openRef = React.useRef(open);
+  useEffect(() => { openRef.current = open; });
+  useEffect(() => { if (link) void openRef.current(link.id, true); }, [link]);
 
   return (
     <div className="stack-16">
@@ -198,7 +233,7 @@ function Inquiries({ ctx, parties, onOrder }: { ctx: Ctx; parties: ReturnType<ty
         {list.error && <div className="alert bad" style={{ margin: '0 16px 16px' }}>{list.error}</div>}
         <div>
           {rows.map((i) => (
-            <button key={i.id} type="button" className={`list-row ${s.inqRow}`} onClick={() => open(i.id)}>
+            <button key={i.id} type="button" data-inquiry={i.id} className={`list-row ${s.inqRow} ${current?.inquiry.id === i.id ? 'on' : ''}`} onClick={() => open(i.id)}>
               <div className="stack-2 grow" style={{ minWidth: 0 }}>
                 <span className="strong">{i.party_name || 'Party not known'}{i.order_id ? <span className="muted small"> · order #{i.order_id}</span> : null}</span>
                 <span className={`muted small ${s.clip}`}>{i.quality ? `${i.quality}${i.meters != null ? ` · ${m(i.meters)}` : ''}${i.needed_by ? ` · by ${shortDate(i.needed_by)}` : ''}` : i.raw_text}</span>
@@ -288,7 +323,7 @@ function InquiryCard({ ctx, view, parties, onChange, onOrder, onClose }: {
   const short = i.meters != null ? Math.max(0, i.meters - view.stock.free) : 0;
 
   return (
-    <section className="card pad stack-16">
+    <section className="card pad stack-16" data-inquiry-card={i.id}>
       <div className="card-head">
         <h2>Inquiry #{i.id}</h2>
         <Pill tone={INQ_STATUS[i.status].tone}>{INQ_STATUS[i.status].label}</Pill>
@@ -397,16 +432,18 @@ function PromiseCell({ o }: { o: Order }) {
 
 type OrderFilter = 'open' | 'dispatched' | 'cancelled' | 'all';
 
-function OrdersList({ ctx, status, setStatus, created, onOpen }: { ctx: Ctx; status: OrderFilter; setStatus: (s: OrderFilter) => void; created: OrderRow[]; onOpen: (id: number) => void }) {
+function OrdersList({ ctx, status, setStatus, created, onOpen, party, onClearParty }: {
+  ctx: Ctx; status: OrderFilter; setStatus: (s: OrderFilter) => void; created: OrderRow[]; onOpen: (id: number) => void; party: { id: number; name: string } | null; onClearParty: () => void;
+}) {
   const { role, d } = ctx;
   const owner = can(role, 'orders.manage');
-  const { data, error, loading } = useApi<{ orders: OrderRow[] }>(`/api/orders?status=${status}&${who(role, actorId(role))}`, `${d.lastSync?.getTime() ?? 0}:${created.length}`);
+  const { data, error, loading } = useApi<{ orders: OrderRow[] }>(`/api/orders?status=${status}${party ? `&party_id=${party.id}` : ''}&${who(role, actorId(role))}`, `${d.lastSync?.getTime() ?? 0}:${created.length}`);
   // Newest first; a just-created order shows at the top even before the list reloads.
   const rows = useMemo(() => {
     const server = data?.orders ?? [];
-    const extra = created.filter((o) => (status === 'all' || (status === 'open' ? isActive(o) : o.status === status)) && !server.some((x) => x.id === o.id));
+    const extra = created.filter((o) => (status === 'all' || (status === 'open' ? isActive(o) : o.status === status)) && (!party || o.party_id === party.id) && !server.some((x) => x.id === o.id));
     return [...extra, ...server].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
-  }, [data, created, status]);
+  }, [data, created, status, party]);
   const pending = rows.filter(isActive).reduce((acc, o) => acc + Math.max(0, o.meters - o.dispatched_m), 0);
   const late = rows.filter(isLate).length;
 
@@ -414,6 +451,11 @@ function OrdersList({ ctx, status, setStatus, created, onOpen }: { ctx: Ctx; sta
     <div className="stack-12">
       <div className="toolbar">
         <Segmented label="Status" value={status} onChange={setStatus} options={[{ value: 'open', label: 'Open' }, { value: 'dispatched', label: 'Dispatched' }, { value: 'cancelled', label: 'Cancelled' }, { value: 'all', label: 'All' }]} />
+        {party && (
+          <button type="button" className="chip on" onClick={onClearParty} aria-label={`Showing ${party.name} only. Show all parties`}>
+            {party.name}<Icon name="x" size={13} strokeWidth={2.4} />
+          </button>
+        )}
         {status === 'open' && rows.length > 0 && <span className="muted small">{rows.length} open · {m(pending)} to send{late ? ` · ${late} late` : ''}</span>}
       </div>
       {error && <div className="alert bad">{error}</div>}
@@ -424,7 +466,7 @@ function OrdersList({ ctx, status, setStatus, created, onOpen }: { ctx: Ctx; sta
           </thead>
           <tbody>
             {rows.map((o) => (
-              <tr key={o.id} className={`${s.rowBtn} ${isLate(o) ? s.late : ''}`} onClick={() => onOpen(o.id)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(o.id); }}>
+              <tr key={o.id} data-order={o.id} className={`${s.rowBtn} ${isLate(o) ? s.late : ''}`} onClick={() => onOpen(o.id)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(o.id); }}>
                 <td data-label="Order" className="num strong">#{o.id}</td>
                 <td data-label="Party">{o.party_name}</td>
                 <td data-label="Quality">{o.quality}{o.design ? <span className="muted small"> · {o.design}</span> : null}</td>
@@ -435,7 +477,7 @@ function OrdersList({ ctx, status, setStatus, created, onOpen }: { ctx: Ctx; sta
                 {owner && <td data-label="Rate" className="r num d">{rs(o.rate_per_m)}</td>}
               </tr>
             ))}
-            {!loading && !rows.length && <tr><td colSpan={8} className="muted center">{status === 'open' ? 'No open orders' : 'No orders here'}</td></tr>}
+            {!loading && !rows.length && <tr><td colSpan={8} className="muted center">{party ? `No ${status === 'all' ? '' : 'such '}orders for ${party.name}` : status === 'open' ? 'No open orders' : 'No orders here'}</td></tr>}
           </tbody>
         </table>
       </section>

@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, Kpi, LockTag, PageHead, Pill, Segmented, fmt, inr, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
-import { useApi, who } from '@/lib/useApi';
+import { flashWhenReady, useApi, useHashLink, who } from '@/lib/useApi';
 import type { KpiChange, Named, Report } from '@/lib/reports/build';
 import type { CoverStatus, InventorySnapshot } from '@/lib/reports/inventory';
 import s from './Reports.module.css';
@@ -267,6 +267,20 @@ export function Reports({ ctx }: { ctx: Ctx }) {
 }
 
 function InventorySection({ inv, error, allQ, setAllQ }: { inv: InventorySnapshot | null; error: string | null; allQ: boolean; setAllQ: (v: boolean) => void }) {
+  // Deep link from the old-stock alert ("See the N lots"): #inventory=ageing → show every old lot and scroll to them.
+  const link = useHashLink('inventory');
+  const [allAge, setAllAge] = useState(false);
+  useEffect(() => {
+    if (link.value !== 'ageing') return;
+    setAllAge(true); // eslint-disable-line react-hooks/set-state-in-effect -- responding to a deep link
+    const cancel = flashWhenReady('#inv-ageing', 8000);
+    // The report above loads separately and can push the list down after the first scroll: re-align if it moved.
+    const again = [1200, 2500, 4500].map((ms) => setTimeout(() => {
+      const el = document.getElementById('inv-ageing');
+      if (el && Math.abs(el.getBoundingClientRect().top) > 160) el.scrollIntoView({ block: 'start' });
+    }, ms));
+    return () => { cancel(); again.forEach(clearTimeout); };
+  }, [link]);
   if (error) return <div className="alert bad">Inventory: {error}</div>;
   if (!inv) return null;
   const rows = allQ ? inv.qualities : inv.qualities.slice(0, 10);
@@ -302,11 +316,12 @@ function InventorySection({ inv, error, allQ, setAllQ }: { inv: InventorySnapsho
       </section>
 
       <div className="grid-split">
-        <section className="card pad stack-10 d">
+        <section className="card pad stack-10 d" id="inv-ageing">
           <div className="card-head"><h2>Not moved in {inv.thresholds.ageingDays}+ days</h2><span className="muted small num">{inv.ageing.count} lots · {m(inv.ageing.meters)}</span></div>
           {inv.ageing.count === 0 ? <span className="muted small">Every lot moved recently.</span> : (
-            <div>{inv.ageing.lots.slice(0, 8).map((l) => <Stat key={l.lot_id} label={<>{l.lot_id} <span className="tiny">· {l.quality} · {l.location ?? 'no location'} · {l.days} days</span></>} value={m(l.balance)} />)}</div>
+            <div>{inv.ageing.lots.slice(0, allAge ? undefined : 8).map((l) => <Stat key={l.lot_id} label={<>{l.lot_id} <span className="tiny">· {l.quality} · {l.location ?? 'no location'} · {l.days} days</span></>} value={m(l.balance)} />)}</div>
           )}
+          {inv.ageing.count > 8 && <button className="linkbtn small left" onClick={() => setAllAge(!allAge)}>{allAge ? 'Show fewer' : `Show all ${inv.ageing.count} lots`}</button>}
           {inv.noLocation.count > 0 && <div className="alert warn">{inv.noLocation.count} lot{inv.noLocation.count === 1 ? '' : 's'} with stock but no location: {inv.noLocation.lots.slice(0, 6).map((l) => l.lot_id).join(', ')}{inv.noLocation.count > 6 ? ' …' : ''}</div>}
         </section>
         <section className="card pad stack-10 d">

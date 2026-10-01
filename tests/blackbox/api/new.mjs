@@ -8,7 +8,7 @@ const check=(rule,d,req,exp,ok,act)=>rec(rule,d,req,exp,act,ok?'pass':'fail');
 const is4xx=s=>s>=400&&s<500;
 const MONEY=/(^|_)(rate|rate_per_m|amount|total|margin|cost|cost_per_m|credit_limit|outstanding|overdue|taxable|value|price|quoted_rate|target_rate|selling|profit)(_|$)/i;
 function leaks(x,p=''){const o=[];if(Array.isArray(x))x.forEach((v,i)=>o.push(...leaks(v,p+'['+i+']')));else if(x&&typeof x==='object')for(const[k,v]of Object.entries(x)){if(MONEY.test(k)&&v!=null&&v!==''&&(typeof v==='number'||(typeof v==='string'&&/^\d/.test(v))))o.push(p+'.'+k+'='+v);o.push(...leaks(v,p+'.'+k));}else if(typeof x==='string'&&/₹|\bRs\.?\s?\d/.test(x))o.push(p+' str');return o;}
-const bal=async lot=>{const l=(await get('/api/stock?role=owner')).body.lots.find(l=>l.lot_id===lot);return l?Number(l.balance):null;};
+const bal=async lot=>{const l=(await get('/api/lots/search?ids='+encodeURIComponent(lot))).body.lots?.find(l=>l.lot_id===lot);return l?Number(l.balance):null;};
 const IN=(lot,q,m)=>post('/api/stock',{direction:'IN',lot_id:lot,quality:q,design:'D1',grey_meters:m,finished_meters:m,mill_name:'M',moved_by:'usr-owner',...own});
 const OUT=(lot,m,party)=>post('/api/stock',{direction:'OUT',lot_id:lot,meters:m,party,moved_by:'usr-owner',...own});
 const order=(p,q,m,x={})=>post('/api/orders',{party:p,quality:q,meters:m,rate_per_m:100,promise_date:'2026-12-31',...own,...x}).then(r=>r.body.order);

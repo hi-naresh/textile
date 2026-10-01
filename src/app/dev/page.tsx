@@ -10,10 +10,13 @@ import { formatPhone } from '@/lib/auth/phone';
 import type { SystemStatus } from '@/lib/types';
 import { Toggle } from '@/components/screens/MyFirm';
 import { levelTone, type Capability } from '@/lib/access';
+import { AgentsPanel } from './AgentsPanel';
+import { DocsPanel } from './DocsPanel';
 
 // Developer console: everything technical lives here and nowhere in the client app —
-// service health, connections, AI usage + cost, technical errors, accounts, "View as", audit trail.
-type Tab = 'health' | 'usage' | 'errors' | 'users' | 'access' | 'audit';
+// service health, agents (what each is for, on/off, stats, run now), docs of everything built,
+// connections, AI usage + cost, technical errors, accounts, "View as", audit trail.
+type Tab = 'health' | 'agents' | 'docs' | 'usage' | 'errors' | 'users' | 'access' | 'audit';
 
 export default function DevConsole() {
   const [me, setMe] = useState<Me | null>(null);
@@ -41,8 +44,10 @@ export default function DevConsole() {
         </div>
       )}
       <Segmented label="Section" value={tab} onChange={setTab} className="fit"
-        options={[{ value: 'health', label: 'Health' }, { value: 'usage', label: 'AI usage & cost' }, { value: 'errors', label: 'Errors' }, { value: 'users', label: 'Users & view as' }, { value: 'access', label: 'Access & roles' }, { value: 'audit', label: 'Audit trail' }]} />
+        options={[{ value: 'health', label: 'Health' }, { value: 'agents', label: 'Agents' }, { value: 'docs', label: 'Docs' }, { value: 'usage', label: 'AI usage & cost' }, { value: 'errors', label: 'Errors' }, { value: 'users', label: 'Users & view as' }, { value: 'access', label: 'Access & roles' }, { value: 'audit', label: 'Audit trail' }]} />
       {tab === 'health' && <Health />}
+      {tab === 'agents' && <AgentsPanel />}
+      {tab === 'docs' && <DocsPanel />}
       {tab === 'usage' && <Usage />}
       {tab === 'errors' && <Errors />}
       {tab === 'users' && <Users onViewAs={() => window.location.assign('/')} />}
@@ -285,7 +290,7 @@ function Audit() {
       <div className="card-head"><h2 className="h2">Audit trail</h2>
         <select className="input sel" aria-label="Event" value={event} onChange={(e) => setEvent(e.target.value)}>
           <option value="">All events</option>
-          {['login', 'login.failed', 'signup', 'user', 'password', 'session', 'view_as', 'dev.client_data', 'logout'].map((x) => <option key={x} value={x}>{x}</option>)}
+          {['login', 'login.failed', 'signup', 'user', 'password', 'session', 'view_as', 'access', 'agent', 'dev.client_data', 'logout'].map((x) => <option key={x} value={x}>{x}</option>)}
         </select></div>
       {error && <div className="alert bad">{error}</div>}
       <div className="dev-scroll"><table className="dev-table">

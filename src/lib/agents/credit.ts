@@ -29,8 +29,9 @@ async function scan(q: Q): Promise<void> {
         const n = p.invoices.filter((i) => i.unpaid > 0 && i.days_past_due > 0).length;
         await suggest(q, {
           agent: 'credit', kind: 'overdue', severity: p.oldest_due_days > 60 ? 'bad' : 'warn',
-          title: `${p.name}: ${rupees(p.overdue)} overdue for ${p.oldest_due_days} day${p.oldest_due_days === 1 ? '' : 's'}`,
-          detail: `${n} bill${n === 1 ? '' : 's'} past due (${BUCKET_LABEL[bucketOf(p.oldest_due_days)]} days). Total outstanding ${rupees(p.outstanding)}.`,
+          title: `${p.name} hasn't paid ${rupees(p.overdue)} — ${p.oldest_due_days} day${p.oldest_due_days === 1 ? '' : 's'} past the due date`,
+          detail: `${n} bill${n === 1 ? '' : 's'} overdue (${BUCKET_LABEL[bucketOf(p.oldest_due_days)]} days). Total they owe: ${rupees(p.outstanding)}.${p.last_payment ? ` Last payment ${rupees(p.last_payment.amount)} on ${String(p.last_payment.paid_on).slice(0, 10)}.` : ' No payment recorded yet.'}`,
+          hint: '"Draft reminder" opens a polite ready-made message listing the unpaid bills (English, Hindi or Gujarati) — copy it or send it on WhatsApp. Nothing is sent by itself.',
           payload: { party_id: p.party_id }, target: { type: 'party', id: p.party_id },
           actionLabel: 'Draft reminder', ownerOnly: true, dedupeKey: key,
         });
@@ -42,8 +43,9 @@ async function scan(q: Q): Promise<void> {
       if (!snoozed.has(key)) {
         await suggest(q, {
           agent: 'credit', kind: 'over_limit', severity: 'bad',
-          title: `${p.name} is ${rupees(p.over_limit)} over the credit limit`,
-          detail: `Outstanding ${rupees(p.outstanding)} against a limit of ${rupees(p.limit)}. Hold new dispatches until paid.`,
+          title: `${p.name} owes ${rupees(p.outstanding)} — ${rupees(p.over_limit)} over their credit limit`,
+          detail: `Their limit is ${rupees(p.limit)}. Think twice before sending more goods on credit; the Dispatch screen warns too.`,
+          hint: '"Draft reminder" opens a ready-made payment reminder for them. Nothing is sent by itself.',
           payload: { party_id: p.party_id }, target: { type: 'party', id: p.party_id },
           actionLabel: 'Draft reminder', ownerOnly: true, dedupeKey: key,
         });
@@ -61,6 +63,9 @@ export const agent: AgentModule = {
     if (!Number.isInteger(pid) || pid <= 0) throw new LedgerError('This alert has no party.');
     const r = await q(`SELECT name FROM parties WHERE id = $1`, [pid]);
     if (!r.rows[0]) throw new LedgerError('Party not found.', 404);
-    return `Reminder for ${r.rows[0].name} ready in Money → Outstanding`;
+    // The card is closed now and stays quiet for 7 days; it comes back then if the bill is still unpaid.
+    const back = new Date(Date.now() + (7 * 24 + 5.5) * 3_600_000); // IST date a week from now
+    const day = `${back.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][back.getUTCMonth()]}`;
+    return `Reminder for ${r.rows[0].name} drafted — send it from the window that opened. We'll remind you again on ${day} if it's still unpaid.`;
   },
 };

@@ -1,11 +1,11 @@
 'use client';
 
 // Money (owner only): Outstanding (credit & ageing, reminders, statements), Payments, Margin.
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, Kpi, PageHead, Pill, Segmented, Sheet, fmt, inr, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
-import { apiSend, useApi, useTakeHash, who } from '@/lib/useApi';
+import { apiSend, flashWhenReady, useApi, useHashLink, who } from '@/lib/useApi';
 import { actorId } from '@/lib/useTextileData';
 import type { Party, Payment } from '@/lib/domain';
 import type { BucketKey, CreditTotals, PartyCredit } from '@/lib/money/credit';
@@ -53,8 +53,19 @@ function OwnerMoney({ ctx }: { ctx: Ctx }) {
   const credit = useApi<{ parties: PartyCredit[]; totals: CreditTotals }>(`/api/credit?${q}`, key);
   const [payFor, setPayFor] = useState<string | null>(null); // party name for the payment sheet
   const [remFor, setRemFor] = useState<PartyCredit | null>(null);
-  // Deep link from a credit alert (#party=12): open that party's reminder once the data is in.
-  const [linkParty, setLinkParty] = useState(Number(useTakeHash('party')) || null);
+  // Deep link from a credit alert or search (#party=12): open that party's reminder once the data is in.
+  const partyLink = useHashLink('party');
+  const [linkParty, setLinkParty] = useState<number | null>(null);
+  useEffect(() => {
+    const id = Number(partyLink.value);
+    if (!id) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- a deep link arrived: open that party */
+    setView('out');
+    setRemFor(null);
+    setLinkParty(id);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    return flashWhenReady(`[data-party="${id}"]`, 4000);
+  }, [partyLink]);
   const linked = linkParty ? credit.data?.parties.find((p) => p.party_id === linkParty) ?? null : null;
   const reminder = remFor ?? linked;
 
@@ -120,7 +131,7 @@ function Outstanding({ ctx, data, error, loading, onPay, onRemind }: { ctx: Ctx;
           <thead><tr><th>Party</th><th className="r">Outstanding</th><th className="r">Overdue</th><th>Ageing</th><th className="r d">Limit · available</th><th className="r d">Last payment</th><th className="r">Actions</th></tr></thead>
           <tbody>
             {rows.map((p) => (
-              <tr key={p.party_id}>
+              <tr key={p.party_id} data-party={p.party_id}>
                 <td data-label="Party"><div className="stack-0"><span className="strong">{p.name}</span>{p.phone && <span className="muted tiny">{p.phone}</span>}</div></td>
                 <td data-label="Outstanding" className="r num strong">{rs(p.outstanding)}</td>
                 <td data-label="Overdue" className="r">{p.overdue > 0 ? <Pill tone={p.oldest_due_days > 60 ? 'bad' : 'warn'}><span className="num">{inr(p.overdue)} · {p.oldest_due_days} d</span></Pill> : <span className="muted">—</span>}</td>

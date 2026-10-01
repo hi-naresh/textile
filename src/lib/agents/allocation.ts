@@ -1,104 +1,64 @@
-// Fabric Allocation agent — deterministic, no LLM.
-// Suggests allocating free lots to open orders that still need fabric (one tap → autoAllocate),
-// and flags lots where more is reserved than is actually in stock.
+// Reservation check (agent key "allocation") — deterministic, no LLM.
+// Catches lots where more is kept aside for orders than the lot still holds (e.g. after a ledger correction
+// or a deleted IN entry), so an order doesn't look covered by fabric that isn't there. One tap releases the
+// missing part (newest reservations shrink first — the same rule dispatches use).
+// The old "Allocate X m to order #N?" cards are gone: keeping stock aside is offered on the Orders card
+// (orders.ts), only for orders that are late or due soon, with the lots named.
 import type { Q } from '../db';
 import type { AgentModule } from './types';
 import { resolveMissing, suggest } from './suggest';
 import { LedgerError } from '../ledger-error';
-import { allLotStock } from '../stock';
-import { listOrders, remainingNeed } from '../sales/orders';
-import { autoAllocate } from '../sales/allocate';
+import { trimReservations } from '../stock';
 import { meters } from '../sales/util';
 
-const k = (s: string | null | undefined) => (s ?? '').toLowerCase();
+export async function scanAllocation(q: Q): Promise<{ over: string[] }> {
+  // Retired kind: close any old "allocate_order" cards still open.
+  await resolveMissing(q, 'allocation', 'allocate_order', []);
 
-export async function scanAllocation(q: Q): Promise<{ allocate: string[]; over: string[] }> {
-  // Free stock per quality and per quality+design, in one read.
-  const lots = await allLotStock(q);
-  const byQ = new Map<string, { free: number; lots: number }>();
-  const byQD = new Map<string, { free: number; lots: number }>();
-  for (const l of lots) {
-    if (l.free <= 0) continue;
-    for (const [m, key] of [[byQ, k(l.quality)], [byQD, `${k(l.quality)}|${k(l.design)}`]] as const) {
-      const cur = m.get(key) ?? { free: 0, lots: 0 };
-      m.set(key, { free: cur.free + l.free, lots: cur.lots + 1 });
-    }
-  }
-  // Orders are served in promise-date order; later orders only see what is left.
-  const orders = await listOrders(q, { status: 'open', role: 'owner', limit: 1000, sort: 'promise' });
-  const allocate: string[] = [];
-  for (const o of orders) {
-    const need = remainingNeed(o);
-    if (need <= 0.5) continue;
-    const pool = o.design ? byQD.get(`${k(o.quality)}|${k(o.design)}`) : byQ.get(k(o.quality));
-    if (!pool || pool.free <= 0.5) continue;
-    const can = Math.round(Math.min(need, pool.free) * 100) / 100;
-    pool.free -= can;
-    if (o.design) { const qq = byQ.get(k(o.quality)); if (qq) qq.free -= can; }
-    const key = `allocate_order:${o.id}`;
-    await suggest(q, {
-      agent: 'allocation',
-      kind: 'allocate_order',
-      // Due within 3 days → worth a look now, not just "nice to have".
-      severity: o.promise_date && (Date.parse(o.promise_date) - Date.now()) / 86_400_000 <= 3 ? 'warn' : 'info',
-      title: `Allocate ${meters(can)} m ${o.quality}${o.design ? ` ${o.design}` : ''} to order #${o.id} (${o.party_name})?`,
-      detail: can < need
-        ? `Order needs ${meters(need)} m more; only ${meters(can)} m is free now.`
-        : `Order needs ${meters(need)} m more; free stock covers it.`,
-      payload: { order_id: o.id, meters: can },
-      target: { type: 'order', id: o.id },
-      actionLabel: 'Allocate',
-      ownerOnly: false, // meters only; supervisors can reserve lots too
-      dedupeKey: key,
-    });
-    allocate.push(key);
-  }
-  await resolveMissing(q, 'allocation', 'allocate_order', allocate);
-
-  // Lots with more reserved than in stock (e.g. dispatched to someone else by hand).
+  // Only lots that have reservations are looked at (a handful), not the whole stock.
   const r = await q(
     `SELECT a.lot_id, a.res, COALESCE(b.bal, 0) AS bal, a.orders
      FROM (SELECT lot_id, SUM(meters - dispatched_m) AS res, array_agg(DISTINCT order_id ORDER BY order_id) AS orders
            FROM allocations WHERE status = 'reserved' GROUP BY lot_id) a
-     LEFT JOIN (SELECT lot_id, SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) AS bal FROM stock_movements GROUP BY lot_id) b ON b.lot_id = a.lot_id
+     LEFT JOIN LATERAL (SELECT SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) AS bal FROM stock_movements sm WHERE sm.lot_id = a.lot_id) b ON true
      WHERE a.res > COALESCE(b.bal, 0) + 0.01`,
   );
   const over: string[] = [];
   for (const x of r.rows) {
     const key = `over_allocated:${x.lot_id}`;
+    const res = Number(x.res);
+    const bal = Math.max(0, Number(x.bal));
+    const missing = Math.round((res - bal) * 100) / 100;
     const orderList = (x.orders as number[]).map((id) => `#${id}`).join(', ');
     await suggest(q, {
       agent: 'allocation',
       kind: 'over_allocated',
       severity: 'bad',
-      title: `Lot ${x.lot_id}: ${meters(Number(x.res))} m reserved but only ${meters(Math.max(0, Number(x.bal)))} m in stock`,
-      detail: `Reserved for order ${orderList}. Release or move part of the reservation to another lot.`,
-      payload: { lot_id: x.lot_id, reserved_m: Number(x.res), balance_m: Number(x.bal), order_ids: x.orders },
-      target: { type: 'lot', id: x.lot_id },
+      title: `Lot ${x.lot_id}: ${meters(res)} m kept aside for order ${orderList}, but only ${meters(bal)} m is in stock`,
+      detail: `The order looks covered by ${meters(missing)} m that isn't there (the lot's stock was corrected or sent elsewhere).`,
+      hint: `"Release ${meters(missing)} m" cuts the reservation down to what the lot really holds; the Orders card then offers other lots.`,
+      payload: { lot_id: x.lot_id, reserved_m: res, balance_m: bal, missing_m: missing, order_ids: x.orders },
+      target: { type: 'order', id: Number((x.orders as number[])[0]) },
+      actionLabel: `Release ${meters(missing)} m`,
+      ownerOnly: false,
       dedupeKey: key,
     });
     over.push(key);
   }
   await resolveMissing(q, 'allocation', 'over_allocated', over);
-  return { allocate, over };
+  return { over };
 }
 
 export const agent: AgentModule = {
   scan: async (q) => { await scanAllocation(q); },
-  accept: async (s, q, actor) => {
-    if (s.kind !== 'allocate_order') throw new LedgerError('Nothing to do for this one — dismiss it instead.');
-    if (actor) {
-      const u = await q(`SELECT role FROM users WHERE id = $1`, [actor]);
-      // Same rule as the allocate API: owner and supervisors may reserve lots (meters only, no ₹).
-      if (u.rows[0] && !['owner', 'supervisor', 'admin'].includes(u.rows[0].role)) throw new LedgerError('Only the owner or a supervisor can reserve fabric.', 403);
-    }
-    const orderId = Number(s.payload?.order_id);
-    if (!Number.isInteger(orderId) || orderId <= 0) throw new LedgerError('This suggestion has no order.');
-    const res = await autoAllocate(q, orderId, actor);
-    if (!res.allocations.length) {
-      throw new LedgerError(res.short_m > 0 ? `No free ${res.order.quality} stock left for order #${orderId}.` : `Order #${orderId} is already fully allocated.`);
-    }
-    const n = res.allocations.length;
-    return `Allocated ${meters(res.allocated_m)} m from ${n} lot${n === 1 ? '' : 's'} to order #${orderId}${res.short_m > 0 ? ` — ${meters(res.short_m)} m still short` : ''}`;
+  accept: async (s, q) => {
+    if (s.kind !== 'over_allocated') throw new LedgerError('Nothing to do for this one — dismiss it instead.');
+    const lotId = String(s.payload?.lot_id ?? '');
+    if (!lotId) throw new LedgerError('This card has no lot.');
+    await q(`SELECT lot_id FROM lots WHERE lot_id = $1 FOR UPDATE`, [lotId]);
+    const cut = await trimReservations(q, lotId);
+    if (!cut.length) return `Nothing to release — lot ${lotId} is fine now`;
+    const total = Math.round(cut.reduce((t, c) => t + c.cut, 0) * 100) / 100;
+    return `Released ${meters(total)} m on lot ${lotId} (order ${[...new Set(cut.map((c) => `#${c.order_id}`))].join(', ')})`;
   },
 };

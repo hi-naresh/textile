@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, TodayStock, LedgerEntry, Lot, Toast, ToastTone, Worker } from './types';
+import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, TodayStock, LedgerEntry, Lot, StockSummary, Toast, ToastTone, Worker } from './types';
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
 import { DEFAULT_CONFIG, type FirmConfig } from './config';
 
@@ -75,8 +75,16 @@ export function actorId(role: Role) {
   return role === 'owner' ? owner().id : activeSupervisor().id || null;
 }
 
+/** GET /api/stock: a small, fixed-size snapshot (no lot list; lots come paged from /api/lots and /api/lots/search). */
+interface StockSnapshot {
+  stockSummary: StockSummary | null; ledger: LedgerEntry[]; flow?: FlowDay[]; today?: TodayStock; names?: KnownNames; qualities?: string[]; rev?: string;
+}
+
 export function useTextileData() {
-  const [lots, setLots] = useState<Lot[]>([]);
+  const [stockSummary, setStockSummary] = useState<StockSummary | null>(null);
+  const [qualities, setQualities] = useState<string[]>([]);
+  // Changes only when stock changed on the server (movements, locations, lot edits): ledger / lots lists reload on it.
+  const [stockRev, setStockRev] = useState('0');
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [flow, setFlow] = useState<FlowDay[]>([]);
   const [today, setToday] = useState<TodayStock | null>(null);
@@ -120,22 +128,28 @@ export function useTextileData() {
     toastTimer.current = setTimeout(() => setToast(null), 3800);
   }, []);
 
+  const applyStock = useCallback((stock: StockSnapshot) => {
+    setStockSummary(stock.stockSummary ?? null);
+    setLedger(stock.ledger || []);
+    setFlow(stock.flow || []);
+    setToday(stock.today ?? null);
+    setNames(stock.names || { mills: [], weavers: [], parties: [] });
+    setQualities(stock.qualities || []);
+    setStockRev(stock.rev ?? '0');
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const [settings, stock, jc, wk, cap] = await Promise.all([
         getJson<{ config: FirmConfig }>('/api/settings'),
-        getJson<{ lots: Lot[]; ledger: LedgerEntry[]; flow?: FlowDay[]; today?: TodayStock; names?: KnownNames }>('/api/stock'),
+        getJson<StockSnapshot>('/api/stock'),
         getJson<{ jobCards: JobCard[]; allotments: Allotment[] }>('/api/job-cards'),
         getJson<{ workers: Worker[]; efficiency: EfficiencyRecord[]; cctv: CctvActivity[] }>('/api/workers'),
         getJson<{ events: CaptureEvent[] }>('/api/capture'),
       ]);
       setFirmConfig(settings.config);
       setConfigState(settings.config);
-      setLots(stock.lots || []);
-      setLedger(stock.ledger || []);
-      setFlow(stock.flow || []);
-      setToday(stock.today ?? null);
-      setNames(stock.names || { mills: [], weavers: [], parties: [] });
+      applyStock(stock);
       setJobCards(jc.jobCards || []);
       setAllotments(jc.allotments || []);
       setWorkers(wk.workers || []);
@@ -152,7 +166,17 @@ export function useTextileData() {
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, applyStock]);
+
+  /** After a stock-only change (manual entry, lot move, ledger edit): reload just the small stock snapshot. */
+  const refreshStock = useCallback(async () => {
+    try {
+      applyStock(await getJson<StockSnapshot>('/api/stock'));
+      setLastSync(new Date());
+    } catch {
+      await refresh();
+    }
+  }, [applyStock, refresh]);
 
   useEffect(() => {
     // Initial data load on mount (async fetch; state is set after the requests resolve).
@@ -162,11 +186,11 @@ export function useTextileData() {
   }, [refresh]);
 
   // ---------- Actions (each refreshes data) ----------
-  const run = useCallback(async (fn: () => Promise<unknown>, ok: string, tone: ToastTone = 'success') => {
+  const run = useCallback(async (fn: () => Promise<unknown>, ok: string, tone: ToastTone = 'success', after: () => Promise<void> = refresh) => {
     try {
       await fn();
       showToast(ok, tone);
-      await refresh();
+      await after();
       return true;
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Something went wrong.', 'danger');
@@ -180,15 +204,18 @@ export function useTextileData() {
       ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, ...both }
       : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, ...both };
     const sr = form.sr_no.trim() ? `SR ${form.sr_no.trim()} · ` : '';
-    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'Godown'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`);
+    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'Godown'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`, 'success', refreshStock);
   };
 
   const moveLot = (role: Role, lotId: string, location: string, note: string) =>
-    run(() => send('/api/lots/location', 'POST', { lot_id: lotId, location, note, moved_by: actorId(role) }), `${lotId} moved to ${location}`);
+    run(() => send('/api/lots/location', 'POST', { lot_id: lotId, location, note, moved_by: actorId(role) }), `${lotId} moved to ${location}`, 'success', refreshStock);
 
-  const lotHistory = async (lotId: string): Promise<LotLocationEntry[]> => {
-    const data = await getJson<{ history: LotLocationEntry[] }>(`/api/lots/location?lot_id=${encodeURIComponent(lotId)}`);
-    return data.history || [];
+  const lotHistory = async (lotId: string): Promise<LotLocationEntry[]> => (await lotInfo(lotId)).history;
+
+  /** One lot as it is now (balance, location) + its location history. */
+  const lotInfo = async (lotId: string): Promise<{ lot: Lot | null; history: LotLocationEntry[] }> => {
+    const data = await getJson<{ history: LotLocationEntry[]; lot: Lot | null }>(`/api/lots/location?lot_id=${encodeURIComponent(lotId)}`);
+    return { lot: data.lot ?? null, history: data.history || [] };
   };
 
   const createJobCard = (role: Role, form: { lot_id: string; process: string; worker_id: string; meters_in: string; shift: string }, workerName?: string) =>
@@ -303,10 +330,10 @@ export function useTextileData() {
 
   return {
     config, settingsApi, status, checkStatus,
-    lots, ledger, flow, today, names, jobCards, allotments, workers, efficiency, cctv, captures,
-    loading, dbOk, lastSync, toast, showToast, refresh,
+    stockSummary, qualities, stockRev, ledger, flow, today, names, jobCards, allotments, workers, efficiency, cctv, captures,
+    loading, dbOk, lastSync, toast, showToast, refresh, refreshStock,
     value, afterImport,
-    addStock, moveLot, lotHistory, createJobCard, closeJobCard, confirmCapture, rejectCapture, uploadCapture,
+    addStock, moveLot, lotHistory, lotInfo, createJobCard, closeJobCard, confirmCapture, rejectCapture, uploadCapture,
     messages, ask, clearChat,
   };
 }

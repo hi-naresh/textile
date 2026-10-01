@@ -4,25 +4,22 @@
 import React from 'react';
 import Icon from '../Icon';
 import { Segmented } from '../ui';
-import { filtersActive, type LedgerFacets, type LedgerFilterState } from '@/lib/useLedger';
+import { EMPTY_FILTERS, filtersActive, type LedgerFacets, type LedgerFilterState } from '@/lib/useLedger';
+import { useLotSearch } from '@/lib/useLots';
 
-export function LedgerFilterBar({ value, onChange, facets, lots }: {
+export function LedgerFilterBar({ value, onChange, facets }: {
   value: LedgerFilterState;
   onChange: (f: LedgerFilterState) => void;
   facets: LedgerFacets | null;
-  lots: string[];
 }) {
   const set = <K extends keyof LedgerFilterState>(k: K, v: LedgerFilterState[K]) => onChange({ ...value, [k]: v });
   const designs = value.quality && facets?.byQuality[value.quality] ? facets.byQuality[value.quality] : facets?.designs ?? [];
   const active = filtersActive(value);
-  const lotOptions = React.useMemo(() => {
-    const t = value.lot.trim().toLowerCase();
-    const out: string[] = [];
-    for (const l of lots) { if (!t || l.toLowerCase().includes(t)) out.push(l); if (out.length >= 30) break; }
-    return out;
-  }, [lots, value.lot]);
+  // Lot suggestions come from the server as you type (only once something is typed).
+  const lotSearch = useLotSearch(value.lot, { limit: 30, enabled: value.lot.trim() !== '' });
+  const lotOptions = value.lot.trim() ? (lotSearch.lots ?? []).map((l) => l.lot_id) : [];
   const [open, setOpen] = React.useState(false); // phone: quality / design / lot / dates fold away
-  const extra = [value.quality, value.design, value.lot, value.from, value.to].filter(Boolean).length;
+  const extra = [value.quality, value.design, value.lot, value.party, value.from, value.to].filter(Boolean).length;
 
   return (
     <div className={`lf ${open ? 'open' : ''}`} role="search" aria-label="Filter the ledger">
@@ -48,7 +45,8 @@ export function LedgerFilterBar({ value, onChange, facets, lots }: {
         <datalist id="lf-lots">{lotOptions.map((l) => <option key={l} value={l} />)}</datalist>
         <label className="lf-date lf-x"><span>From</span><input className="input" type="date" value={value.from} max={value.to || undefined} onChange={(e) => set('from', e.target.value)} /></label>
         <label className="lf-date lf-x"><span>To</span><input className="input" type="date" value={value.to} min={value.from || undefined} onChange={(e) => set('to', e.target.value)} /></label>
-        {active && <button type="button" className="btn sm lf-clear" onClick={() => onChange({ q: '', direction: '', quality: '', design: '', lot: '', from: '', to: '' })}><Icon name="x" size={14} />Clear all</button>}
+        {value.party && <button type="button" className="btn sm lf-x" onClick={() => set('party', '')} aria-label={`Remove party filter ${value.party}`}>Party: {value.party}<Icon name="x" size={14} /></button>}
+        {active && <button type="button" className="btn sm lf-clear" onClick={() => onChange(EMPTY_FILTERS)}><Icon name="x" size={14} />Clear all</button>}
       </div>
     </div>
   );

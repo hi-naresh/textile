@@ -1,9 +1,8 @@
 'use client';
 
 import React from 'react';
-import Icon from '../Icon';
 import { Kpi, PageHead, Pill, Track, effTone, fmt, fmtM } from '../ui';
-import AgentInbox from '../AgentInbox';
+import { Attention } from './Overview';
 import type { Ctx } from '../ctx';
 import { captureInScope, jobInScope, activeSupervisor, rules } from '@/lib/access';
 import { avg, camStatus } from '@/lib/derive';
@@ -19,16 +18,13 @@ export function Floor({ ctx }: { ctx: Ctx }) {
   const shortage = avg(cards.filter((j) => j.status === 'closed' && j.meters_out != null).map((j) => j.shortage_pct));
   const over = cards.filter((j) => j.flagged);
   const pending = d.captures.filter((c) => c.status === 'pending' && captureInScope(role, c.type)).length;
-  const idle = crew.filter((x) => x.cam && x.cam.active_pct < 60);
 
   return (
     <div className="page fade">
-      <PageHead title={activeSupervisor().sections.length ? `${activeSupervisor().sections.join(' & ')} floor` : 'My floor'} sub={`${crew.length} workers · ${openCards} open job cards`}>
-        <button className="btn" onClick={() => go('allot')}>Allot work</button>
-        <button className="btn primary" onClick={() => go('review')}>Review <span className="num">{pending}</span> read{pending === 1 ? '' : 's'}</button>
+      <PageHead title={activeSupervisor().sections.length ? `${activeSupervisor().sections.join(' & ')} floor` : 'My floor'} sub={`${crew.length} worker${crew.length === 1 ? "" : "s"} · ${openCards} open job card${openCards === 1 ? "" : "s"}`}>
+        <button className={`btn ${pending ? '' : 'primary'}`} onClick={() => go('allot')}>Allot work</button>
+        {pending > 0 && <button className="btn primary" onClick={() => go('review')}>Review <span className="num">{pending}</span> read{pending === 1 ? '' : 's'}</button>}
       </PageHead>
-
-      <AgentCard ctx={ctx} />
 
       <div className="grid-4">
         <Kpi label="Allotted today" value={fmtM(allot)} sub={`across ${crew.filter((x) => x.allotted > 0).length} workers`} />
@@ -60,39 +56,8 @@ export function Floor({ ctx }: { ctx: Ctx }) {
           </table>
         </section>
 
-        <section className="card pad stack-14">
-          <h2 className="h2">Needs you</h2>
-          {over.slice(0, 2).map((j) => (
-            <div className="callout bad" key={j.id}>
-              <span className="callout-title">JC-{j.id} over shortage limit</span>
-              <span className="t2 small">{fmt(j.shortage ?? 0, 1)} m short on {fmt(j.meters_in)} m · {j.worker_name}</span>
-              <div><button className="btn sm" onClick={() => go('jobs')}>Check card</button></div>
-            </div>
-          ))}
-          {idle.slice(0, 2).map((x) => (
-            <div className="callout warn" key={x.worker.id}>
-              <span className="callout-title">{x.worker.name} idle {Math.round(x.cam!.idle_min)} min</span>
-              <span className="t2 small">{x.cam!.station} · {fmt(x.done)} of {fmt(x.allotted)} m done</span>
-              <div><button className="btn sm" onClick={() => go('allot')}>Reassign</button></div>
-            </div>
-          ))}
-          <div className="callout info">
-            <span className="callout-title"><span className="num">{pending}</span> photo read{pending === 1 ? '' : 's'} to confirm</span>
-            <span className="t2 small">{activeSupervisor().sections.length ? `${activeSupervisor().sections.join(' and ')} job cards` : 'Ask the owner to give you sections (My firm → Team)'}</span>
-            <div><button className="btn sm" onClick={() => go('review')}>Open queue</button></div>
-          </div>
-          {!over.length && !idle.length && <p className="muted small" style={{ margin: 0 }}><Icon name="check" size={14} /> No shortage or idle alerts.</p>}
-        </section>
+        <Attention ctx={ctx} limit={ctx.density === 'compact' ? 3 : 5} />
       </div>
-    </div>
-  );
-}
-
-/** Agent alerts for the supervisor (orders due, dispatch matches, stock) — hidden when there are none. */
-function AgentCard({ ctx }: { ctx: Ctx }) {
-  return (
-    <div className="agent-card-wrap">
-      <AgentInbox ctx={ctx} limit={4} />
     </div>
   );
 }

@@ -10,10 +10,11 @@ export interface LedgerFilterState {
   quality: string;
   design: string;
   lot: string;
+  party: string; // set by deep links (#ledger=…&party=…); shown as a removable chip
   from: string; // YYYY-MM-DD
   to: string;
 }
-export const EMPTY_FILTERS: LedgerFilterState = { q: '', direction: '', quality: '', design: '', lot: '', from: '', to: '' };
+export const EMPTY_FILTERS: LedgerFilterState = { q: '', direction: '', quality: '', design: '', lot: '', party: '', from: '', to: '' };
 
 export interface LedgerRow {
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
@@ -33,30 +34,38 @@ export const filtersActive = (f: LedgerFilterState) => Object.values(f).some((v)
 
 const PAGE = 100;
 
-/** `refreshKey`: change it (e.g. the last data sync time) to reload the first page after a new entry. */
+/**
+ * `refreshKey`: change it to reload the first page after a new entry — pass `d.stockRev` (changes only when stock
+ * changed on the server), not the last sync time. Facets (quality / design lists) load once per screen.
+ */
 export function useLedger(filters: LedgerFilterState, refreshKey?: unknown) {
   const [rows, setRows] = useState<LedgerRow[]>([]);
   const [total, setTotal] = useState<number | null>(null);
+  const [totalCapped, setTotalCapped] = useState(false); // total is a floor ("10,000+")
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [forKey, setForKey] = useState<string | null>(null); // filters the shown rows / total belong to
   const [error, setError] = useState<string | null>(null);
   const [facets, setFacets] = useState<LedgerFacets | null>(null);
   const gen = useRef(0); // ignores pages from an older filter set
   const key = ledgerParams(filters).toString();
   const lastKey = useRef<string | null>(null);
   const holdUntil = useRef(0); // see holdRefresh()
+  const haveFacets = useRef(false); // facets reload with the data (refreshKey), not on every filter change
+  const facetsKey = useRef<unknown>(undefined);
 
   useEffect(() => {
     // After an edit-mode save the rows are patched in place: skip the reload the data refresh would cause.
-    if (holdUntil.current > Date.now() && lastKey.current === key) { holdUntil.current = 0; return; }
+    if (holdUntil.current > Date.now() && lastKey.current === key) { holdUntil.current = 0; haveFacets.current = false; return; }
     holdUntil.current = 0;
     lastKey.current = key;
     const my = ++gen.current;
     const ctl = new AbortController();
     const p = new URLSearchParams(key);
     p.set('limit', String(PAGE));
-    p.set('facets', '1');
+    if (facetsKey.current !== refreshKey) { haveFacets.current = false; facetsKey.current = refreshKey; }
+    if (!haveFacets.current) p.set('facets', '1');
     setLoading(true);
     fetch(`/api/stock/ledger?${p}`, { cache: 'no-store', signal: ctl.signal })
       .then(async (res) => {
@@ -65,12 +74,13 @@ export function useLedger(filters: LedgerFilterState, refreshKey?: unknown) {
         if (!res.ok) throw new Error(data?.error || 'Could not load the ledger.');
         setRows(data.rows ?? []);
         setTotal(data.total ?? 0);
+        setTotalCapped(!!data.total_capped);
         setNext(data.next ?? null);
-        if (data.facets) setFacets(data.facets);
+        if (data.facets) { setFacets(data.facets); haveFacets.current = true; }
         setError(null);
       })
       .catch((e) => { if (my === gen.current && e?.name !== 'AbortError') setError(e instanceof Error ? e.message : 'Could not load the ledger.'); })
-      .finally(() => { if (my === gen.current) setLoading(false); });
+      .finally(() => { if (my === gen.current) { setLoading(false); setForKey(key); } });
     return () => ctl.abort();
   }, [key, refreshKey]);
 
@@ -114,7 +124,8 @@ export function useLedger(filters: LedgerFilterState, refreshKey?: unknown) {
   /** The next `refreshKey` change (within 20 s) does not reload the first page. */
   const holdRefresh = useCallback(() => { holdUntil.current = Date.now() + 20_000; }, []);
 
-  return { rows, total, hasMore: !!next, loading, loadingMore, error, facets, loadMore, patchRows, holdRefresh };
+  // `loading` is also true in the render between a filter change and its request starting.
+  return { rows, total, totalCapped, hasMore: !!next, loading: loading || forKey !== key, loadingMore, error, facets, loadMore, patchRows, holdRefresh };
 }
 
 /** A value that follows `value` after `ms` without changes (search box). */

@@ -32,6 +32,7 @@ export function inventorySuggestions(inv: InventorySnapshot): SuggestionInput[] 
         detail: `${plural(x.openOrders, 'open order')} still to dispatch ${fm(x.openOrderM)} m, of which ${fm(x.unreservedM)} m is not reserved yet. Free stock ${fm(Math.max(0, x.free))} m (balance ${fm(x.balance)} m, reserved ${fm(x.reserved)} m). Short by ${fm(x.unreservedM - Math.max(0, x.free))} m.`,
         payload: { quality: x.quality, free: x.free, openOrderM: x.openOrderM, unreservedM: x.unreservedM, openOrders: x.openOrders, shortBy: Math.round((x.unreservedM - Math.max(0, x.free)) * 100) / 100 },
         target: { type: 'quality', id: x.quality }, dedupeKey: `short_for_orders:${x.key}`,
+        hint: `Buy or process more ${x.quality}, or tell the parties. Orders due soon get their own card with a "Keep aside" button.`,
       });
     }
     // Low stock is raised on its own even when the quality is also short for orders — the two need different fixes.
@@ -42,6 +43,7 @@ export function inventorySuggestions(inv: InventorySnapshot): SuggestionInput[] 
         detail: `${x.daysCover != null ? `About ${x.daysCover} days of stock left. ` : ''}Low-stock level is ${fm(inv.thresholds.lowStockM)} m.${x.lastDispatch ? ` Last dispatched ${x.lastDispatch}.` : ''}`,
         payload: { quality: x.quality, free: x.free, balance: x.balance, reserved: x.reserved, avgDaily: x.avgDaily, daysCover: x.daysCover, lowStockM: inv.thresholds.lowStockM },
         target: { type: 'quality', id: x.quality }, dedupeKey: `low_stock:${x.key}`,
+        hint: 'Reorder, or send grey for processing, before it runs out. Change the low-stock level in My firm → Policy.',
       });
     }
   }
@@ -52,8 +54,9 @@ export function inventorySuggestions(inv: InventorySnapshot): SuggestionInput[] 
       ...base, kind: 'ageing_stock', severity: 'info',
       title: `${plural(inv.ageing.count, 'lot')} not moved in over ${inv.thresholds.ageingDays} days: ${fm(inv.ageing.meters)} m`,
       detail: `Oldest: ${oldest.lot_id} (${oldest.quality}, ${fm(oldest.balance)} m, ${oldest.days} days). ${inv.ageing.lots.slice(1, 6).map((l) => `${l.lot_id} ${l.days}d`).join(', ')}`.trim(),
-      payload: { count: inv.ageing.count, meters: inv.ageing.meters, oldestDays: inv.ageing.oldestDays, lots: inv.ageing.lots.slice(0, 20).map((l) => ({ lot_id: l.lot_id, quality: l.quality, balance: l.balance, days: l.days })) },
+      payload: { open_label: `See the ${inv.ageing.count} lots`, count: inv.ageing.count, meters: inv.ageing.meters, oldestDays: inv.ageing.oldestDays, lots: inv.ageing.lots.slice(0, 20).map((l) => ({ lot_id: l.lot_id, quality: l.quality, balance: l.balance, days: l.days })) },
       target: { type: 'lot', id: oldest.lot_id }, dedupeKey: 'ageing_stock',
+      hint: `Old stock ties up money and space — offer these lots first. "See the ${inv.ageing.count} lots" opens Reports → Inventory with the full list.`,
     });
   }
 
@@ -64,6 +67,7 @@ export function inventorySuggestions(inv: InventorySnapshot): SuggestionInput[] 
       detail: `Set a location so they can be found: ${inv.noLocation.lots.slice(0, 8).map((l) => l.lot_id).join(', ')}${inv.noLocation.count > 8 ? ' …' : ''}`,
       payload: { count: inv.noLocation.count, meters: inv.noLocation.meters, lots: inv.noLocation.lots.slice(0, 30).map((l) => l.lot_id) },
       target: { type: 'lot', id: inv.noLocation.lots[0].lot_id }, dedupeKey: 'no_location',
+      hint: 'Set a location from the Stock ledger (Lots & balance) so people can find them.',
     });
   }
 
@@ -74,6 +78,7 @@ export function inventorySuggestions(inv: InventorySnapshot): SuggestionInput[] 
       detail: `${plural(m.receipts, 'receipt')} in the last ${inv.millLoss.days} days: ${fm(m.grey)} m grey became ${fm(m.finished)} m finished.`,
       payload: { mill: m.mill, lossPct: m.lossPct, overallPct: inv.millLoss.overallPct, receipts: m.receipts, grey: m.grey, finished: m.finished },
       target: { type: 'mill', id: m.mill }, dedupeKey: `mill_loss:${nameKey(m.mill)}`,
+      hint: 'You pay for grey meters that never come back as finished cloth. Talk to the mill, or try another for the next lot.',
     });
   }
   return out;

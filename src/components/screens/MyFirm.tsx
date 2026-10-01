@@ -10,7 +10,7 @@ import { Empty, PageHead, Pill } from '../ui';
 import type { Ctx } from '../ctx';
 import { LIMITS } from '@/lib/config';
 import { sectionName } from '@/lib/access';
-import { useTakeHash } from '@/lib/useApi';
+import { flashWhenReady, useHashLink } from '@/lib/useApi';
 import type { Worker } from '@/lib/types';
 import { FirmBilling, FirmParties } from './MasterData';
 import { UsersAndSignUps } from './Team';
@@ -31,16 +31,27 @@ const store = {
 };
 
 export function MyFirm({ ctx }: { ctx: Ctx }) {
-  // Deep link: #firm=team (e.g. from an agent alert about a section).
-  const link = useTakeHash('firm');
-  const [part, setPartState] = useState<Part>(isPart(link) ? link : 'firm');
-  useEffect(() => {
-    if (isPart(link)) return;
-    const saved = store.get();
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- restore the last sub-tab after hydration
-    if (isPart(saved)) setPartState(saved);
-  }, [link]);
+  // Deep links: #firm=team (e.g. an agent alert about a section), #firm=parties&party=6 (open that party),
+  // #firm=team&person=<user or worker id | section-ID> (scroll to + highlight that person). Also while already open.
+  const link = useHashLink('firm');
+  const [part, setPartState] = useState<Part>(isPart(link.value) ? link.value : 'firm');
+  const [partyLink, setPartyLink] = useState<{ id: number; n: number } | null>(null);
   const setPart = (p: Part) => { setPartState(p); store.set(p); };
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- restore the last sub-tab after hydration, or follow a deep link */
+    if (!isPart(link.value)) {
+      const saved = store.get();
+      if (isPart(saved)) setPartState(saved);
+      return;
+    }
+    setPartState(link.value);
+    store.set(link.value);
+    const party = Number(link.all.party);
+    if (link.value === 'parties' && party) setPartyLink({ id: party, n: link.n });
+    /* eslint-enable react-hooks/set-state-in-effect */
+    const person = link.all.person;
+    if (link.value === 'team' && person) return flashWhenReady(`[data-person="${CSS.escape(person)}"]`, 6000);
+  }, [link]);
 
   if (ctx.role !== 'owner') {
     return <div className="page fade"><PageHead title="My firm" /><Empty title="Not available" text="Only the owner can change the firm." /></div>;
@@ -57,7 +68,7 @@ export function MyFirm({ ctx }: { ctx: Ctx }) {
         ))}
       </nav>
       {part === 'firm' && <FirmPart ctx={ctx} />}
-      {part === 'parties' && <FirmParties ctx={ctx} />}
+      {part === 'parties' && <FirmParties ctx={ctx} link={partyLink} />}
       {part === 'places' && <PlacesPart ctx={ctx} />}
       {part === 'policy' && <PolicyPart ctx={ctx} />}
       {part === 'team' && <TeamPart ctx={ctx} />}
@@ -239,7 +250,7 @@ function TeamPart({ ctx }: { ctx: Ctx }) {
           <div className="stack-4"><h2 className="h2">Sections</h2><span className="muted small">The work the floor does. Only these show in job cards, allotment and reports. Renaming also updates workers and job cards.</span></div>
           <div className="list">
             {activeSections.map((s) => (
-              <div key={s.id} className="list-row">
+              <div key={s.id} className="list-row" data-person={`section-${s.id}`}>
                 <EditableName value={s.name} label={`${s.name} name`} onSave={(v) => api.updateSection(s.id, { name: v })} />
                 <div className="grow" />
                 <Toggle on label={`${s.name} in use`} onChange={(v) => api.updateSection(s.id, { active: v })} />
@@ -267,14 +278,14 @@ function TeamPart({ ctx }: { ctx: Ctx }) {
         <section className="card pad stack-16">
           <div className="stack-4"><h2 className="h2">Owner & supervisors</h2><span className="muted small">Supervisors only see and manage the sections ticked here.</span></div>
           <div className="list">
-            <div className="list-row">
+            <div className="list-row" data-person={cfg.owner.id}>
               <span className="av owner sm">{cfg.owner.name.slice(0, 1).toUpperCase()}</span>
               <EditableName value={cfg.owner.name} label="Owner name" onSave={(v) => api.updateUser(cfg.owner.id, { name: v })} />
               <div className="grow" />
               <Pill tone="good">Owner</Pill>
             </div>
             {cfg.supervisors.map((s) => (
-              <div key={s.id} className={`list-row wrap ${s.active ? '' : 'off'}`}>
+              <div key={s.id} data-person={s.id} className={`list-row wrap ${s.active ? '' : 'off'}`}>
                 <span className="av supervisor sm">{s.name.slice(0, 1).toUpperCase()}</span>
                 <EditableName value={s.name} label={`${s.name} name`} onSave={(v) => api.updateUser(s.id, { name: v })} />
                 <div className="grow" />
@@ -312,7 +323,7 @@ function TeamPart({ ctx }: { ctx: Ctx }) {
         <div className="list">
           {workers == null && <span className="muted small" style={{ padding: 14 }}>Loading…</span>}
           {workers?.map((w) => (
-            <div key={w.id} className={`list-row wrap ${w.active ? '' : 'off'}`}>
+            <div key={w.id} data-person={w.id} className={`list-row wrap ${w.active ? '' : 'off'}`}>
               <span className="av worker sm">{w.name.slice(0, 1).toUpperCase()}</span>
               <EditableName value={w.name} label={`${w.name} name`} onSave={async (v) => { const ok = await api.updateWorker(w.id, { name: v }); if (ok) loadWorkers(); return ok; }} />
               <div className="grow" />

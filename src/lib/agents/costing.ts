@@ -1,4 +1,6 @@
-// Costing & Margin agent (owner only). Info-only alerts, no one-tap actions:
+// Costing & Margin agent (owner only). SWITCHED OFF by default (catalog.ts): it needs selling rates and
+// process costs, which the owner turned off — a margin without process costs overstates profit.
+// Info-only alerts, no one-tap actions:
 //  low_margin    — a party's dispatches in the last 30 days earned under 3% (fully costed moves only;
 //                  cost = purchase + grey→finished shortage, rate = invoice or order rate)
 import type { Q } from '../db';
@@ -21,6 +23,7 @@ async function scan(q: Q): Promise<void> {
       agent: 'costing', kind: 'low_margin', severity: 'warn',
       title: `Low margin on ${r.label}: ${r.margin_pct}% in 30 days`,
       detail: `Sold ${Math.round(r.meters).toLocaleString('en-IN')} m for ${rupees(r.revenue)} against cost ${rupees(r.cost)}. Check the rates given to this party.`,
+      hint: 'Open Money → Margin to see which orders earned least.',
       payload: { party_id: r.party_id, margin_pct: r.margin_pct }, target: r.party_id ? { type: 'party', id: r.party_id } : null,
       ownerOnly: true, dedupeKey: key,
     });

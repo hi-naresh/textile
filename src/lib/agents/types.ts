@@ -21,6 +21,10 @@ export interface SuggestionInput {
   actionLabel?: string | null; // set when accept() can act on it ("Allocate", "Send reminder")
   ownerOnly?: boolean; // money-related → never shown to supervisors
   dedupeKey: string; // stable per real-world problem, e.g. `low_stock:Georgette`
+  /** Plain words shown under the card: what the button will do (or what to do). Stored as payload.hint. */
+  hint?: string | null;
+  /** Label for the dismiss button when "dismiss" has a meaning, e.g. "Not for an order". Stored as payload.dismiss_label. */
+  dismissLabel?: string | null;
 }
 
 export interface Suggestion {
@@ -41,6 +45,6 @@ export interface Suggestion {
 export interface AgentModule {
   /** Periodic check (throttled, runs in its own transaction). Raise/resolve suggestions via suggest.ts. */
   scan?: (q: Q) => Promise<void>;
-  /** One-tap accept of a suggestion. Returns a short confirmation for the toast. Throw LedgerError for user errors. */
-  accept?: (s: Suggestion, q: Q, actor: string | null) => Promise<string>;
+  /** One-tap accept of a suggestion. `choice`: one of payload.choices[].value when the card offers alternatives. Returns a short confirmation for the toast. Throw LedgerError for user errors. */
+  accept?: (s: Suggestion, q: Q, actor: string | null, choice?: number | null) => Promise<string>;
 }

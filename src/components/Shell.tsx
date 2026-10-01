@@ -7,6 +7,7 @@ import type { Ctx } from './ctx';
 import { MOBILE_PRIMARY, navFor, can, sectionName, type Role, activeSupervisor, owner, firm, withFirm } from '@/lib/access';
 import type { Worker } from '@/lib/types';
 import { AttentionPanel, useAttentionCount } from './AgentInbox';
+import SearchBox, { LotSheet, SearchButton, useFindLink } from './SearchBox';
 
 export function shiftName(d = new Date()) {
   const h = d.getHours();
@@ -37,7 +38,8 @@ interface ShellProps {
 export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
   const { role, d, go, me } = ctx;
   const [more, setMore] = useState(false);
-  const [search, setSearch] = useState('');
+  const [lotCard, setLotCard] = useState<string | null>(null); // lot card opened from search (no Stock screen)
+  useFindLink();
   const who = whoAmI(role, me, ctx.account.name);
   const nav = navFor(role);
   const groups = Array.from(new Set(nav.map((n) => n.group)));
@@ -85,11 +87,7 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
         {/* ---------- Desktop top bar ---------- */}
         <header className="topbar">
           {role !== 'worker' ? (
-            <form className="search" onSubmit={(e) => { e.preventDefault(); if (search.trim()) { d.ask(role, search.trim()); setSearch(''); openChat(); } }}>
-              <Icon name="search" size={16} strokeWidth={2} />
-              <input aria-label="Search or ask" placeholder="Ask: a lot, party, challan, worker…" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <kbd className="num">↵</kbd>
-            </form>
+            <SearchBox ctx={ctx} openChat={openChat} onLot={setLotCard} variant="bar" />
           ) : <div />}
           <div className="grow" />
           {now && <span className="pill neutral tall hide-md"><Icon name="clock" size={14} strokeWidth={2} />{today} · {shiftName(now)}</span>}
@@ -101,6 +99,7 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
           <div className="m-row">
             <Logo size={30} />
             <div className="stack-0 grow min0"><span className="brand-name">{firm().name}</span><span className="muted tiny ellipsis">{who.name} · {who.title}</span></div>
+            {role !== 'worker' && <SearchButton ctx={ctx} openChat={openChat} onLot={setLotCard} />}
             {bellOk && (
               <BellButton count={attention} label={bellLabel} open={ctx.attention != null} onClick={openBell} phone />
             )}
@@ -139,6 +138,7 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
       </div>
 
       {bellOk && <AttentionPanel ctx={ctx} />}
+      {role !== 'worker' && <LotSheet ctx={ctx} id={lotCard} onClose={() => setLotCard(null)} />}
 
       <Sheet open={more} title="More" onClose={() => setMore(false)}>
         <div className="stack-4">

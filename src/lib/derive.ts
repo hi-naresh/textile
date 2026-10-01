@@ -38,7 +38,9 @@ export function avg(nums: number[]): number | null {
 export function sectionRows(days: WorkerDay[], jobCards: JobCard[]) {
   return sectionNames().map((sec) => {
     const cards = jobCards.filter((j) => sectionName(j.process) === sec);
-    const open = cards.filter((j) => j.status !== 'closed').length;
+    const openCards = cards.filter((j) => j.status !== 'closed');
+    const open = openCards.length;
+    const openM = openCards.reduce((s, j) => s + j.meters_in, 0);
     const closed = cards.filter((j) => j.status === 'closed' && j.meters_out != null);
     const shortage = avg(closed.map((j) => j.shortage_pct));
     const crew = days.filter((d) => d.section === sec);
@@ -47,6 +49,9 @@ export function sectionRows(days: WorkerDay[], jobCards: JobCard[]) {
     return {
       name: sec,
       open,
+      openM,
+      allot,
+      done,
       eff: allot > 0 ? Math.round((done / allot) * 100) : null,
       shortage,
       shortTone: shortage == null ? 'neutral' as const : shortage > rules().shortageLimitPct ? 'bad' as const : shortage > rules().shortageLimitPct / 2 ? 'warn' as const : 'good' as const,

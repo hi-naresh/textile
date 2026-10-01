@@ -1,8 +1,8 @@
 // Analytics & Reporting agent (docs/AGENTS_PHASE2.md §8). Deterministic.
 //   daily_report  (info) once a day: yesterday's numbers, links to the report (target report/day:<date>)
 //   weekly_report (info) on Mondays: last week's numbers (target report/week:<monday>)
-// Only the newest of each stays open; older ones are resolved. Titles carry meters only (no ₹),
-// so supervisors can see them too. The report itself strips ₹ for non-owners.
+// Only the newest of each stays open; older ones are resolved. Owner only (supervisors have no Reports screen);
+// titles carry meters only.
 import type { Q } from '../db';
 import type { AgentModule, SuggestionInput } from './types';
 import { resolveMissing, suggest } from './suggest';
@@ -30,7 +30,10 @@ function headline(r: Report): string {
 export function reportSuggestion(kind: 'daily_report' | 'weekly_report', r: Report): SuggestionInput {
   const daily = kind === 'daily_report';
   return {
-    agent: 'reports', kind, severity: 'info', actionLabel: null, ownerOnly: false,
+    agent: 'reports', kind, severity: 'info', actionLabel: null,
+    // Owner only: supervisors can't open Reports, so for them the card was a dead end.
+    ownerOnly: true,
+    hint: 'Open it for the full report (Excel download there too). This card is replaced by tomorrow\'s.',
     title: `${daily ? "Yesterday's" : "Last week's"} report is ready: ${headline(r)}`,
     detail: r.narrative.filter((l) => !l.includes('₹')).join(' '),
     payload: { period: r.period, from: r.from, to: r.to, dispatched: r.dispatch.total, received: r.receipts.total, production: r.production.total, shortagePct: r.production.shortagePct, efficiencyPct: r.efficiency.pct },

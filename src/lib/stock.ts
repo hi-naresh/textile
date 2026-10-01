@@ -6,12 +6,11 @@ export interface LotStock { lot_id: string; quality: string; design: string; bal
 
 const LOTS_SQL = `
   SELECT l.lot_id, l.quality, l.design,
-         COALESCE(b.bal, 0) AS balance,
+         l.bal_m AS balance, -- balance / location / last move are kept on the lot row by triggers (migration 010)
          COALESCE(a.res, 0) AS reserved,
-         (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS location,
-         b.last_move
+         l.cur_location AS location,
+         l.last_move_at AS last_move
   FROM lots l
-  LEFT JOIN (SELECT lot_id, SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) AS bal, MAX(ts) AS last_move FROM stock_movements GROUP BY lot_id) b ON b.lot_id = l.lot_id
   LEFT JOIN (SELECT lot_id, SUM(meters - dispatched_m) AS res FROM allocations WHERE status = 'reserved' GROUP BY lot_id) a ON a.lot_id = l.lot_id`;
 
 const toLot = (r: Record<string, unknown>): LotStock => {

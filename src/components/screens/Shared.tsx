@@ -9,8 +9,9 @@ import { formatMarketLocation, parseMarketLocation, validPart } from '@/lib/loca
 import { checkImportFile, commitImport, type ImportOutcome, type ImportProgress, type ValidateResult } from '@/lib/stockImportClient';
 import { CAPTURE_LABEL, ENGINE_LABEL, FIELDS_FOR, FIELD_LABEL, NUMERIC_FIELDS, OPTIONAL_FIELDS, STAGE_LABEL, STATUS_LABEL, STATUS_TONE, locationTone, shortTone } from '@/lib/derive';
 import type { StockEntry } from '@/lib/useTextileData';
-import { LotPicker, matchLots } from '../LotPicker';
-import type { CaptureEvent, JobCard, LotLocationEntry } from '@/lib/types';
+import { LotPicker } from '../LotPicker';
+import { useLotSearch, type PickLot } from '@/lib/useLots';
+import type { CaptureEvent, JobCard, Lot, LotLocationEntry } from '@/lib/types';
 
 // ---------------- Job cards ----------------
 export function JobCards({ ctx }: { ctx: Ctx }) {
@@ -216,9 +217,9 @@ export function AllotForm({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) {
   const { d, role } = ctx;
   const workers = d.workers.filter((w) => role === 'owner' || inSupervisorScope(w.section));
   const processes = role === 'owner' ? sectionNames() : sectionNames().filter((s) => activeSupervisor().sections.includes(s));
-  const lots = d.lots.filter((l) => l.status !== 'dispatched' && l.balance > 0);
   const [workerId, setWorkerId] = useState('');
   const [lotId, setLotId] = useState('');
+  const [pickedLot, setPickedLot] = useState<PickLot | null>(null); // lots with stock come from the server (LotPicker)
   const [process, setProcess] = useState('');
   const [meters, setMeters] = useState('');
   const [shift, setShift] = useState<'Morning' | 'Evening' | 'Night'>('Morning');
@@ -226,12 +227,12 @@ export function AllotForm({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) {
 
   const w = workers.find((x) => x.id === workerId) ?? workers[0];
   const proc = process || (w && processes.includes(sectionName(w.section)) ? sectionName(w.section) : processes[0]);
-  const lot = lotId || (lots.length <= 60 ? lots[0]?.lot_id ?? '' : '');
+  const lot = lotId;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!w || !lot || !meters) { d.showToast('Pick a worker, a lot and meters.', 'warning'); return; }
-    if (!lots.some((l) => l.lot_id === lot.trim())) { d.showToast(`${lot.trim()} is not a lot with stock. Pick one from the list.`, 'warning'); return; }
+    if (!pickedLot || pickedLot.lot_id !== lot.trim() || pickedLot.status === 'dispatched') { d.showToast(`${lot.trim()} is not a lot with stock. Pick one from the list.`, 'warning'); return; }
     setBusy(true);
     const ok = await d.createJobCard(role, { lot_id: lot, process: proc, worker_id: w.id, meters_in: meters, shift }, w.name);
     setBusy(false);
@@ -246,7 +247,7 @@ export function AllotForm({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) {
         </select>
       </label>
       <label className="fld">Lot
-        <LotPicker lots={lots} value={lot} onChange={setLotId} />
+        <LotPicker value={lot} onChange={setLotId} onPick={setPickedLot} autoFirst refreshKey={d.stockRev} />
       </label>
       <label className="fld">Process
         <select value={proc} onChange={(e) => setProcess(e.target.value)}>
@@ -312,8 +313,11 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const [srTouched, setSrTouched] = useState(false);
   const [sr, setSr] = useState<SrInfo | null>(null);
   const [round, setRound] = useState(0); // bumps after each save: fresh SR suggestion + reset location picker
-  const known = d.lots.find((l) => l.lot_id === f.lot_id.trim());
-  const lotMatches = useMemo(() => matchLots(d.lots, f.lot_id), [d.lots, f.lot_id]);
+  // Lot type-ahead from the server (any lot, with or without stock); `known` = the typed lot if it exists.
+  const lotSearch = useLotSearch(f.lot_id, { limit: 30, refreshKey: d.stockRev });
+  const lotMatches = lotSearch.lots ?? [];
+  const known = f.lot_id.trim() ? lotMatches.find((l) => l.lot_id === f.lot_id.trim()) : undefined;
+  const lotChecked = !f.lot_id.trim() || (lotSearch.fresh && !lotSearch.loading); // search answered for this text
   const set = (k: keyof StockEntry) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   const isIn = f.direction === 'IN';
   const grey = parseFloat(f.grey_meters);
@@ -364,7 +368,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     if (isIn && !entry.grey_meters && !entry.finished_meters) return d.showToast('Enter grey meters or finished meters.', 'warning');
     if (isIn && !entry.mill_name.trim()) return d.showToast('Mill name is required.', 'warning');
     if (isIn && !entry.location) return d.showToast('Pick a location. For a market, type the shop number.', 'warning');
-    if (isIn && !known && (!entry.quality.trim() || !entry.design.trim())) return d.showToast('New lot: enter quality and design.', 'warning');
+    if (isIn && lotChecked && !known && (!entry.quality.trim() || !entry.design.trim())) return d.showToast('New lot: enter quality and design.', 'warning');
     if (!isIn && (!entry.meters || !entry.party.trim())) return d.showToast('Meters and party (client) are required.', 'warning');
     setBusy(true);
     const ok = await d.addStock(role, entry);
@@ -400,7 +404,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
           <datalist id="lot-list">{lotMatches.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.quality}</option>)}</datalist>
         </label>
       </div>
-      {known && <span className="muted small hint">{known.lot_id}: {known.quality} · balance {fmt(known.balance, 1)} m{known.location ? ` · at ${known.location}` : ''}</span>}
+      {known && <span className="muted small hint">{known.lot_id}: {known.quality} · balance {fmt(known.balance ?? 0, 1)} m{known.location ? ` · at ${known.location}` : ''}</span>}
 
       {isIn ? (
         <>
@@ -426,7 +430,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
           <div className="fld">Location on arrival
             <LocationPicker key={round} value={f.location} onChange={(v) => setF((cur) => ({ ...cur, location: v }))} />
           </div>
-          {!known && f.lot_id.trim() && (
+          {!known && f.lot_id.trim() && lotChecked && (
             <div className="two-col">
               <label className="fld">Quality (new lot)<input name="quality" value={f.quality} onChange={set('quality')} /></label>
               <label className="fld">Design (new lot)<input name="design" value={f.design} onChange={set('design')} /></label>
@@ -517,7 +521,7 @@ export function LocationPicker({ value, onChange, exclude }: { value: string; on
 
 export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: string; onDone?: () => void }) {
   const { d, role } = ctx;
-  const lot = d.lots.find((l) => l.lot_id === lotId);
+  const [lot, setLot] = useState<Lot | null>(null); // this lot now (balance, location), from the server with its history
   const [history, setHistory] = useState<LotLocationEntry[] | null>(null);
   const [loc, setLoc] = useState('');
   const [note, setNote] = useState('');
@@ -526,9 +530,9 @@ export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: stri
 
   useEffect(() => {
     let alive = true;
-    d.lotHistory(lotId).then((h) => { if (alive) setHistory(h); }).catch(() => { if (alive) setHistory([]); });
+    d.lotInfo(lotId).then((x) => { if (alive) { setLot(x.lot); setHistory(x.history); } }).catch(() => { if (alive) setHistory([]); });
     return () => { alive = false; };
-  }, [d, lotId, lot?.location_ts]);
+  }, [d, lotId, d.stockRev]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

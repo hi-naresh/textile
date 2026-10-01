@@ -12,17 +12,18 @@ function cronAllowed(req: NextRequest): boolean {
   return given.length === want.length && timingSafeEqual(given, want);
 }
 
-// PUBLIC with CRON_SECRET. GET → Vercel Cron (daily; header "Authorization: Bearer $CRON_SECRET").
+// PUBLIC with CRON_SECRET. GET → Vercel Cron (daily 01:30 UTC = 07:00 IST, vercel.json; header "Authorization: Bearer $CRON_SECRET").
+// Switched-off agents are skipped (developer console → Agents).
 export async function GET(req: NextRequest) {
   if (!cronAllowed(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  return NextResponse.json(await runAgents(true));
+  return NextResponse.json(await runAgents({ force: true, trigger: 'cron' }));
 }
 
 // POST (owner) → run now from the app.
 export async function POST(req: NextRequest) {
   try {
     await requireRole(req, 'owner');
-    return NextResponse.json(await runAgents(true));
+    return NextResponse.json(await runAgents({ force: true, trigger: 'manual' }));
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });
