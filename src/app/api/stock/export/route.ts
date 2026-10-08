@@ -6,13 +6,15 @@ import { requireCap } from '@/lib/apiAuth';
 import { errorResponseBody, nextSr } from '@/lib/ledger';
 import { filtersFrom, ledgerAll } from '@/lib/ledger-query';
 import { lotFiltersFrom, lotsAll } from '@/lib/lots-query';
-import { challanSheet, importTemplate, newBook } from '@/lib/stock-import';
+import { challanSheet, importTemplate, newBook, registerTemplate } from '@/lib/stock-import';
 
 // Owner only (₹-free, but the whole ledger).
 // GET /api/stock/export?kind=challans[&q=&direction=IN|OUT&quality=&design=&lot=&party=&from=YYYY-MM-DD&to=YYYY-MM-DD]
 //     → .xlsx of every challan matching the same filters as the ledger screen (S.No first, SR no., pieces, location)
 // GET /api/stock/export?kind=lots[&q=&in_stock=1&status=] → lot balances + locations (same filters as Lots & balance)
-// GET /api/stock/export?kind=template   → blank import template for manual stock entry
+// GET /api/stock/export?kind=template   → blank import template for manual stock entry (the app's own columns)
+// GET /api/stock/export?kind=incoming_template | outgoing_template → the firm's Incoming / Outgoing register columns,
+//     an example row on its own sheet and short notes
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 export async function GET(req: NextRequest) {
@@ -26,11 +28,14 @@ export async function GET(req: NextRequest) {
     let name: string;
 
     if (kind === 'template') {
-      const locs = cfg.locationPresets.some((l) => l.toLowerCase() === 'floor') ? cfg.locationPresets : [...cfg.locationPresets, 'Floor'];
       const run = (text: string, params?: unknown[]) => query(text, params);
       const [i, o] = await Promise.all([nextSr(run, 'IN'), nextSr(run, 'OUT')]);
-      importTemplate(wb, locs, cfg.markets ?? [], { IN: i.next, OUT: o.next });
+      importTemplate(wb, cfg.markets, { IN: i.next, OUT: o.next }); // Location dropdown: the market codes
       name = 'stock-import-template.xlsx';
+    } else if (kind === 'incoming_template' || kind === 'outgoing_template') {
+      const i = await nextSr((text: string, params?: unknown[]) => query(text, params), 'IN');
+      registerTemplate(wb, kind === 'incoming_template' ? 'incoming' : 'outgoing', i.next);
+      name = kind === 'incoming_template' ? 'incoming-register-template.xlsx' : 'outgoing-register-template.xlsx';
     } else if (kind === 'lots') {
       // Same filters as the Lots & balance view (q, in_stock, status); balance + location live on the lot row.
       lotsSheet(wb, await lotsAll((text, params) => query(text, params), lotFiltersFrom(sp)));
@@ -42,7 +47,7 @@ export async function GET(req: NextRequest) {
       const tag = [f.direction?.toLowerCase(), f.lot, f.quality, f.from && `from-${f.from}`, f.to && `to-${f.to}`].filter(Boolean).join('-').replace(/[^A-Za-z0-9-]/g, '');
       name = `challans-${tag ? `${tag.slice(0, 60)}-` : ''}${day}.xlsx`;
     } else {
-      return NextResponse.json({ error: 'kind must be challans, lots or template.' }, { status: 400 });
+      return NextResponse.json({ error: 'kind must be challans, lots, template, incoming_template or outgoing_template.' }, { status: 400 });
     }
 
     const buf = await toBuffer(wb);

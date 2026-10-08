@@ -38,7 +38,7 @@ async function knownNames() {
     query(`SELECT name AS n FROM workers WHERE active`),
     query(`SELECT name AS n FROM sections WHERE active ORDER BY sort_order`),
     query(`SELECT DISTINCT quality AS n FROM lots`),
-    query(`SELECT location_presets FROM app_settings WHERE id = 1`),
+    query(`SELECT name, code FROM markets WHERE active ORDER BY sort_order`).catch(() => ({ rows: [] as { name: string; code: string }[] })),
   ]);
   return {
     lots: lots.rows.map((r) => String(r.lot_id)),
@@ -47,7 +47,8 @@ async function knownNames() {
     workers: workers.rows.map((r) => String(r.n)),
     sections: sections.rows.map((r) => String(r.n)),
     qualities: qualities.rows.map((r) => String(r.n)),
-    locations: (settings.rows[0]?.location_presets as string[] | undefined) ?? ['Godown', 'Shop', 'Floor'],
+    // Market names + initials ("Landmark", "LM"); the location filter matches a market's labels ("LM 245 · Pipe 3").
+    locations: [...settings.rows.map((r) => String(r.name)), ...settings.rows.map((r) => String(r.code)), 'Dispatched'],
   };
 }
 

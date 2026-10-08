@@ -1,6 +1,7 @@
 // Everything that differs from one firm to the next.
 // Stored in the database (app_settings, users, sections, supervisor_sections, workers)
 // and edited by the owner in Settings. Nothing firm-specific lives in code.
+import type { MarketInfo } from './location';
 
 export interface FirmProfile {
   name: string; // shown in the header and browser tab, e.g. "Narmada Group"
@@ -37,8 +38,9 @@ export interface FirmConfig {
   supervisors: SupervisorProfile[];
   sections: SectionProfile[];
   rules: FirmRules;
-  locationPresets: string[]; // quick-pick lot locations, e.g. Godown, Shop, Floor
-  markets: string[]; // textile markets for "market + shop + pipe" locations, e.g. RRTM
+  /** Textile markets (+ their shops) for lot locations "<CODE> <shop> · Pipe <pipe>" — table markets (migration 014).
+   *  Every market, also switched-off ones (My firm lists them); pickers offer only active markets and shops. */
+  markets: MarketInfo[];
   /** Capabilities the developer switched off per role (Developer console → Access & roles). Owner is always full. */
   accessOff?: AccessOff;
 }
@@ -54,8 +56,7 @@ export const DEFAULT_CONFIG: FirmConfig = {
   supervisors: [],
   sections: [],
   rules: DEFAULT_RULES,
-  locationPresets: ['Godown', 'Shop', 'Floor'],
-  markets: ['RRTM'],
+  markets: [],
   accessOff: {},
 };
 
@@ -65,6 +66,6 @@ export const LIMITS = {
   efficiencyTargetPct: { min: 1, max: 100 },
   aiAutoConfirmPct: { min: 50, max: 100 },
   manualMinutes: { min: 0.5, max: 120 },
-  locationPresetsMax: 12,
-  marketsMax: 20,
+  marketsMax: 30,
+  shopsPerMarketMax: 2000,
 };

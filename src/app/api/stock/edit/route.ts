@@ -6,7 +6,9 @@ import { EditProblems, applyLedgerEdits, editHistory, parseChanges } from '@/lib
 
 // PATCH /api/stock/edit (owner, ledger.edit) — the stock ledger's edit mode.
 // Body: { changes: [{ target: 'movement', id: <stock_movements.id>, field, value } | { target: 'lot', id: <lot_id>, field, value }] } (≤ 500)
-//   movement fields: sr_no, pieces, source_doc_id, mill_name + weaver_name (IN), party (OUT), quality + design (edit the row's lot)
+//   movement fields: sr_no, pieces, source_doc_id, mill_name + weaver_name + register_pct + loc_code (IN),
+//                    party + bill_pct (L) + billed_meters (NQTY) + lot_status_code (LOT S) (OUT), quality + design (edit the row's lot)
+//   Opening adjustments (kind 'adjustment', from the Incoming register import) are read-only → 422.
 //   lot fields:      quality, design, grade, status (active | completed | dispatched | hold)
 //   Empty value (or null) clears sr_no / pieces / source_doc_id / mill_name / weaver_name / party. Quality, design, grade, status are required.
 // All-or-nothing, one transaction. → { saved, rows: LedgerRow[] (edited movements), lots: [{ lot_id, quality, design, grade, status }] }

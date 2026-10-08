@@ -87,7 +87,7 @@ async function main() {
       const mill = pick(MILLS);
       await recordIncoming(q, {
         lot_id: id, quality, design, grey_meters: grey, finished_meters: fin, mill_name: mill, weaver_name: rand() < 0.5 ? mill : 'Om Weavers',
-        source_doc: `CH-${7100 + i}`, purchase_rate: buy, location: i % 5 === 0 ? 'Shop' : 'Godown', moved_by: OWNER,
+        source_doc: `CH-${7100 + i}`, purchase_rate: buy, location: `${i % 5 === 0 ? 'RS' : 'LM'} ${240 + (i % 8)} · Pipe ${1 + (i % 4)}`, moved_by: OWNER, add_shops_by: OWNER,
       }, { requireLotDetails: true });
       await q(`UPDATE stock_movements SET ts = NOW() - ($2::int * interval '1 day') - interval '3 hours' WHERE lot_id = $1 AND direction = 'IN'`, [id, daysAgo]);
       await q(`UPDATE lot_locations SET ts = NOW() - ($2::int * interval '1 day') - interval '3 hours' WHERE lot_id = $1`, [id, daysAgo]);

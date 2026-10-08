@@ -12,6 +12,7 @@ import { LIMITS } from '@/lib/config';
 import { sectionName } from '@/lib/access';
 import { flashWhenReady, useHashLink } from '@/lib/useApi';
 import type { Worker } from '@/lib/types';
+import { checkCode, checkMarketName, checkShop, type MarketInfo } from '@/lib/location';
 import { FirmBilling, FirmParties } from './MasterData';
 import { UsersAndSignUps } from './Team';
 import { PolicyPart } from './Policy';
@@ -133,44 +134,6 @@ function AddRow({ placeholder, button, onAdd, children }: { placeholder: string;
   );
 }
 
-/** Editable list of short names shown as removable chips, saved with one button. */
-function ChipList({ title, sub, items, max, placeholder, normalize, onSave, saveLabel, emptyText, allowEmpty }: {
-  title: string; sub: React.ReactNode; items: string[]; max: number; placeholder: string; normalize?: (v: string) => string;
-  onSave: (list: string[]) => Promise<boolean>; saveLabel: string; emptyText: string; allowEmpty: boolean;
-}) {
-  const [list, setList] = useState<string[]>(items);
-  const [v, setV] = useState('');
-  const [busy, setBusy] = useState(false);
-  const dirty = list.join('|') !== items.join('|');
-  const norm = normalize ?? ((x: string) => x);
-  const add = (e: React.FormEvent) => {
-    e.preventDefault();
-    const x = norm(v.trim().replace(/\s+/g, ' '));
-    if (x && !list.some((y) => y.toLowerCase() === x.toLowerCase()) && list.length < max) setList([...list, x]);
-    setV('');
-  };
-  return (
-    <section className="card pad stack-16">
-      <div className="stack-4"><h2 className="h2">{title}</h2><span className="muted small">{sub}</span></div>
-      <div className="chips">
-        {list.map((l) => (
-          <span key={l} className="chip-tag">{l}<button type="button" aria-label={`Remove ${l}`} onClick={() => setList(list.filter((x) => x !== l))}><Icon name="x" size={14} strokeWidth={2} /></button></span>
-        ))}
-        {!list.length && <span className="muted small">{emptyText}</span>}
-      </div>
-      <form className="add-row" onSubmit={add}>
-        <input className="input" aria-label={placeholder} placeholder={placeholder} value={v} maxLength={60} onChange={(e) => setV(e.target.value)} />
-        <button className="btn" type="submit" disabled={!v.trim() || list.length >= max}><Icon name="plus" size={16} strokeWidth={2} />Add</button>
-      </form>
-      {list.length >= max && <span className="muted small">Up to {max}.</span>}
-      <div className="row-8">
-        <button className="btn primary" disabled={busy || !dirty || (!allowEmpty && !list.length)} onClick={async () => { setBusy(true); await onSave(list); setBusy(false); }}>{saveLabel}</button>
-        {dirty && <button className="btn" type="button" onClick={() => setList(items)}>Undo</button>}
-      </div>
-    </section>
-  );
-}
-
 // ---------- Firm & billing ----------
 function FirmPart({ ctx }: { ctx: Ctx }) {
   const cfg = ctx.d.config;
@@ -194,28 +157,159 @@ function FirmPart({ ctx }: { ctx: Ctx }) {
 }
 
 // ---------- Markets & locations ----------
+// Markets (name + initials) and each market's shop numbers. A lot's place is "<initials> <shop> · Pipe <pipe>".
 function PlacesPart({ ctx }: { ctx: Ctx }) {
-  const cfg = ctx.d.config;
-  const api = ctx.d.settingsApi;
-  const markets = cfg.markets ?? [];
-  const example = markets[0] ?? 'RRTM';
+  const list = ctx.d.config.markets ?? [];
+  const [open, setOpen] = useState<number | null>(null);
   return (
-    <div className="settings-grid">
-      <ChipList
-        key={`m:${markets.join('|')}`}
-        title="Markets"
-        sub={<>Textile markets where the firm has shops. A lot kept in a shop gets a place like <b>{example} 245 · Pipe 3</b>.</>}
-        items={markets} max={LIMITS.marketsMax} placeholder="e.g. RRTM" normalize={(v) => v.toUpperCase()}
-        onSave={(list) => api.updateFirm({ markets: list })} saveLabel="Save markets" emptyText="No markets yet." allowEmpty
-      />
-      <ChipList
-        key={`l:${cfg.locationPresets.join('|')}`}
-        title="Fixed places"
-        sub="Other places a lot can be, like a godown. Floor is used by job cards; Dispatched is set by the app."
-        items={cfg.locationPresets} max={LIMITS.locationPresetsMax} placeholder="e.g. Godown 2"
-        onSave={(list) => api.updateFirm({ location_presets: list })} saveLabel="Save places" emptyText="No places yet." allowEmpty={false}
-      />
+    <div className="stack-16">
+      <section className="card pad stack-16">
+        <div className="stack-4">
+          <h2 className="h2">Markets</h2>
+          <span className="muted small">Where the firm keeps lots. A lot&apos;s place is the market&apos;s initials, shop no. and pipe no., like <b>{list.find((m) => m.active)?.code ?? 'LM'} 245 · Pipe 3</b>. Floor and Dispatched are set by the app (job cards, dispatch).</span>
+        </div>
+        <div className="list">
+          {list.map((m) => <MarketRow key={m.id} ctx={ctx} m={m} open={open === m.id} onToggle={() => setOpen(open === m.id ? null : m.id)} />)}
+          {!list.length && <span className="muted small" style={{ padding: 14 }}>No markets yet.</span>}
+        </div>
+        <AddMarketRow ctx={ctx} />
+      </section>
     </div>
+  );
+}
+
+const marketSaved = (ctx: Ctx) => async (p: Promise<{ ok: true } | { ok: false; error: string }>) => {
+  const r = await p;
+  if (!r.ok) ctx.d.showToast(r.error, 'danger');
+  return r.ok;
+};
+
+function MarketRow({ ctx, m, open, onToggle }: { ctx: Ctx; m: MarketInfo; open: boolean; onToggle: () => void }) {
+  const api = ctx.d.marketsApi;
+  const saved = marketSaved(ctx);
+  const shops = m.shops.filter((s) => s.active);
+  return (
+    <>
+      <div className={`list-row wrap mk-row ${m.active ? '' : 'off'}`}>
+        <InitialsEdit value={m.code} name={m.name} onSave={(v) => saved(api.updateMarket(m.id, { code: v }))} />
+        <EditableName value={m.name} label={`${m.name} name`} onSave={(v) => saved(api.updateMarket(m.id, { name: v }))} />
+        <div className="grow" />
+        <button type="button" className="btn sm" aria-expanded={open} onClick={onToggle}>
+          {open ? 'Hide shops' : `${shops.length} shop${shops.length === 1 ? '' : 's'}`}
+        </button>
+        <Toggle on={m.active} label={`${m.name} in use`} onChange={(v) => saved(api.updateMarket(m.id, { active: v }))} />
+      </div>
+      {open && <ShopList ctx={ctx} m={m} />}
+    </>
+  );
+}
+
+/** Initials with an Edit button; warns that lots already placed keep their old label. */
+function InitialsEdit({ value, name, onSave }: { value: string; name: string; onSave: (v: string) => Promise<boolean> }) {
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState(value);
+  const [busy, setBusy] = useState(false);
+  const c = checkCode(v);
+  if (!editing) {
+    return (
+      <span className="edit-name">
+        <span className="mk-code">{value}</span>
+        <button type="button" className="ib sm-ib" aria-label={`Change initials of ${name}`} title="Change initials" onClick={() => { setV(value); setEditing(true); }}><Icon name="edit" size={15} /></button>
+      </span>
+    );
+  }
+  return (
+    <form className="mk-initials" onSubmit={async (e) => { e.preventDefault(); if (!c.ok || c.value === value) { setEditing(false); return; } setBusy(true); const ok = await onSave(c.value); setBusy(false); if (ok) setEditing(false); }}>
+      <div className="edit-name">
+        <input className="input num mk-code-in" aria-label={`Initials of ${name}`} value={v} maxLength={6} autoCapitalize="characters" onChange={(e) => setV(e.target.value.toUpperCase())} aria-invalid={!c.ok} autoFocus />
+        <button className="btn sm primary" type="submit" disabled={busy || !c.ok}>Save</button>
+        <button className="btn sm" type="button" onClick={() => setEditing(false)}>Cancel</button>
+      </div>
+      <span className={`small ${c.ok ? 'muted' : 'err'}`}>{c.ok ? `Lots already placed keep their old label (${value} 245). New moves use ${c.value}.` : c.error}</span>
+    </form>
+  );
+}
+
+function ShopList({ ctx, m }: { ctx: Ctx; m: MarketInfo }) {
+  const api = ctx.d.marketsApi;
+  const saved = marketSaved(ctx);
+  const [v, setV] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [showOff, setShowOff] = useState(false);
+  const on = m.shops.filter((s) => s.active);
+  const off = m.shops.filter((s) => !s.active);
+  const c = checkShop(v);
+  const dup = c.ok && on.some((s) => s.shop_no === c.value);
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!c.ok || dup) return;
+    setBusy(true);
+    const ok = await saved(api.addShop(m.id, c.value, m.name));
+    setBusy(false);
+    if (ok) setV('');
+  };
+  return (
+    <div className="mk-shops stack-10">
+      <span className="muted small">Shops in {m.name}, most used first. Removing a shop only takes it off this list; lots there keep their place.</span>
+      <div className="chips">
+        {on.map((s) => (
+          <span key={s.id} className="chip-tag" title={s.uses ? `${s.uses} location records` : 'Not used yet'}>
+            {s.shop_no}
+            <button type="button" aria-label={`Remove shop ${s.shop_no} from ${m.name}`} onClick={() => saved(api.updateShop(s.id, false))}><Icon name="x" size={14} strokeWidth={2} /></button>
+          </span>
+        ))}
+        {!on.length && <span className="muted small">No shops yet. They are also added when someone types a new shop no. while placing a lot.</span>}
+      </div>
+      <form className="add-row" onSubmit={add}>
+        <input className="input num" aria-label={`New shop no. in ${m.name}`} placeholder="Shop no., e.g. 245" value={v} maxLength={10} autoCapitalize="characters" onChange={(e) => setV(e.target.value)} aria-invalid={!!v.trim() && (!c.ok || dup)} />
+        <button className="btn" type="submit" disabled={busy || !c.ok || dup}><Icon name="plus" size={16} strokeWidth={2} />Add shop</button>
+      </form>
+      {v.trim() && !c.ok && <span className="err small">{c.error}</span>}
+      {dup && <span className="muted small">Shop {c.ok ? c.value : ''} is already in the list.</span>}
+      {off.length > 0 && (
+        <div className="stack-6">
+          <button type="button" className="linkbtn small left" onClick={() => setShowOff(!showOff)}>{showOff ? 'Hide removed shops' : `Show ${off.length} removed shop${off.length === 1 ? '' : 's'}`}</button>
+          {showOff && (
+            <div className="chips">
+              {off.map((s) => <button key={s.id} type="button" className="chip" onClick={() => saved(api.updateShop(s.id, true))} aria-label={`Bring back shop ${s.shop_no}`}><Icon name="plus" size={13} strokeWidth={2} />{s.shop_no}</button>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddMarketRow({ ctx }: { ctx: Ctx }) {
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const all = ctx.d.config.markets ?? [];
+  const n = checkMarketName(name);
+  const c = checkCode(code);
+  const local = name.trim() && !n.ok ? n.error
+    : n.ok && all.some((m) => m.name.toLowerCase() === n.value.toLowerCase()) ? `${all.find((m) => m.name.toLowerCase() === n.value.toLowerCase())!.name} is already in the list.`
+    : code.trim() && !c.ok ? c.error
+    : c.ok && all.some((m) => m.code === c.value) ? `Initials ${c.value} are already used by ${all.find((m) => m.code === c.value)!.name}.` : null;
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!n.ok || !c.ok || local) return;
+    setBusy(true);
+    const r = await ctx.d.marketsApi.addMarket(n.value, c.value);
+    setBusy(false);
+    if (!r.ok) { setErr(r.error); return; }
+    setName(''); setCode(''); setErr(null);
+  };
+  return (
+    <form className="stack-6" onSubmit={submit}>
+      <div className="add-row">
+        <input className="input" aria-label="New market name" placeholder="New market, e.g. Landmark 2" value={name} maxLength={60} onChange={(e) => { setName(e.target.value); setErr(null); }} />
+        <input className="input num mk-code-in" aria-label="Initials" placeholder="Initials, e.g. LM2" value={code} maxLength={6} autoCapitalize="characters" onChange={(e) => { setCode(e.target.value.toUpperCase()); setErr(null); }} />
+        <button className="btn primary" type="submit" disabled={busy || !n.ok || !c.ok || !!local}><Icon name="plus" size={16} strokeWidth={2} />Add market</button>
+      </div>
+      {(local || err) && <span className="err small">{err ?? local}</span>}
+    </form>
   );
 }
 

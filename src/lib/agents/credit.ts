@@ -1,6 +1,8 @@
 // Credit & Payment agent (owner only). Scan: overdue parties + parties over their credit limit.
 // Accept "Draft reminder": the reminder itself is built on demand in Money → Outstanding
-// (GET /api/credit/reminder), so accepting only confirms where to find it.
+// (GET /api/credit/reminder), so accepting only confirms where to find it. From there the owner sends it with
+// "Send on WhatsApp" (WhatsApp Cloud API, POST /api/whatsapp/reminder) or opens the wa.me draft when not connected.
+// Automatic reminders (owner switch) are sent by the daily cron, not by this agent: src/lib/whatsapp/flows.ts.
 import type { Q } from '../db';
 import type { AgentModule } from './types';
 import { resolveMissing, suggest } from './suggest';
@@ -31,7 +33,7 @@ async function scan(q: Q): Promise<void> {
           agent: 'credit', kind: 'overdue', severity: p.oldest_due_days > 60 ? 'bad' : 'warn',
           title: `${p.name} hasn't paid ${rupees(p.overdue)} — ${p.oldest_due_days} day${p.oldest_due_days === 1 ? '' : 's'} past the due date`,
           detail: `${n} bill${n === 1 ? '' : 's'} overdue (${BUCKET_LABEL[bucketOf(p.oldest_due_days)]} days). Total they owe: ${rupees(p.outstanding)}.${p.last_payment ? ` Last payment ${rupees(p.last_payment.amount)} on ${String(p.last_payment.paid_on).slice(0, 10)}.` : ' No payment recorded yet.'}`,
-          hint: '"Draft reminder" opens a polite ready-made message listing the unpaid bills (English, Hindi or Gujarati) — copy it or send it on WhatsApp. Nothing is sent by itself.',
+          hint: '"Draft reminder" opens a polite ready-made reminder listing the unpaid bills. Send it on WhatsApp from there in one tap (or copy it). Nothing is sent without you, unless you switched on automatic reminders.',
           payload: { party_id: p.party_id }, target: { type: 'party', id: p.party_id },
           actionLabel: 'Draft reminder', ownerOnly: true, dedupeKey: key,
         });
@@ -45,7 +47,7 @@ async function scan(q: Q): Promise<void> {
           agent: 'credit', kind: 'over_limit', severity: 'bad',
           title: `${p.name} owes ${rupees(p.outstanding)} — ${rupees(p.over_limit)} over their credit limit`,
           detail: `Their limit is ${rupees(p.limit)}. Think twice before sending more goods on credit; the Dispatch screen warns too.`,
-          hint: '"Draft reminder" opens a ready-made payment reminder for them. Nothing is sent by itself.',
+          hint: '"Draft reminder" opens a ready-made payment reminder for them — send it on WhatsApp from there.',
           payload: { party_id: p.party_id }, target: { type: 'party', id: p.party_id },
           actionLabel: 'Draft reminder', ownerOnly: true, dedupeKey: key,
         });
@@ -66,6 +68,6 @@ export const agent: AgentModule = {
     // The card is closed now and stays quiet for 7 days; it comes back then if the bill is still unpaid.
     const back = new Date(Date.now() + (7 * 24 + 5.5) * 3_600_000); // IST date a week from now
     const day = `${back.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][back.getUTCMonth()]}`;
-    return `Reminder for ${r.rows[0].name} drafted — send it from the window that opened. We'll remind you again on ${day} if it's still unpaid.`;
+    return `Reminder for ${r.rows[0].name} is ready — send it from the window that opened. We'll remind you again on ${day} if it's still unpaid.`;
   },
 };

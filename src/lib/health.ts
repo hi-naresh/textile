@@ -4,6 +4,7 @@ import { geminiModel, getAiStatus } from './gemini';
 import { visionKey } from './vision';
 import { photoStorageMode } from './photos';
 import type { Features, SystemStatus } from './types';
+import { waConnected } from './whatsapp/config';
 
 export async function systemStatus(force = false): Promise<SystemStatus> {
   const ai = await getAiStatus(force);
@@ -25,7 +26,7 @@ export async function featureFlags(): Promise<Features> {
   const st = await systemStatus();
   const aiOk = st.ai.state === 'connected';
   const reader = st.ocr?.state === 'connected' || aiOk || st.ai.state === 'demo';
-  return { photoReading: reader && st.photos.state !== 'missing', aiWriting: aiOk };
+  return { photoReading: reader && st.photos.state !== 'missing', aiWriting: aiOk, whatsapp: waConnected() };
 }
 
 /** Which settings are present (never their values). */
@@ -38,6 +39,7 @@ export function connections(): { name: string; set: boolean; note: string }[] {
     { name: 'OCR (Google Cloud Vision)', set: has('GOOGLE_VISION_API_KEY'), note: 'GOOGLE_VISION_API_KEY' },
     { name: 'AI (Gemini)', set: has('GEMINI_API_KEY'), note: 'GEMINI_API_KEY' },
     { name: 'Daily agents cron', set: has('CRON_SECRET'), note: 'CRON_SECRET' },
+    { name: 'WhatsApp (Meta Cloud API)', set: has('WHATSAPP_TOKEN') && has('WHATSAPP_PHONE_NUMBER_ID'), note: 'WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID (+ WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN for the webhook)' },
     { name: 'Developer account', set: has('DEV_ADMIN_EMAIL') && has('DEV_ADMIN_PASSWORD'), note: 'DEV_ADMIN_EMAIL + DEV_ADMIN_PASSWORD' },
   ];
 }

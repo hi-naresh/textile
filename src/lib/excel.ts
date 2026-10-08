@@ -95,35 +95,7 @@ export function lotsSheet(wb: ExcelJS.Workbook, rows: Record<string, unknown>[])
   return ws;
 }
 
-/** Import template with dropdowns for Direction and Location, and an example row on a second sheet. */
-export function importTemplate(wb: ExcelJS.Workbook, locations: string[]) {
-  const ws = wb.addWorksheet(IMPORT_SHEET);
-  ws.columns = IMPORT_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
-  styleHeader(ws);
-  const lists = wb.addWorksheet('Lists');
-  lists.getCell('A1').value = 'Locations';
-  locations.forEach((l, i) => { lists.getCell(`A${i + 2}`).value = l; });
-  lists.state = 'hidden';
-  for (let r = 2; r <= 1001; r++) {
-    ws.getCell(`A${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['"IN,OUT"'], showErrorMessage: true, error: 'IN or OUT' };
-    ws.getCell(`J${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`Lists!$A$2:$A$${locations.length + 1}`], showErrorMessage: true, error: 'Pick a location from the list' };
-    for (const col of ['F', 'G', 'K']) {
-      ws.getCell(`${col}${r}`).dataValidation = { type: 'decimal', operator: 'greaterThan', allowBlank: true, formulae: [0], showErrorMessage: true, error: 'Meters must be a positive number' };
-      ws.getCell(`${col}${r}`).numFmt = '0.00';
-    }
-  }
-  const help = wb.addWorksheet('How to fill');
-  help.columns = [{ header: 'Rule', key: 'r', width: 110 }];
-  [
-    'One row per challan. Direction IN = received, OUT = dispatched.',
-    'IN: Lot No, Grey Mts and/or Finished Mts, Mill, Weaver (same as mill if the mill weaves), Location from the list. Quality + Design only for a new lot.',
-    'OUT: Lot No, Meters, Party. The lot must have enough stock.',
-    'Lot and challan numbers: letters, digits, "-" and "/" only. Names are matched to spellings already used.',
-    'If any row has a problem, nothing is imported and every problem is listed with its row number.',
-  ].forEach((r) => help.addRow({ r }));
-  styleHeader(help);
-  return ws;
-}
+// The import template (Direction + market-code dropdowns) is built by importTemplate() in src/lib/stock-import.ts.
 
 /** Read the import sheet into plain objects keyed by IMPORT_COLUMNS keys. Header text decides the column. */
 export async function readImport(buffer: Buffer): Promise<{ row: number; values: Partial<Record<ImportKey, unknown>> }[]> {

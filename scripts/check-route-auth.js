@@ -1,13 +1,15 @@
 // Fails when an API route handler has no server-side auth check.
 // Every exported GET/POST/PUT/PATCH/DELETE in src/app/api/**/route.ts must call one of the guards below,
 // or be marked public with a "// PUBLIC" comment right above it (login, sign up, refresh, cron…).
+// Secret-protected public routes call their check by name: cronAllowed (CRON_SECRET), verifyChallenge /
+// signatureValid (WhatsApp webhook: WHATSAPP_VERIFY_TOKEN / X-Hub-Signature-256 with WHATSAPP_APP_SECRET).
 // Usage: npm run lint:auth
 /* eslint-disable @typescript-eslint/no-require-imports -- plain Node script, like migrate.js */
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', 'src', 'app', 'api');
-const GUARDS = /\b(requireUser|requireCap|requireRole|requireDeveloper|readSession|refreshSession|passwordLogin|cronAllowed)\s*\(/;
+const GUARDS = /\b(requireUser|requireCap|requireRole|requireDeveloper|readSession|refreshSession|passwordLogin|cronAllowed|verifyChallenge|signatureValid)\s*\(/;
 const HANDLER = /export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g;
 
 function walk(dir, out = []) {

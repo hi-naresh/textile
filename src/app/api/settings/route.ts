@@ -5,7 +5,7 @@ import { LIMITS } from '@/lib/config';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
 import { cleanName, getFirmConfig, invalidateSettings, pct } from '@/lib/settings';
 
-// GET (any signed-in user): the firm's configuration (names, sections, supervisors, rules, location presets)
+// GET (any signed-in user): the firm's configuration (names, sections, supervisors, rules, markets + shops)
 export async function GET(request: NextRequest) {
   try {
     await requireUser(request);
@@ -16,8 +16,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// PUT (owner): update firm profile, rules and location presets. Send only the fields you change.
-// { firm_name?, firm_city?, shortage_limit_pct?, efficiency_target_pct?, ai_auto_confirm_pct?, location_presets?, markets? }
+// PUT (owner): update firm profile and rules. Send only the fields you change.
+// { firm_name?, firm_city?, shortage_limit_pct?, efficiency_target_pct?, ai_auto_confirm_pct?, manual_challan_min?, manual_job_card_min? }
+// Markets and shops have their own routes (/api/markets, /api/markets/shops); fixed places (location_presets) are gone.
 export async function PUT(request: NextRequest) {
   try {
     await requireCap(request, 'settings.manage');
@@ -33,28 +34,6 @@ export async function PUT(request: NextRequest) {
     if ('ai_auto_confirm_pct' in b) add('ai_auto_confirm_pct', pct(b.ai_auto_confirm_pct, 'AI auto-confirm %', LIMITS.aiAutoConfirmPct));
     if ('manual_challan_min' in b) add('manual_challan_min', pct(b.manual_challan_min, 'Minutes per challan', LIMITS.manualMinutes));
     if ('manual_job_card_min' in b) add('manual_job_card_min', pct(b.manual_job_card_min, 'Minutes per job card', LIMITS.manualMinutes));
-    if ('location_presets' in b) {
-      if (!Array.isArray(b.location_presets)) throw new LedgerError('location_presets must be a list.');
-      const list: string[] = [];
-      for (const raw of b.location_presets) {
-        const name = cleanName(raw, 'Location', 60);
-        if (!list.some((x) => x.toLowerCase() === name.toLowerCase())) list.push(name);
-      }
-      if (!list.length) throw new LedgerError('Keep at least one location.');
-      if (list.length > LIMITS.locationPresetsMax) throw new LedgerError(`Up to ${LIMITS.locationPresetsMax} locations.`);
-      add('location_presets', list);
-    }
-    if ('markets' in b) {
-      if (!Array.isArray(b.markets)) throw new LedgerError('markets must be a list.');
-      const list: string[] = [];
-      for (const raw of b.markets) {
-        const name = cleanName(raw, 'Market', 30).toUpperCase();
-        if (!/^[A-Z0-9][A-Z0-9 .&-]{0,29}$/.test(name)) throw new LedgerError(`Market "${name}": letters, numbers, space, dot, & or dash.`);
-        if (!list.includes(name)) list.push(name);
-      }
-      if (list.length > LIMITS.marketsMax) throw new LedgerError(`Up to ${LIMITS.marketsMax} markets.`);
-      add('markets', list);
-    }
     if (!sets.length) throw new LedgerError('Nothing to update.');
 
     await withTransaction((q) => q(`UPDATE app_settings SET ${sets.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = 1`, vals));

@@ -3,6 +3,7 @@ import { query, type Q } from './db';
 import { DEFAULT_RULES, LIMITS, type AccessOff, type FirmConfig, type FirmRules } from './config';
 import { MATRIX, setAccessOff } from './access';
 import { LedgerError } from './ledger';
+import { loadMarkets } from './markets';
 
 const run: Q = (text, params) => query(text, params as never[]);
 
@@ -37,7 +38,7 @@ export function cleanAccessOff(raw: unknown): AccessOff {
 
 export async function getFirmConfig(fresh = false): Promise<FirmConfig> {
   if (!fresh && cache && Date.now() - cache.at < TTL_MS) return cache.config;
-  const [settings, owner, sups, secs] = await Promise.all([
+  const [settings, owner, sups, secs, markets] = await Promise.all([
     run(`SELECT * FROM app_settings WHERE id = 1`),
     run(`SELECT id, name FROM users WHERE role = 'owner' AND deleted_at IS NULL ORDER BY id LIMIT 1`),
     run(`SELECT u.id, u.name, u.active,
@@ -49,6 +50,7 @@ export async function getFirmConfig(fresh = false): Promise<FirmConfig> {
          GROUP BY u.id, u.name, u.active
          ORDER BY u.active DESC, u.name`),
     run(`SELECT id, name, active FROM sections ORDER BY sort_order, name`),
+    loadMarkets(run),
   ]);
   const st = settings.rows[0] ?? {};
   const config: FirmConfig = {
@@ -63,8 +65,7 @@ export async function getFirmConfig(fresh = false): Promise<FirmConfig> {
       manualChallanMin: parseFloat(st.manual_challan_min ?? DEFAULT_RULES.manualChallanMin),
       manualJobCardMin: parseFloat(st.manual_job_card_min ?? DEFAULT_RULES.manualJobCardMin),
     },
-    locationPresets: st.location_presets ?? ['Godown', 'Shop', 'Floor'],
-    markets: st.markets ?? ['RRTM'],
+    markets,
     accessOff: cleanAccessOff(st.access_overrides),
   };
   setAccessOff(config.accessOff ?? {});

@@ -12,7 +12,9 @@ import { EditBar, EditCell, EditedMarker, LOT_STATUSES, NO_DRAFTS, UnsavedDialog
 import type { LedgerEntry, Lot } from '@/lib/types';
 import type { Ctx } from '../ctx';
 import { can } from '@/lib/access';
-import { STAGE_LABEL, camStatus, locationTone } from '@/lib/derive';
+import { STAGE_LABEL, camStatus } from '@/lib/derive';
+import { LocationPill } from '../MarketLocationPicker';
+import { ADJUSTMENT_HINT, ADJUSTMENT_LABEL, L_HINT, PCT_HINT, lotSHint } from '@/lib/registers';
 
 type SavedLot = { lot_id: string; quality: string; design: string; grade: string | null; status: string | null };
 type Problem = { target: 'movement' | 'lot'; id: number | string; field: string; message: string };
@@ -286,24 +288,31 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
   l: LedgerRow; i: number; rate: number | null; editing: boolean; canEdit: boolean; onEdit: OnEdit;
   draft?: RowDraft; lotDraft?: RowDraft; probs?: RowDraft; lotProbs?: RowDraft;
 }) {
-  const source = <div className="muted tiny">{l.capture_event_id ? 'Photo' : l.imported ? 'Excel' : 'Manual'}</div>;
-  if (!editing) {
+  const adj = l.kind === 'adjustment';
+  const source = <div className="muted tiny">{adj ? 'Register' : l.capture_event_id ? 'Photo' : l.imported ? 'Excel' : 'Manual'}</div>;
+  if (!editing || adj) {
     return (
-      <tr data-mv={l.id} data-lot={l.lot_id}>
+      <tr data-mv={l.id} data-lot={l.lot_id} className={adj ? 'mv-adj' : undefined}>
         <td data-label="SR" className="r num strong">
-          {l.sr_no ?? <span className="muted">—</span>}
+          {l.sr_no ?? (l.linked_sr ? <span className="t2" title="SR.NO: the incoming SR of the lot sold">↳{l.linked_sr}</span> : <span className="muted">—</span>)}
           {canEdit && l.edited ? <EditedMarker target="movement" id={l.id} /> : null}
         </td>
         <td data-label="Time" className="num t2">{dayTime(l.ts)}</td>
-        <td data-label="Dir"><Pill tone={l.direction === 'IN' ? 'info' : 'warn'}>{l.direction}</Pill></td>
-        <td data-label="Lot"><div className="num strong">{l.lot_id}</div><div className="muted small">{l.quality || '—'} · {l.design}</div></td>
-        <td data-label="Meters" className="r num">{fmt(l.meters, 1)}</td>
+        <td data-label="Dir">{adj ? <span title={ADJUSTMENT_HINT}><Pill tone="neutral">ADJ</Pill></span> : <Pill tone={l.direction === 'IN' ? 'info' : 'warn'}>{l.direction}</Pill>}</td>
+        <td data-label="Lot"><div className="num strong">{l.lot_id}</div><div className="muted small">{l.quality || '—'} · {l.design}</div>{l.reg_lot_no && l.reg_lot_no !== l.lot_id ? <div className="muted tiny">Register lot no. {l.reg_lot_no}</div> : null}</td>
+        <td data-label="Meters" className="r num">{adj ? '−' : ''}{fmt(l.meters, 1)}</td>
         <td data-label="Taka" className="r num">{l.pieces ?? <span className="muted">—</span>}</td>
         <td data-label="Grey → Finished" className="r num t2 d">{l.direction === 'IN' && (l.grey_meters != null || l.finished_meters != null) ? `${fmt(l.grey_meters, 1)} → ${fmt(l.finished_meters, 1)}` : '—'}</td>
-        <td data-label={l.direction === 'IN' ? 'From' : 'To'} className="t2">{l.direction === 'IN' ? <InSource l={l} /> : <span>→ {l.party ?? '—'}</span>}</td>
-        <td data-label="Location">{l.location ? <Pill tone={locationTone(l.location)}>{l.location}</Pill> : <span className="muted">—</span>}</td>
-        <td data-label="Challan"><div className="num t2">{l.source_doc_id ?? '—'}</div>{source}</td>
-        {rate ? <td data-label="Value" className="r num d">{inr(l.meters * rate)}</td> : null}
+        <td data-label={adj ? 'What' : l.direction === 'IN' ? 'From' : 'To'} className="t2">
+          {adj ? (
+            <div className="stack-0" title={ADJUSTMENT_HINT}><span className="adj-label">{ADJUSTMENT_LABEL}</span><span className="muted tiny">Taken out before import (S-1…S-10) · not a sale</span></div>
+          ) : l.direction === 'IN'
+            ? <div className="stack-0"><InSource l={l} /><RegisterExtras l={l} /></div>
+            : <div className="stack-0"><span>→ {l.party ?? <span className="muted">no party</span>}</span><RegisterExtras l={l} /></div>}
+        </td>
+        <td data-label="Location">{l.location ? <LocationPill location={l.location} /> : <span className="muted">—</span>}</td>
+        <td data-label={l.direction === 'OUT' ? 'Bill / challan' : 'Challan'}><div className="num t2">{l.source_doc_id ?? '—'}</div>{source}{editing && adj ? <div className="muted tiny">Not editable</div> : null}</td>
+        {rate ? <td data-label="Value" className="r num d">{adj ? <span className="muted">—</span> : inr(l.meters * rate)}</td> : null}
       </tr>
     );
   }
@@ -333,10 +342,10 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
       <td data-label="Grey → Finished" className="r num t2 d se-ro">{l.direction === 'IN' && (l.grey_meters != null || l.finished_meters != null) ? `${fmt(l.grey_meters, 1)} → ${fmt(l.finished_meters, 1)}` : '—'}</td>
       <td data-label={l.direction === 'IN' ? 'Mill · weaver' : 'Party'}>
         {l.direction === 'IN'
-          ? <div className="se-stack">{cell('mill_name', 'Mill', { list: 'se-mills' })}{cell('weaver_name', 'Weaver', { list: 'se-mills' })}</div>
-          : cell('party', 'Party', { list: 'se-parties' })}
+          ? <div className="se-stack">{cell('mill_name', 'Mill', { list: 'se-mills' })}{cell('weaver_name', 'Weaver', { list: 'se-mills' })}<span className="se-pair">{cell('register_pct', '%', { num: true })}{cell('loc_code', 'Location code')}</span><span className="muted tiny">% · location code</span></div>
+          : <div className="se-stack">{cell('party', 'Party', { list: 'se-parties' })}<span className="se-pair">{cell('bill_pct', 'L', { num: true })}{cell('billed_meters', 'NQTY (billed meters)', { num: true })}{cell('lot_status_code', 'LOT S')}</span><span className="muted tiny">L · NQTY · LOT S</span></div>}
       </td>
-      <td data-label="Location" className="se-ro">{l.location ? <Pill tone={locationTone(l.location)}>{l.location}</Pill> : <span className="muted">—</span>}</td>
+      <td data-label="Location" className="se-ro">{l.location ? <LocationPill location={l.location} /> : <span className="muted">—</span>}</td>
       <td data-label="Challan"><div className="se-stack">{cell('source_doc_id', 'Challan no.')}{source}</div></td>
       {rate ? <td data-label="Value" className="r num d se-ro">{inr(l.meters * rate)}</td> : null}
     </tr>
@@ -370,12 +379,31 @@ const LotRow = React.memo(function LotRow({ l, i, editing, onEdit, draft, probs,
           <td data-label="Status" className="d"><Pill tone={l.status === 'active' ? 'good' : l.status === 'hold' ? 'warn' : 'neutral'}>{l.status}</Pill></td>
         </>
       )}
-      <td data-label="Location" className={editing ? 'se-ro' : undefined}><div className="loc-cell"><Pill tone={locationTone(l.location)}>{l.location ?? 'Not recorded'}</Pill>{l.location_stage && <span className="muted tiny">{STAGE_LABEL[l.location_stage]} · {dayTime(l.location_ts!)}</span>}</div></td>
+      <td data-label="Location" className={editing ? 'se-ro' : undefined}><div className="loc-cell"><LocationPill location={l.location} />{l.location_stage && <span className="muted tiny">{STAGE_LABEL[l.location_stage]} · {dayTime(l.location_ts!)}</span>}{l.loc_code && <span className="muted tiny" title="Location code from the Incoming register">Loc code {l.loc_code}</span>}</div></td>
       <td data-label="Balance" className={`r num strong ${editing ? 'se-ro' : ''}`}>{fmt(l.balance, 1)} m</td>
       <td data-label="Action" className="r"><button className="btn sm" onClick={() => onMove(l.lot_id)}>{l.location === 'Dispatched' ? 'History' : 'Move'}</button></td>
     </tr>
   );
 });
+
+/** Register fields under From / To: IN → %, location code, S-1…S-10; OUT → bill no., L, NQTY, LOT S (with our guess). */
+function RegisterExtras({ l }: { l: LedgerRow }) {
+  const bits: React.ReactNode[] = [];
+  if (l.direction === 'IN') {
+    if (l.register_pct != null) bits.push(<span key="p" title={PCT_HINT}>{fmt(l.register_pct, 2)}%</span>);
+    if (l.loc_code) bits.push(<span key="c" title="Location code from the Incoming register">Loc {l.loc_code}</span>);
+    const t = (l.takes ?? []).filter((x) => x != null) as number[];
+    if (t.length) bits.push(<span key="t" title={`S-1…S-10 in the register: ${(l.takes ?? []).map((x) => (x == null ? '·' : fmt(x, 2))).join(', ')}`}>Taken before import: {fmt(t.reduce((a, b) => a + b, 0), 1)} m ({t.length})</span>);
+  } else {
+    const reg = l.bill_pct != null || l.billed_meters != null || l.lot_status_code || l.linked_sr;
+    if (reg && l.source_doc_id) bits.push(<span key="b">Bill {l.source_doc_id}</span>);
+    if (l.bill_pct != null) bits.push(<span key="l" title={L_HINT}>L {fmt(l.bill_pct, 2)}</span>);
+    if (l.billed_meters != null) bits.push(<span key="n" title="NQTY in the sales register (billed meters)">Billed {fmt(l.billed_meters, 2)} m</span>);
+    if (l.lot_status_code) bits.push(<span key="s">LOT S <abbr className="mv-code" title={lotSHint(l.lot_status_code)} aria-label={lotSHint(l.lot_status_code)} tabIndex={0}>{l.lot_status_code}</abbr></span>);
+    if (l.linked_sr) bits.push(<span key="r" title="SR.NO: the incoming SR of the lot sold">SR.NO {l.linked_sr}</span>);
+  }
+  return bits.length ? <div className="mv-extra muted tiny">{bits}</div> : null;
+}
 
 function InSource({ l }: { l: LedgerEntry }) {
   if (!l.mill_name && !l.weaver_name) return <span>{l.party ? <>{l.party} <span className="muted tiny">(old entry)</span></> : '—'}</span>;

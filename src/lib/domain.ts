@@ -21,6 +21,9 @@ export interface Dispatch {
   id: number; order_id: number | null; party_id: number | null; party_name: string | null; challan_no: string | null;
   transporter: string | null; lr_no: string | null; vehicle_no: string | null; packages: number | null; dispatched_at: string;
   meters: number; lots: string[]; invoice_id: number | null; invoice_no: string | null;
+  /** Last WhatsApp dispatch message to the party (null = none sent) and whether the party has a mobile number. */
+  wa?: { status: 'queued' | 'sent' | 'delivered' | 'read' | 'failed'; at: string; error: string | null } | null;
+  party_has_phone?: boolean;
 }
 export interface InvoiceLine { lot_id: string; quality: string; hsn: string; meters: number; rate: number; amount: number }
 export interface Invoice {

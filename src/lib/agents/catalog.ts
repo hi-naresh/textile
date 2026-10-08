@@ -59,14 +59,14 @@ export const AGENT_CATALOG: AgentInfo[] = [
   {
     key: 'credit', label: 'Payments',
     purpose: 'Finds parties with bills past their due date, or over their credit limit, and drafts a polite payment reminder.',
-    value: 'Money stuck with parties is the biggest cost for a wholesaler. One tap gives a ready WhatsApp message (English / Hindi / Gujarati) listing the unpaid bills.',
+    value: 'Money stuck with parties is the biggest cost for a wholesaler. One tap gives a ready reminder listing the unpaid bills; with WhatsApp connected, "Send on WhatsApp" sends the approved reminder template from the firm\'s number (else a wa.me draft in English / Hindi / Gujarati).',
     watches: 'Invoices (due dates), payments (settled oldest bill first), party credit limits.',
     trigger: SCHEDULED,
     status: 'active', defaultEnabled: true,
     verdict: 'Keep — clearly useful. Owner only (₹). A dismissed card stays quiet for 7 days and comes back when the bill moves to an older age bucket (31–60, 61–90, 90+ days).',
-    code: ['src/lib/agents/credit.ts', 'src/lib/money/credit.ts', 'src/lib/money/reminder.ts'],
+    code: ['src/lib/agents/credit.ts', 'src/lib/money/credit.ts', 'src/lib/money/reminder.ts', 'src/lib/whatsapp/flows.ts'],
     kinds: [
-      { kind: 'overdue', label: 'Payment overdue', when: 'A party has unpaid bills past the due date (invoice date + party credit days).', button: '"Draft reminder" opens the reminder for that party in Money → Outstanding (copy or send on WhatsApp). Nothing is sent by itself.', quietDays: 7, ownerOnly: true },
+      { kind: 'overdue', label: 'Payment overdue', when: 'A party has unpaid bills past the due date (invoice date + party credit days).', button: '"Draft reminder" opens the reminder for that party in Money → Outstanding: "Send on WhatsApp" (Cloud API, at most once per 7 days unless the owner confirms) or "Open in WhatsApp" / copy. Automatic reminders are a separate owner switch (Policy → WhatsApp), sent by the daily cron.', quietDays: 7, ownerOnly: true },
       { kind: 'over_limit', label: 'Over credit limit', when: 'Outstanding is more than the party\'s credit limit.', button: 'Same reminder.', quietDays: 7, ownerOnly: true },
     ],
   },

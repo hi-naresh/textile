@@ -5,6 +5,9 @@ import { ImportFileError, validateImport } from '@/lib/stock-import';
 import { requireCap } from '@/lib/apiAuth';
 
 // Step 1 of the Excel import (owner). POST multipart { file: .xlsx } → checks only, writes nothing.
+// Three formats, told apart by the heading row: the firm's Incoming register, its Outgoing (sales) register, or the
+// app template (src/lib/stock-import.ts, src/lib/register-import.ts). → also { format, detected, warnings[{row,field,message,skip}],
+// warningCount, skipCount, fix } — `rows` leaves out skipped rows; errors (problems) block the file.
 // → { ok, batch, total, counts, headerProblems[{column,message}], notes[], problems[{row,field,message}], problemCount, problemRows, rows? }
 // When ok, `rows` (cleaned) + `batch` go back in chunks to POST /api/stock/import/commit.
 const MAX_BYTES = 8 * 1024 * 1024;

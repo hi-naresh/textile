@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
-import { can } from '@/lib/access';
+import { can, canAddShops } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, recordIncoming, recordOutgoing } from '@/lib/ledger';
 import { startEarly } from '@/lib/lots-query';
@@ -16,8 +16,8 @@ const SNAPSHOT_SQL = `
     SELECT ts::date AS day,
            SUM(meters) FILTER (WHERE direction = 'IN')  AS in_m,
            COUNT(*)    FILTER (WHERE direction = 'IN')  AS in_count,
-           SUM(meters) FILTER (WHERE direction = 'OUT') AS out_m,
-           COUNT(*)    FILTER (WHERE direction = 'OUT') AS out_count
+           SUM(meters) FILTER (WHERE direction = 'OUT' AND kind = 'normal') AS out_m, -- opening adjustments are not dispatches
+           COUNT(*)    FILTER (WHERE direction = 'OUT' AND kind = 'normal') AS out_count
       FROM stock_movements
      WHERE ts >= CURRENT_DATE - 6 AND ts < CURRENT_DATE + 1
      GROUP BY 1
@@ -105,6 +105,7 @@ export async function GET(request: NextRequest) {
 // IN:  lot_id, grey_meters and/or finished_meters, mill_name, weaver_name, source_doc, location, quality + design (new lot)
 // OUT: lot_id, meters, party (destination client, required), source_doc
 // Both: sr_no (optional, whole number > 0, unique per direction → 409 when taken), pieces (optional taka, whole number ≥ 0)
+// Optional register fields (migration 013): IN register_pct (0–100), loc_code ("212", "142+143"); OUT bill_pct (L), billed_meters (NQTY), lot_status_code (LOT S)
 export async function POST(request: NextRequest) {
   try {
     const a = await requireCap(request, 'ledger.edit');
@@ -114,7 +115,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'direction must be IN or OUT.' }, { status: 400 });
     }
     // import_ref is only set by the Excel import.
-    const input = { ...body, import_ref: null, capture_event_id: null, moved_by: a.by };
+    const input = { ...body, import_ref: null, capture_event_id: null, moved_by: a.by, add_shops_by: (canAddShops(a.role) ? a.by : false) as string | false };
     const movement = await withTransaction((q) =>
       direction === 'IN'
         ? recordIncoming(q, input, { requireLotDetails: true })

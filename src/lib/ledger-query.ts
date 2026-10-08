@@ -1,9 +1,11 @@
 // Stock ledger filtering, shared by GET /api/stock/ledger (paged) and GET /api/stock/export (Excel).
 // Server-side only. Filters combine with AND; `q` is free text (every word must match somewhere:
-// lot, quality, design, party, mill, weaver, challan, SR no. or the location the movement put the lot in).
+// lot, quality, design, party, mill, weaver, challan / bill no., SR no., the location the movement put the lot in,
+// and the register fields: location code, linked SR (SR.NO), LOT S code — migration 013).
 // Page 1 + the next pages are keyset-paged on (ts, id); counts are capped (see cappedCount).
 import type { Q } from './db';
 import { cappedCount } from './lots-query';
+import { marketSearchPatterns } from './markets';
 
 export interface LedgerFilters {
   q: string | null;
@@ -38,6 +40,9 @@ export function filtersFrom(sp: URLSearchParams): LedgerFilters {
   };
 }
 
+/** Search words of a filter set → market patterns for whereFor (one cached lookup). */
+export const ledgerAlts = (q: Q, f: LedgerFilters) => marketSearchPatterns(q, f.q ? f.q.toLowerCase().split(' ').slice(0, 6) : []);
+
 /** Escape LIKE wildcards so "50%" matches literally. */
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
@@ -45,8 +50,11 @@ const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 // location the movement put the lot in, kept by triggers (migration 010) and trigram-indexed, so a rare challan or lot
 // is found without walking the whole ledger. Lot / party filters test search_doc first (index) and then the column.
 
-/** WHERE clause over `sm` (stock_movements) joined with `l` (lots). Params start at $1. */
-export function whereFor(f: LedgerFilters): { sql: string; params: unknown[] } {
+/**
+ * WHERE clause over `sm` (stock_movements) joined with `l` (lots). Params start at $1.
+ * `alts`: extra LIKE patterns per search word — a market's name finds its location labels ("landmark" → "% lm %").
+ */
+export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map()): { sql: string; params: unknown[] } {
   const parts: string[] = [];
   const params: unknown[] = [];
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
@@ -62,7 +70,8 @@ export function whereFor(f: LedgerFilters): { sql: string; params: unknown[] } {
     for (const word of f.q.toLowerCase().split(' ').slice(0, 6)) {
       const w = p(like(word));
       const sr = /^\d{1,9}$/.test(word) ? ` OR sm.sr_no = ${p(Number(word))}` : '';
-      parts.push(sr ? `(sm.search_doc LIKE ${w}${sr})` : `sm.search_doc LIKE ${w}`);
+      const mk = (alts.get(word) ?? []).map((x) => ` OR sm.search_doc LIKE ${p(x)}`).join('');
+      parts.push(sr || mk ? `(sm.search_doc LIKE ${w}${sr}${mk})` : `sm.search_doc LIKE ${w}`);
     }
   }
   return { sql: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params };
@@ -73,13 +82,19 @@ const COLS = `sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.fini
   sm.source_doc_id, sm.capture_event_id, sm.sr_no, sm.pieces, sm.ts, (sm.import_ref IS NOT NULL) AS imported,
   to_char(sm.ts, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS ts_key, l.quality, l.design, (sm.ts::date = CURRENT_DATE) AS is_today,
   (SELECT ll.location FROM lot_locations ll WHERE ll.lot_id = sm.lot_id AND ll.stock_movement_id = sm.id ORDER BY ll.id DESC LIMIT 1) AS location,
-  EXISTS (SELECT 1 FROM ledger_edits le WHERE le.target = 'movement' AND le.target_id = sm.id::text) AS edited`;
+  EXISTS (SELECT 1 FROM ledger_edits le WHERE le.target = 'movement' AND le.target_id = sm.id::text) AS edited,
+  sm.kind, sm.register_pct, sm.takes, sm.loc_code, sm.bill_pct, sm.billed_meters, sm.lot_status_code, sm.linked_sr, l.reg_lot_no`;
 
 export interface LedgerRow {
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
   mill_name: string | null; weaver_name: string | null; party: string | null; source_doc_id: string | null; capture_event_id: number | null;
   sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
   edited: boolean; // changed in the ledger's edit mode (see ledger_edits)
+  // Register fields (migration 013). kind 'adjustment' = opening adjustment from the Incoming register (an OUT, not a sale).
+  kind: 'normal' | 'adjustment';
+  register_pct: number | null; takes: (number | null)[] | null; loc_code: string | null; // IN
+  bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null; linked_sr: string | null; // OUT
+  reg_lot_no: string | null; // the lot's number as written in the register (lot_id may carry "-SR<n>")
 }
 
 const num = (v: unknown) => (v == null ? null : Number(v));
@@ -92,6 +107,10 @@ function toRow(r: Record<string, unknown>): LedgerRow {
     ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts), imported: !!r.imported,
     quality: String(r.quality ?? ''), design: String(r.design ?? ''), is_today: !!r.is_today, location: (r.location as string) ?? null,
     edited: !!r.edited,
+    kind: r.kind === 'adjustment' ? 'adjustment' : 'normal',
+    register_pct: num(r.register_pct), takes: Array.isArray(r.takes) ? (r.takes as unknown[]).map(num) : null, loc_code: (r.loc_code as string) ?? null,
+    bill_pct: num(r.bill_pct), billed_meters: num(r.billed_meters), lot_status_code: (r.lot_status_code as string) ?? null, linked_sr: (r.linked_sr as string) ?? null,
+    reg_lot_no: (r.reg_lot_no as string) ?? null,
   };
 }
 
@@ -110,7 +129,7 @@ export function decodeCursor(c: string | null): { ts: string; id: number } | nul
 
 /** One page, newest first, keyset on (ts, id). `total` only on the first page (no cursor). */
 export async function ledgerPage(q: Q, f: LedgerFilters, opts: { limit: number; cursor: { ts: string; id: number } | null }) {
-  const w = whereFor(f);
+  const w = whereFor(f, await ledgerAlts(q, f));
   const params = [...w.params];
   let where = w.sql;
   if (opts.cursor) {
@@ -154,7 +173,7 @@ export async function ledgerRowsByIds(q: Q, ids: number[]): Promise<LedgerRow[]>
 
 /** Every matching row, oldest first (Excel export). Capped. */
 export async function ledgerAll(q: Q, f: LedgerFilters, cap = 100_000) {
-  const w = whereFor(f);
+  const w = whereFor(f, await ledgerAlts(q, f));
   const r = await q(
     `SELECT ${COLS} FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id ${w.sql} ORDER BY sm.ts, sm.id LIMIT ${cap}`,
     w.params,

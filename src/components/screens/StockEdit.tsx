@@ -9,7 +9,8 @@ import { dayTime } from '../ui';
 import './StockEdit.css';
 
 // ---------- drafts ----------
-export type MvField = 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party';
+export type MvField = 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party'
+  | 'register_pct' | 'loc_code' | 'bill_pct' | 'billed_meters' | 'lot_status_code';
 export type LotField = 'quality' | 'design' | 'grade' | 'status';
 export type RowDraft = Partial<Record<string, string>>;
 /** m: movement id → field → typed text; l: lot id → field → typed text. Only cells that differ from the saved value. */
@@ -42,7 +43,9 @@ const NAME_RE = /[\p{L}\p{N}]/u;
 export const FIELD_LABEL: Record<string, string> = {
   sr_no: 'SR no.', pieces: 'Taka', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver', party: 'Party',
   quality: 'Quality', design: 'Design', grade: 'Grade', status: 'Status',
+  register_pct: '%', loc_code: 'Location code', bill_pct: 'L', billed_meters: 'NQTY', lot_status_code: 'LOT S',
 };
+const numText = (v: string) => Number(v.replace(/,/g, '').replace(/%$/, ''));
 export function checkCell(field: string, raw: string): string | null {
   const v = raw.replace(/\s+/g, ' ').trim();
   switch (field) {
@@ -80,6 +83,22 @@ export function checkCell(field: string, raw: string): string | null {
       return null;
     case 'status':
       return (LOT_STATUSES as readonly string[]).includes(v) ? null : 'Pick a status.';
+    case 'register_pct':
+      if (!v) return null;
+      return Number.isFinite(numText(v)) && numText(v) >= 0 && numText(v) <= 100 ? null : '0 to 100.';
+    case 'bill_pct':
+      if (!v) return null;
+      return Number.isFinite(numText(v)) && numText(v) > 0 && numText(v) <= 1000 ? null : 'A number above 0.';
+    case 'billed_meters':
+      if (!v) return null;
+      return Number.isFinite(numText(v)) && numText(v) >= 0 ? null : 'A number, 0 or more.';
+    case 'loc_code':
+      if (!v) return null;
+      if (v.length > 40) return '40 characters at most.';
+      return /^[A-Za-z0-9][A-Za-z0-9 +\-/.]*$/.test(v) ? null : 'Letters, digits, + - / . only.';
+    case 'lot_status_code':
+      if (!v) return null;
+      return /^[A-Za-z0-9]{1,5}$/.test(v) ? null : 'Short code like R, E, S, A.';
     default:
       return null;
   }

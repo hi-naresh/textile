@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap } from '@/lib/apiAuth';
+import { canAddShops } from '@/lib/access';
 import { withTransaction } from '@/lib/db';
 import { LedgerError, applyCaptureRead, errorResponseBody } from '@/lib/ledger';
 
-// POST (owner / supervisor) { event_id, status: confirmed|corrected|rejected, corrected_data?, review_seconds? }
+// POST (owner / supervisor) { event_id, status: confirmed|corrected|rejected, corrected_data?, review_seconds?, location? }
+// location (incoming reads only, optional): where the lot is put, "LM 245 · Pipe 3" — same rules as manual entry
+// (a new shop no. is added to the market). Without it a new lot has no location yet; an existing lot stays where it is.
 // Confirm/correct writes to the ledger through the same rules as manual entry. confirmed_by = the signed-in user.
 export async function POST(request: NextRequest) {
   try {
@@ -35,7 +38,10 @@ export async function POST(request: NextRequest) {
       const data = status === 'corrected' ? corrected_data : event.ai_json;
       if (!data || typeof data !== 'object') throw new LedgerError('Missing data to confirm.');
 
-      const saved = await applyCaptureRead(q, event.type, data, event.id, confirmed_by);
+      const saved = await applyCaptureRead(q, event.type, data, event.id, confirmed_by, {
+        location: event.type === 'incoming_stock' ? body.location : null,
+        addShopsBy: canAddShops(a.role) ? confirmed_by : false,
+      });
       await q(
         // A correction keeps the original read in read_meta for audit.
         `UPDATE capture_events SET status = $1, confirmed_by = $2, ai_json = $3, confirmed_at = NOW(), review_seconds = $5,

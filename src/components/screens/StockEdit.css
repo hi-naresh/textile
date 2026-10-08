@@ -73,3 +73,8 @@ select.se-in { padding: 0 4px; }
   .se-mark-wrap { margin-left: 8px; }
   .se-pop { left: auto; right: 0; }
 }
+/* Register fields side by side (% + location code, L + NQTY + LOT S) */
+.se-pair { display: flex; gap: 4px; min-width: 0; }
+.se-pair > .se-cell { flex: 1 1 0; min-width: 0; }
+.se-pair .se-in { width: 100%; min-width: 0; }
+.se-pair > .se-cell:nth-child(2) { flex: 2 1 0; }
