@@ -2,10 +2,14 @@
 // these templates and fills its parameters; the values are validated and passed as $1, $2 … only.
 import { query } from '../db';
 import { readRules } from '../settings';
+import { can } from '../access';
+
+const canManage = (s: Scope) => can(s.role, 'jobs.manage');
 
 export interface Scope {
   role: 'owner' | 'supervisor';
   sections: string[]; // supervisor's sections (lower-case match keys)
+  userId?: string;
 }
 
 export interface TemplateResult {
@@ -32,8 +36,8 @@ export interface Template {
 
 const m = (n: unknown) => Math.round(Number(n ?? 0) * 100) / 100;
 const fmt = (n: unknown) => m(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
-const daysOr = (d: number | null | undefined, def: number) => (d && d > 0 && d <= 366 ? Math.round(d) : def);
-const period = (d: number) => (d === 1 ? 'today' : d === 7 ? 'in the last 7 days' : `in the last ${d} days`);
+const daysOr = (d: number | null | undefined, def: number | null) => (d && d > 0 && d <= 366 ? Math.round(d) : def);
+const period = (d: number | null) => (d === null ? 'across all recorded dates' : d === 1 ? 'today' : d === 7 ? 'in the last 7 days' : `in the last ${d} days`);
 const sectionFilter = (s: Scope, col: string, idx: number) =>
   s.role === 'supervisor' ? ` AND lower(regexp_replace(${col}, '\\s*section\\s*$', '', 'i')) = ANY($${idx}::text[])` : '';
 
@@ -55,7 +59,7 @@ export const TEMPLATES: Template[] = [
       const x = r.rows[0];
       if (!x) return { answer: `No lot ${p.lot} found.`, rows: [] };
       return {
-        answer: `Lot ${x.lot_id} (${x.quality}${x.design && !/unknown/i.test(x.design) ? `, ${x.design}` : ''}): ${fmt(x.balance_m)} m in stock, at ${x.location ?? 'no location yet'}${Number(x.open_cards) ? `, ${x.open_cards} job card(s) open` : ''}.`,
+        answer: `Lot ${x.lot_id} (${x.quality}${x.design && !/unknown/i.test(x.design) ? `, ${x.design}` : ''}): ${fmt(x.balance_m)} m in stock, at ${x.location ?? 'no location yet'}${Number(x.open_cards) ? `, ${x.open_cards} job card${Number(x.open_cards) === 1 ? '' : 's'} open` : ''}.`,
         rows: r.rows,
       };
     },
@@ -99,10 +103,10 @@ export const TEMPLATES: Template[] = [
     describe: 'Meters dispatched (outgoing) per party / client, optionally one party, over N days',
     params: ['party', 'days'],
     run: async (p) => {
-      const d = daysOr(p.days, 30);
+      const d = daysOr(p.days, null);
       const r = await query(
         `SELECT party, SUM(meters) AS meters, COUNT(*) AS challans FROM stock_movements
-         WHERE direction = 'OUT' AND ts >= CURRENT_DATE - ($1::int - 1)
+         WHERE direction = 'OUT' AND ($1::int IS NULL OR ts >= CURRENT_DATE - ($1::int - 1))
            AND ($2::text IS NULL OR regexp_replace(lower(party), '[^a-z0-9]', '', 'g') = regexp_replace(lower($2), '[^a-z0-9]', '', 'g'))
          GROUP BY party ORDER BY meters DESC LIMIT 20`,
         [d, p.party ?? null],
@@ -117,11 +121,11 @@ export const TEMPLATES: Template[] = [
     describe: 'Incoming grey and finished meters per mill, optionally one mill, over N days',
     params: ['mill', 'days'],
     run: async (p) => {
-      const d = daysOr(p.days, 30);
+      const d = daysOr(p.days, null);
       const r = await query(
         `SELECT COALESCE(mill_name, '—') AS mill, SUM(grey_meters) AS grey_m, SUM(finished_meters) AS finished_m, SUM(meters) AS stock_m, COUNT(*) AS challans
          FROM stock_movements
-         WHERE direction = 'IN' AND ts >= CURRENT_DATE - ($1::int - 1)
+         WHERE direction = 'IN' AND ($1::int IS NULL OR ts >= CURRENT_DATE - ($1::int - 1))
            AND ($2::text IS NULL OR regexp_replace(lower(mill_name), '[^a-z0-9]', '', 'g') = regexp_replace(lower($2), '[^a-z0-9]', '', 'g'))
          GROUP BY 1 ORDER BY stock_m DESC LIMIT 20`,
         [d, p.mill ?? null],
@@ -151,19 +155,19 @@ export const TEMPLATES: Template[] = [
     describe: 'Closed job cards whose shortage is above the firm limit, over N days',
     params: ['days'],
     run: async (p, s) => {
-      const d = daysOr(p.days, 7);
+      const d = daysOr(p.days, null);
       const { shortageLimitPct } = await readRules();
       const r = await query(
         `SELECT jc.id AS job_card, jc.lot_id, jc.process, w.name AS worker, jc.meters_in, jc.meters_out,
                 ROUND((jc.shortage / NULLIF(jc.meters_in, 0) * 100)::numeric, 2) AS shortage_pct
          FROM job_cards jc JOIN workers w ON w.id = jc.worker_id
-         WHERE jc.status = 'closed' AND jc.ts_closed >= CURRENT_DATE - ($1::int - 1)
+         WHERE jc.status = 'closed' AND ($1::int IS NULL OR jc.ts_closed >= CURRENT_DATE - ($1::int - 1))
            AND jc.shortage / NULLIF(jc.meters_in, 0) * 100 > $2 ${sectionFilter(s, 'jc.process', 3)}
          ORDER BY shortage_pct DESC LIMIT 20`,
         s.role === 'supervisor' ? [d, shortageLimitPct, s.sections] : [d, shortageLimitPct],
       );
       if (!r.rowCount) return { answer: `No job cards above the ${shortageLimitPct}% shortage limit ${period(d)}.`, rows: [] };
-      return { answer: `${r.rowCount} job card(s) above the ${shortageLimitPct}% limit ${period(d)}. Worst: JC-${r.rows[0].job_card} (lot ${r.rows[0].lot_id}, ${r.rows[0].worker}) at ${r.rows[0].shortage_pct}%.`, rows: r.rows };
+      return { answer: `${r.rowCount} job card${r.rowCount === 1 ? '' : 's'} above the ${shortageLimitPct}% limit ${period(d)}. Worst: JC-${r.rows[0].job_card} (lot ${r.rows[0].lot_id}, ${r.rows[0].worker}) at ${r.rows[0].shortage_pct}%.`, rows: r.rows };
     },
   },
   {
@@ -172,15 +176,18 @@ export const TEMPLATES: Template[] = [
     params: [],
     run: async (_p, s) => {
       const r = await query(
-        `SELECT jc.id AS job_card, jc.lot_id, jc.process, w.name AS worker, jc.meters_in, jc.ts_created::date AS since
-         FROM job_cards jc JOIN workers w ON w.id = jc.worker_id
+        `SELECT jc.id AS job_card, jc.lot_id, jc.process, COALESCE(w.name, 'Unassigned') AS worker, jc.meters_in, jc.ts_created::date AS since,
+                GREATEST(0, CURRENT_DATE - jc.ts_created::date) AS days_open,
+                COUNT(*) OVER () AS total_cards, SUM(jc.meters_in) OVER () AS total_meters
+         FROM job_cards jc LEFT JOIN workers w ON w.id = jc.worker_id
          WHERE jc.status <> 'closed' ${sectionFilter(s, 'jc.process', 1)}
          ORDER BY jc.ts_created LIMIT 30`,
         s.role === 'supervisor' ? [s.sections] : [],
       );
       if (!r.rowCount) return { answer: 'No open job cards.', rows: [] };
-      const meters = r.rows.reduce((t, x) => t + Number(x.meters_in), 0);
-      return { answer: `${r.rowCount} open job card(s), ${fmt(meters)} m on the floor.`, rows: r.rows };
+      const total = Number(r.rows[0].total_cards);
+      const items = r.rows.slice(0, 8).map((x) => `- **JC-${x.job_card}** · lot ${x.lot_id} · ${x.worker} · ${x.process} · ${fmt(x.meters_in)} m · open ${x.days_open} day${Number(x.days_open) === 1 ? '' : 's'}${Number(x.days_open) >= 7 ? ' — check progress (open 7+ days)' : ''}`).join('\n');
+      return { answer: `**${total} open job card${total === 1 ? '' : 's'}**, ${fmt(r.rows[0].total_meters)} m on the floor.\n\n${items}${total > 8 ? `\n\nShowing the oldest ${Math.min(8, total)} of ${total}.` : ''}\n\n${canManage(s) ? 'For completed work, open [Job cards](#app=jobs) → Close, enter actual Meters out, then Close card. For unfinished work, check with the assigned worker.' : 'Check progress with the assigned worker; ask someone with job-card management access to close completed work.'} Cards have no recorded due date; age alone does not mean overdue.`, rows: r.rows };
     },
   },
   {
@@ -188,14 +195,14 @@ export const TEMPLATES: Template[] = [
     describe: 'Worker efficiency (done vs allotted meters), optionally one worker, over N days',
     params: ['worker', 'days'],
     run: async (p, s) => {
-      const d = daysOr(p.days, 7);
+      const d = daysOr(p.days, null);
       const args: unknown[] = [d, p.worker ?? null];
       if (s.role === 'supervisor') args.push(s.sections);
       const r = await query(
         `SELECT w.name AS worker, w.section, SUM(e.allotted) AS allotted_m, SUM(e.done) AS done_m,
                 ROUND((SUM(e.done) / NULLIF(SUM(e.allotted), 0) * 100)::numeric, 1) AS efficiency_pct
          FROM efficiency_daily e JOIN workers w ON w.id = e.worker_id
-         WHERE e.date >= CURRENT_DATE - ($1::int - 1) AND ($2::text IS NULL OR lower(w.name) LIKE '%' || lower($2) || '%')
+         WHERE ($1::int IS NULL OR e.date >= CURRENT_DATE - ($1::int - 1)) AND ($2::text IS NULL OR lower(w.name) LIKE '%' || lower($2) || '%')
            ${sectionFilter(s, 'w.section', 3)}
          GROUP BY w.name, w.section ORDER BY efficiency_pct ASC NULLS LAST LIMIT 20`,
         args,
@@ -209,9 +216,11 @@ export const TEMPLATES: Template[] = [
     id: 'pending_reviews',
     describe: 'Photo reads waiting for review',
     params: [],
-    run: async () => {
-      const r = await query(`SELECT id, type, confidence, read_engine, ts FROM capture_events WHERE status = 'pending' ORDER BY ts DESC LIMIT 20`);
-      return { answer: r.rowCount ? `${r.rowCount} photo read(s) waiting for review.` : 'Nothing waiting for review.', rows: r.rows };
+    run: async (_p, s) => {
+      const r = await query(`SELECT id, type, confidence, ts FROM capture_events WHERE status = 'pending'
+        AND ($1::text IS NULL OR captured_by = $1 OR (type = 'job_card_folding' AND 'folding' = ANY($2::text[])))
+        ORDER BY ts LIMIT 20`, [s.role === 'supervisor' ? (s.userId ?? '') : null, s.sections]);
+      return { answer: r.rowCount ? `${r.rowCount} photo read${r.rowCount === 1 ? '' : 's'} waiting for review. Open [Review queue](#app=review), check the photo and correct or confirm the read.` : 'Nothing waiting for review.', rows: r.rows };
     },
   },
   {
@@ -220,7 +229,8 @@ export const TEMPLATES: Template[] = [
     params: ['days'],
     run: async (p) => {
       const { timeSaved } = await import('../value');
-      const d = daysOr(p.days, 30);
+      if (!p.days) return { answer: 'Which period should I use for time saved?', rows: [] };
+      const d = daysOr(p.days, 30)!;
       const t = await timeSaved(d);
       const saved = t.savedMin >= 60 ? `${fmt(t.savedMin / 60)} hours` : `${Math.round(t.savedMin)} minutes`;
       return { answer: `${period(d)[0].toUpperCase()}${period(d).slice(1)}: ${t.captures} photo read${t.captures === 1 ? '' : 's'} saved about ${saved} compared with entering them by hand.`, rows: [t as unknown as Record<string, unknown>] };

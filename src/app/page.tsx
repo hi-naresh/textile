@@ -65,7 +65,7 @@ export default function TextileBrain() {
   if (!session) return <div className="page"><div className="loading"><span className="spinner" />Loading…</div></div>;
   if (session.kind === 'client' && session.user.status === 'pending') return <PendingScreen me={session} onCheck={load} />;
   if (session.kind === 'client' && session.user.mustChangePassword) return <ForcePasswordScreen me={session} onDone={load} />;
-  return <App session={session} />;
+  return <App key={`${session.user.id}:${session.viewAs?.id ?? ''}:${(session.viewAs ?? session.user).role}`} session={session} />;
 }
 
 function App({ session }: { session: Me }) {

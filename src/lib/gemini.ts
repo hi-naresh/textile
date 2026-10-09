@@ -89,12 +89,24 @@ export async function getAiStatus(force = false): Promise<AiStatus> {
 }
 
 // ---------- One call path for every Gemini request: tier choice + usage/cost log ----------
-type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
+export type GeminiPart = {
+  text?: string;
+  inlineData?: { mimeType: string; data: string };
+  functionCall?: { name: string; args?: Record<string, unknown> };
+  functionResponse?: { name: string; response: Record<string, unknown> };
+  thoughtSignature?: string;
+  thought?: boolean;
+};
+export interface GeminiContent { role: 'user' | 'model'; parts: GeminiPart[] }
+export interface GeminiTool { name: string; description: string; parameters: Record<string, unknown> }
 
 export interface GeminiCall {
   tier: 'low' | 'high';
   feature: string; // for the usage log, e.g. chat.intent
-  parts: Part[];
+  parts?: GeminiPart[];
+  contents?: GeminiContent[];
+  system?: string;
+  tools?: GeminiTool[];
   json?: boolean;
   temperature?: number;
   ref?: string | null;
@@ -105,6 +117,12 @@ export class GeminiError extends Error {}
 
 /** Returns the model's text. Throws GeminiError when not configured or the call fails (after logging it). */
 export async function callGemini(c: GeminiCall): Promise<string> {
+  const content = await callGeminiContent(c);
+  return content.parts.filter((p) => !p.thought).map((p) => p.text ?? '').join('').trim();
+}
+
+/** Preserve function calls and thought signatures unchanged across tool turns. */
+export async function callGeminiContent(c: GeminiCall): Promise<GeminiContent> {
   const key = geminiKey();
   if (!key) throw new GeminiError('GEMINI_API_KEY is not set.');
   const model = geminiModel(c.tier);
@@ -117,7 +135,9 @@ export async function callGemini(c: GeminiCall): Promise<string> {
       headers: req.headers,
       signal: AbortSignal.timeout(c.timeoutMs ?? 45_000),
       body: JSON.stringify({
-        contents: [{ parts: c.parts }],
+        contents: c.contents ?? [{ role: 'user', parts: c.parts }],
+        ...(c.system ? { systemInstruction: { parts: [{ text: c.system }] } } : {}),
+        ...(c.tools?.length ? { tools: [{ functionDeclarations: c.tools }] } : {}),
         generationConfig: { temperature: c.temperature ?? 0.1, ...(c.json ? { responseMimeType: 'application/json' } : {}) },
       }),
     });
@@ -136,7 +156,9 @@ export async function callGemini(c: GeminiCall): Promise<string> {
       tokensIn: meta.promptTokenCount ?? 0,
       tokensOut: (meta.candidatesTokenCount ?? 0) + (meta.thoughtsTokenCount ?? 0),
     });
-    return (data.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('').trim();
+    const content = data.candidates?.[0]?.content;
+    if (!content?.parts?.length) throw new GeminiError('The assistant returned no answer.');
+    return { role: 'model', parts: content.parts };
   } catch (e) {
     if (e instanceof GeminiError) throw e;
     reportAiFailure(null, String(e));

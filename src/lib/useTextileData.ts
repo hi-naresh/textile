@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, ChatMessage, EfficiencyRecord, FlowDay, JobCard, TodayStock, LedgerEntry, Lot, StockSummary, Toast, ToastTone, Worker } from './types';
+import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, EfficiencyRecord, FlowDay, JobCard, TodayStock, LedgerEntry, Lot, StockSummary, Toast, ToastTone, Worker } from './types';
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
 import { DEFAULT_CONFIG, type FirmConfig } from './config';
+import { useChat } from './useChat';
 
 export interface ValueWindow { days: number; captures: number; manualMin: number; actualMin: number; savedMin: number; baseline: { challanMin: number; jobCardMin: number } }
 export interface ValueSummary { today: ValueWindow; week: ValueWindow; month: ValueWindow }
@@ -335,29 +336,7 @@ export function useTextileData() {
     };
   }, [showToast]);
 
-  // ---------- Chat ----------
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { sender: 'bot', text: 'Ask about stock, a lot, a challan, dispatches, job cards, shortage or efficiency.', timestamp: new Date() },
-  ]);
-
-  /** Sends a question to chat; resolves with the answer + its language (null on failure) so voice mode can speak it. */
-  const ask = async (role: Role, question: string): Promise<{ text: string; lang: 'en' | 'hi' | 'gu' } | null> => {
-    if (!question.trim()) return null;
-    setMessages((m) => [...m, { sender: 'user', text: question, timestamp: new Date() }, { sender: 'bot', text: 'Thinking…', timestamp: new Date(), loading: true }]);
-    try {
-      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, user_id: actorId(role), role }) });
-      const data = await res.json();
-      const msg: ChatMessage = res.ok
-        ? { sender: 'bot', text: data.answer, rows: data.rows, route: data.route, sources: data.sources, lang: data.lang, timestamp: new Date() }
-        : { sender: 'bot', text: data.error || 'Sorry, I could not answer that.', timestamp: new Date(), error: true };
-      setMessages((m) => [...m.filter((x) => !x.loading), msg]);
-      return { text: msg.text, lang: msg.lang ?? 'en' };
-    } catch {
-      setMessages((m) => [...m.filter((x) => !x.loading), { sender: 'bot', text: 'Network error. Is the server running?', timestamp: new Date(), error: true }]);
-      return null;
-    }
-  };
-  const clearChat = () => setMessages((m) => m.slice(0, 1));
+  const chat = useChat();
 
   return {
     config, settingsApi, marketsApi, status, checkStatus,
@@ -365,7 +344,7 @@ export function useTextileData() {
     loading, dbOk, lastSync, toast, showToast, refresh, refreshStock,
     value, afterImport,
     addStock, moveLot, lotHistory, lotInfo, createJobCard, closeJobCard, confirmCapture, rejectCapture, uploadCapture,
-    messages, ask, clearChat,
+    ...chat,
   };
 }
 
