@@ -1,3 +1,5 @@
+import type { Capability, Tab } from '../access';
+
 // Documentation of everything built, as data — rendered by the developer console's Docs tab (src/app/dev/page.tsx).
 // Written from the code (round 3). Keep it next to the code it describes: when you add a screen, API route,
 // migration, env var or cron job, add a line here. `unsure` marks anything not verified end to end.
@@ -266,9 +268,9 @@ export const FEATURES: DocFeature[] = [
   {
     id: 'chat', area: 'Assistant', title: 'Chat and voice', roles: ['owner', 'supervisor'], where: 'Chat button (desktop bottom-right; phone top bar)',
     what: 'Ask questions in plain words ("how many workers", "dispatch by party this month", "what is our return policy"); dictate or use hands-free voice mode (answers out loud in English / Hindi / Gujarati).',
-    data: 'Fixed query templates and a semantic layer over the ledger; firm knowledge notes for policy questions.',
-    rules: ['The AI never writes SQL and never sees the database: it only picks a template / metric, or answers from the firm\'s notes.', 'Supervisors get no ₹ figures.', 'Voice-to-text on phones without built-in speech recognition uses the low AI tier (logged).'],
-    apis: ['POST /api/chat', 'POST /api/chat/transcribe'],
+    data: 'Per-user saved conversations, recent messages and an older-message summary; validated data tools, role-filtered app guides and separate firm policy notes.',
+    rules: ['The AI converses with history and read-only tools; it never writes SQL or changes records. Explicit language and script preferences persist until New chat.', 'Supervisors get no ₹ figures.', 'Voice-to-text on phones without built-in speech recognition uses the low AI tier (logged).'],
+    apis: ['GET /api/chat', 'POST /api/chat', 'DELETE /api/chat', 'POST /api/chat/transcribe'],
     code: ['src/components/ChatDock.tsx', 'src/lib/chat/router.ts'],
   },
   // ---------------- Developer ----------------
@@ -290,6 +292,38 @@ export const FEATURES: DocFeature[] = [
   },
 ];
 
+export interface FeatureGuide { tab: Tab; cap?: Capability; description: string; steps: string[] }
+// User-facing instructions live alongside, and are keyed to, the feature catalog.
+// Only these fields are exposed: never the catalog's code, APIs or database details.
+export const FEATURE_GUIDES: Record<string, FeatureGuide> = {
+  overview: { tab: 'overview', description: 'See what needs attention and stock received, dispatched and on the floor.', steps: ['Open Menu → Overview.', 'Use Needs your attention for issues, or choose a period in Stock flow.'] },
+  floor: { tab: 'floor', description: 'See work and workers in your assigned sections.', steps: ['Open Menu → Floor today.', 'Check allotted and completed meters, then open a flagged item.'] },
+  attention: { tab: 'review', cap: 'capture.confirm', description: 'Find alerts and photos waiting for a check.', steps: ['Tap the bell in the top bar.', 'Choose Alerts or Review queue and open an item.'] },
+  search: { tab: 'jobs', description: 'Find a lot, order, party, challan or person.', steps: ['Use Search in the top bar.', 'Type the number or name, then select a result you can open.'] },
+  ledger: { tab: 'stock', description: 'See incoming and outgoing stock, lot balances and locations.', steps: ['Open Menu → Stock ledger.', 'Choose Movements or Lots & balance.', 'Search by lot or challan, or use the date and quality filters.'] },
+  'manual-entry': { tab: 'stock', cap: 'ledger.edit', description: 'Add stock by typing an incoming or outgoing entry.', steps: ['Open Menu → Stock ledger → Add entry.', 'Choose IN for incoming stock or OUT for goods sent to a client.', 'For IN, enter the lot, grey and finished meters, mill, weaver, quality, design, challan and location. For OUT, enter the lot, meters, party and challan.', 'Check the register serial and optional pieces, then save the entry.'] },
+  'ledger-edit': { tab: 'stock', cap: 'ledger.edit', description: 'Correct stock details in the ledger.', steps: ['Open Menu → Stock ledger → Edit.', 'Change the highlighted cells, then choose Save.', 'Meters, lot number, direction, date and location cannot be changed in this view.'] },
+  import: { tab: 'stock', cap: 'ledger.edit', description: 'Import or export stock in Excel.', steps: ['Open Menu → Stock ledger → Import.', 'Download the template, fill it and upload the .xlsx file.', 'Fix any reported row errors, then save. For a download, choose Export in Stock ledger.'] },
+  locations: { tab: 'stock', cap: 'lots.move', description: 'Move a lot and see its location history.', steps: ['Open Menu → Stock ledger → Lots & balance.', 'Find the lot, choose Move and select its new location.', 'The location history keeps earlier moves.'] },
+  'job-cards': { tab: 'jobs', cap: 'jobs.manage', description: 'Create, allot or close a job card.', steps: ['Open Menu → Job cards and find the card number.', 'To close completed work, choose Close on that row.', 'Enter the actual Meters out, check the shortage, then choose Close card.', 'If work is unfinished, check with the assigned worker before closing. The lot returns to the godown when its last card closes. To start work, use New job card (or Menu → Allot work).'] },
+  people: { tab: 'people', description: 'See worker output, efficiency and recorded active time.', steps: ['Open Menu → People & CCTV.', 'Find the worker and compare allotted and completed meters.'] },
+  capture: { tab: 'capture', cap: 'capture.create', description: 'Add an entry from a clear photo of a challan or job card.', steps: ['Open Menu → Capture.', 'Choose a document type available to your role and take or upload a clear photo.', 'Check whether the read was saved or sent for review. Owners can capture all types; supervisors capture incoming and outgoing challans.'] },
+  review: { tab: 'review', cap: 'capture.confirm', description: 'Check a photo read before it is saved.', steps: ['Tap the bell → Review queue.', 'Compare the read with the photo. Correct wrong fields.', 'Choose Confirm to save, or Reject if the photo needs to be taken again.'] },
+  'time-saved': { tab: 'overview', description: 'See time saved by photo capture compared with manual entry.', steps: ['Open Menu → Overview.', 'Find Time saved; the estimate compares photo and review time with manual entry.'] },
+  inquiries: { tab: 'orders', cap: 'inquiry.handle', description: 'Record a customer inquiry and prepare a reply.', steps: ['Open Menu → Orders & inquiries → Inquiries.', 'Paste or type the customer’s message and check the quality, meters and required date.', 'Review the proposed reply and update the inquiry status.'] },
+  orders: { tab: 'orders', cap: 'orders.view', description: 'Track orders and keep stock aside for them.', steps: ['Open Menu → Orders & inquiries → Orders.', 'Choose an order to see remaining meters and its promise date.', 'If you have permission, keep available lots aside for it. Supervisors can reserve stock but cannot create orders or set rates.'] },
+  dispatch: { tab: 'dispatch', cap: 'dispatch.manage', description: 'Record goods sent out and print delivery documents.', steps: ['Open Menu → Dispatch.', 'Choose the party and optional order; add the lots and meters (or Use reserved lots).', 'Fill in transport and package details, check the quantities, then save.', 'Open the saved dispatch to download its delivery challan or packing list.'] },
+  invoices: { tab: 'dispatch', cap: 'finance.view', description: 'Create a GST invoice or record an invoice made in Tally.', steps: ['Open Menu → Dispatch & documents → Invoices.', 'Choose the dispatch and check rates, taxes and date.', 'Save and download the invoice, or record one already made in Tally.'] },
+  money: { tab: 'money', cap: 'finance.view', description: 'Record payments and check outstanding balances.', steps: ['Open Menu → Money → Record payment.', 'Select the party, amount, payment date and mode; add a reference if available.', 'Choose Save payment. Payments settle the oldest unpaid bills first.', 'Use Outstanding to see unpaid balances, reminders and party statements.'] },
+  reports: { tab: 'reports', cap: 'reports.view', description: 'See business reports and inventory information.', steps: ['Open Menu → Reports.', 'Choose the day, week or month, review the figures and download Excel if needed.'] },
+  'my-firm': { tab: 'firm', cap: 'settings.manage', description: 'Manage firm billing and GST, parties, policies, firm knowledge notes, locations and team.', steps: ['Open Menu → My firm.', 'Choose Firm & billing for GST details, Parties for clients, Markets & locations for places, Policy for rules and Firm knowledge, or Team for people.', 'Update the required details and save. Firm knowledge notes describe your own policies; app instructions come from app help.'] },
+  team: { tab: 'firm', cap: 'users.manage', description: 'Manage workers, supervisors, sign-ups and section assignments.', steps: ['Open Menu → My firm → Team.', 'Choose the person or pending sign-up and update their access or section assignments.'] },
+  settings: { tab: 'settings', description: 'Change your language, theme and account preferences.', steps: ['Open Menu → Settings.', 'Choose your language and theme in Preferences.'] },
+  signin: { tab: 'settings', description: 'Manage your sign-in and password.', steps: ['Open Menu → Settings.', 'Use your account controls to change your password or sign out.'] },
+  chat: { tab: 'settings', description: 'Ask about your data, how to use the app, or the firm’s policies.', steps: ['Open the chat button.', 'Type or speak in English, Hindi, Gujarati or a mix. Follow-up questions use this conversation.', 'Use New chat to clear the saved conversation and language preference.'] },
+};
+
+
 export interface DocApi { path: string; methods: string; who: string; what: string }
 
 /** Every API route (method → who may call it → what it does). The Docs tab flags routes found on disk but missing here. */
@@ -306,7 +340,7 @@ export const APIS: DocApi[] = [
   { path: '/api/auth/signup', methods: 'POST', who: 'public', what: 'Pending account until the owner approves.' },
   { path: '/api/capture', methods: 'GET · POST', who: 'signed in (by capture rights)', what: 'Read a photo (OCR / rules / AI), auto-confirm above the %; list reads.' },
   { path: '/api/capture/confirm', methods: 'POST', who: 'owner, supervisor', what: 'Confirm / correct / reject a read (writes the ledger).' },
-  { path: '/api/chat', methods: 'POST', who: 'owner, supervisor', what: 'Answer a question from templates or firm notes.' },
+  { path: '/api/chat', methods: 'GET · POST · DELETE', who: 'owner, supervisor', what: 'Load paged conversation history, ask with server-owned context, or clear the conversation. Read-only data and role-filtered app help tools.' },
   { path: '/api/chat/transcribe', methods: 'POST', who: 'owner, supervisor', what: 'Speech → text (low AI tier).' },
   { path: '/api/costs', methods: 'GET · POST', who: 'owner', what: 'Old process-cost list (read-only); POST → 410 (turned off).' },
   { path: '/api/costs/lot', methods: 'GET', who: 'owner', what: 'Cost ₹/m of one lot.' },
@@ -390,6 +424,7 @@ export const MIGRATIONS: DocMigration[] = [
   { name: '009_ledger_edits_access_delete.sql', what: 'Ledger edit log, removed team members (deleted_at), capability switches.' },
   { name: '010_stock_state_and_search.sql', what: 'Round 3 (engineer A): kept-up-to-date lot balances and ledger search.' },
   { name: '011_agent_settings.sql', what: 'Round 3: agent on/off + settings (agent_settings), run log (agent_runs), Margin agent off by default.' },
+  { name: '012_chat_conversations.sql', what: 'Private saved conversations, turns, language preference, summary and concurrency leases; clear removes chat memory while keeping the audit.' },
 ];
 
 export interface DocCron { path: string; schedule: string; ist: string; what: string; auth: string }

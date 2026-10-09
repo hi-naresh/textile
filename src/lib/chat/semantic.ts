@@ -174,21 +174,25 @@ export function cleanSpec(raw: unknown): Spec | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const metric = String(r.metric ?? '');
-  if (!(metric in METRICS)) return null;
+  if (!Object.hasOwn(METRICS, metric)) return null;
   const def = METRICS[metric];
   const groupBy = r.groupBy ?? r.group_by;
+  if (groupBy != null && (typeof groupBy !== 'string' || !(DIMS as readonly string[]).includes(groupBy) || !def.dims[groupBy as Dim])) return null;
   const g = typeof groupBy === 'string' && (DIMS as readonly string[]).includes(groupBy) && def.dims[groupBy as Dim] ? (groupBy as Dim) : null;
   const filters: Partial<Record<FilterKey, string>> = {};
+  if (r.filters != null && (typeof r.filters !== 'object' || Array.isArray(r.filters))) return null;
   if (r.filters && typeof r.filters === 'object') {
     for (const [k, v] of Object.entries(r.filters as Record<string, unknown>)) {
-      if ((FILTERS as readonly string[]).includes(k) && def.filters[k as FilterKey] && typeof v === 'string' && v.trim()) filters[k as FilterKey] = v.trim().slice(0, 100);
+      if (!(FILTERS as readonly string[]).includes(k) || !def.filters[k as FilterKey] || typeof v !== 'string' || !v.trim() || v.length > 100) return null;
+      filters[k as FilterKey] = v.trim();
     }
   }
   let period: Period | null = null;
   const p = r.period as Record<string, unknown> | string | undefined;
   if (typeof p === 'string' && ['today', 'yesterday', 'week', 'month', 'year'].includes(p)) period = periodFor(p as 'today');
-  else if (p && typeof p === 'object' && typeof p.days === 'number') period = periodFor('days', Math.min(366, Math.max(1, Math.round(p.days))));
-  const top = typeof r.top === 'number' ? Math.min(20, Math.max(1, Math.round(r.top))) : null;
+  else if (p && typeof p === 'object' && typeof p.days === 'number' && Number.isFinite(p.days)) period = periodFor('days', Math.min(366, Math.max(1, Math.round(p.days))));
+  else if (p != null && p !== 'all') return null;
+  const top = typeof r.top === 'number' && Number.isFinite(r.top) ? Math.min(20, Math.max(1, Math.round(r.top))) : null;
   return { metric: metric as MetricKey, groupBy: g, filters, period, top };
 }
 
@@ -201,7 +205,7 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
   const params: unknown[] = [];
   const P = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const where: string[] = def.where ? [def.where] : [];
-  const period = def.time ? (spec.period ?? (def.allTimeByDefault ? null : periodFor('today'))) : null;
+  const period = def.time ? (spec.period ?? null) : null;
   if (period && def.time) where.push(`${def.time} >= CURRENT_DATE - ${P(period.fromBack)}::int AND ${def.time} < CURRENT_DATE - ${P(period.toBack)}::int + 1`);
   for (const [k, v] of Object.entries(spec.filters ?? {}) as [FilterKey, string][]) {
     const col = def.filters[k];
@@ -211,10 +215,14 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
     else where.push(`regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = ${P(nameKey(v))}`);
   }
   if (scope.role === 'supervisor' && def.sectionScoped) where.push(`${def.sectionScoped} = ANY(${P(scope.sections)}::text[])`);
+  const lotColumn: Record<string, string> = { stock: 'b.lot_id', lots: 'b.lot_id', free_stock: 'fs.lot_id', received: 'sm.lot_id', dispatched: 'sm.lot_id', challans: 'sm.lot_id', parties: 'sm.lot_id', mills: 'sm.lot_id' };
+  if (scope.role === 'supervisor' && lotColumn[spec.metric]) {
+    where.push(`EXISTS (SELECT 1 FROM job_cards scoped_jc WHERE scoped_jc.lot_id = ${lotColumn[spec.metric]} AND ${SEC('scoped_jc.process')} = ANY(${P(scope.sections)}::text[]))`);
+  }
   const value = def.ratio ? `ROUND((${def.ratio.num} / NULLIF(${def.ratio.den}, 0) * 100)::numeric, 1)` : `COALESCE(${def.agg}, 0)`;
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const scopeNote = scope.role === 'supervisor' && def.sectionScoped ? ' in your sections' : '';
-  const when = period ? ` ${period.label}` : '';
+  const when = period ? ` ${period.label}` : def.time ? ' across all recorded dates' : '';
   const f = spec.filters ?? {};
   const about = [f.worker, f.quality, f.party ? `to ${f.party}` : '', f.mill ? `from ${f.mill}` : '', f.lot ? `lot ${f.lot}` : '', f.location ? `at ${f.location}` : ''].filter(Boolean).join(', ');
   const isCount = def.unit === 'count';
@@ -360,8 +368,8 @@ export function parseSemantic(question: string, v: Vocab): Spec | null {
   else if (/\b(mills|suppliers)\b/.test(q) && howMany) metric = 'mills';
   else if (/\blots\b/.test(q) && howMany) metric = 'lots';
   else if (/\bchallans?\b/.test(q) && howMany) metric = 'challans';
-  else if (groupCue || Object.keys(filters).length) {
-    // Flow questions with a breakdown or a filter (simple ones are answered by the fixed templates)
+  else {
+    // Simple totals also use this parser when the conversational service is unavailable.
     if (/\b(dispatch\w*|sent|sold|outgoing|out)\b/.test(q)) metric = 'dispatched';
     else if (/\b(receiv\w*|incoming|inward|arrived)\b/.test(q)) metric = 'received';
     else if (/\b(stock|balance|inventory)\b/.test(q)) metric = 'stock';
@@ -387,8 +395,7 @@ export function parseSemantic(question: string, v: Vocab): Spec | null {
 
   const dropUnknown: Partial<Record<FilterKey, string>> = {};
   for (const [k, val] of Object.entries(filters) as [FilterKey, string][]) if (def.filters[k]) dropUnknown[k] = val;
-  const periodFinal = period ?? (def.time && (dropUnknown.party || dropUnknown.mill || dropUnknown.quality || dropUnknown.lot) ? periodFor('month') : null);
-  return { metric, groupBy, filters: dropUnknown, period: periodFinal, top: top ? parseInt(top, 10) : null };
+  return { metric, groupBy, filters: dropUnknown, period, top: top ? parseInt(top, 10) : null };
 }
 
 /** Catalog text for the LLM classifier. */

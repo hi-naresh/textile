@@ -151,10 +151,11 @@ export interface CaptureEvent {
 }
 
 export interface ChatMessage {
+  id?: string;
   sender: 'user' | 'bot';
   text: string;
   rows?: Record<string, unknown>[];
-  route?: 'template' | 'knowledge' | 'help';
+  route?: 'assistant' | 'query' | 'template' | 'knowledge' | 'help';
   sources?: { id: number; title: string }[];
   lang?: 'en' | 'hi' | 'gu'; // language of the answer
   timestamp: Date;

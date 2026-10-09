@@ -2,7 +2,29 @@
 
 These are parked on purpose: build them once the product flow is confirmed and the app is delivering real value, before production.
 
-Last updated: 27 Sep 2026
+Last updated: 9 Oct 2026
+
+---
+
+## Chat assistant rebuild — implemented 9 Oct 2026
+
+- [x] **Actionable answers:** data tools return named job cards, lots, workers, processes and age, with links to permitted screens. Cards open 7+ days prompt a progress check; no invented overdue deadline.
+- [x] **Language and script:** romanised Gujarati and Hinglish are detected, explicit language choices persist, and the model receives matching script/tone instructions. Undated totals use all recorded dates; digits remain 0–9.
+- [x] **Conversation memory:** the server supplies the latest 10 turns plus bounded older context; the model summarizes older turns when available.
+- [x] **Formatting:** safe Markdown lists, bold text and tables, with working role-checked app links and readable job-card details.
+- [x] **Conversational assistant:** Gemini receives history and validated read-only data, app-help and firm-policy tools. Fixed queries still enforce permissions; no AI-written SQL. A limited fallback works when AI is unavailable.
+- [x] **Saved chat:** per-user, per-access-scope server history, pagination and New chat. Request IDs, revisions and leases protect retries, concurrent tabs and interrupted turns.
+- [x] **App help:** plain-language instructions alongside the feature catalog, filtered by role/capability; firm notes stay separate. Empty chat explains what users can ask.
+
+Validation and rollout:
+
+- [x] 15 repeatable regression tests: persistence, reset, retries, concurrent turns, expired leases, scope isolation, language preferences, date boundaries, help, Markdown, authenticated handlers and simulated model/tool exchanges. Run `npm run test:chat` with a disposable local `DATABASE_URL` ending in `_test` (see `tests/chat/README.md`).
+- [x] Desktop and mobile Chrome checks against a production build: close/reopen, reload, follow-up help, navigation links, New chat and clearing across reloads.
+- [x] Migration `012_chat_conversations.sql` applied successfully on an isolated PostgreSQL database.
+- [x] TypeScript, lint and production build pass; lint retains 15 existing warnings in older black-box test files.
+- [ ] **Live Gemini acceptance:** run the reported Gujarati/Hinglish examples with the configured service. Local model/tool simulation passes; the external test awaits explicit approval after automatic approval review blocked sending the test payload to Gemini.
+- [ ] **Configured database migration:** read-only inspection on 9 Oct confirms migration `012` and both chat tables are absent. Apply the tested migration when rolling out this change; it is included in the normal build/start migration flow. No deployment performed.
+- [ ] Check speech recognition and spoken replies on the firm's actual phones; browser validation above covers typed chat.
 
 ---
 

@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint && node scripts/check-route-auth.js",
     "lint:auth": "node scripts/check-route-auth.js",
+    "test:chat": "node --import tsx --test tests/chat/regression.test.tsx",
     "dev:create": "node scripts/create-developer.js",
     "db:migrate": "node scripts/migrate.js",
     "db:init": "node scripts/db-init.js && node scripts/migrate.js",

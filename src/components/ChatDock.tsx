@@ -1,5 +1,7 @@
 'use client';
 
+import { ChatMarkdown, spokenText } from './ChatMarkdown';
+
 // Chat.
 // - Desktop: round button bottom-right that opens a panel.
 // - Phone: opened from the chat icon in the top bar; slides down from the top and fills the screen.
@@ -220,7 +222,7 @@ function useVoiceMode(startLang: Lang, engine: Engine, role: string, ask: (q: st
       if (!synth || !text.trim()) { next(); return; }
       setState('speaking');
       hush();
-      const chunks = sentences(text);
+      const chunks = sentences(spokenText(text));
       const voice = pickVoice(SPEECH_LANG[lang]);
       utter.current = chunks.map((c) => {
         const u = new SpeechSynthesisUtterance(c);
@@ -253,7 +255,7 @@ function useVoiceMode(startLang: Lang, engine: Engine, role: string, ask: (q: st
       setHeard('');
       const spoken = scriptLang(q);
       if (spoken) setLang(spoken);
-      const timeout = new Promise<'timeout'>((r) => later(25000, () => r('timeout')));
+      const timeout = new Promise<'timeout'>((r) => later(125000, () => r('timeout')));
       const a = await Promise.race([live.current.ask(q), timeout]);
       if (turn.current !== my || !alive.current) return;
       if (a === 'timeout') { loop.current.speak('Sorry, that took too long. Please ask again.', 'en'); return; }
@@ -343,7 +345,6 @@ export default function ChatDock({ ctx, open, setOpen }: { ctx: Ctx; open: boole
   const [q, setQ] = useState('');
   const [dictating, setDictating] = useState(false);
   const [closing, setClosing] = useState(false);
-  const [rowsOpen, setRowsOpen] = useState<number | null>(null);
   const recRef = useRef<Rec | null>(null);
   const oneShot = useRef<VadRecorder | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -361,11 +362,23 @@ export default function ChatDock({ ctx, open, setOpen }: { ctx: Ctx; open: boole
   }, [open, setOpen]);
   useEffect(() => () => { recRef.current?.stop(); oneShot.current?.stop(); }, []);
 
+  const loadChat = d.loadChat;
+  useEffect(() => {
+    if (!open || !can(role, 'chat.use')) return;
+    void loadChat();
+  }, [open, role, loadChat]);
+  const pending = d.messages.some((m) => m.loading);
+  useEffect(() => {
+    if (!open || !pending) return;
+    const id = setInterval(() => { void loadChat(); }, 4000);
+    return () => clearInterval(id);
+  }, [open, pending, loadChat]);
+
   if (!can(role, 'chat.use')) return null;
 
   const submit = (text: string) => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || !d.chatReady || d.chatLoading || d.messages.some((m) => m.loading)) return;
     void d.ask(role, t);
     setQ('');
   };
@@ -375,7 +388,7 @@ export default function ChatDock({ ctx, open, setOpen }: { ctx: Ctx; open: boole
     if (help) { d.showToast(help, 'warning'); return true; }
     return false;
   };
-  const startVoice = () => { if (!cantTalk()) voice.start(); };
+  const startVoice = () => { if (d.chatReady && !d.chatLoading && !pending && !cantTalk()) voice.start(); };
 
   const toggleDictation = () => {
     if (cantTalk()) return;
@@ -431,10 +444,10 @@ export default function ChatDock({ ctx, open, setOpen }: { ctx: Ctx; open: boole
     setTimeout(() => { setClosing(false); setOpen(false); }, 220);
   };
   const suggestions = role === 'owner'
-    ? ["What's happening today?", 'How many workers do I have?', 'Who folded how much today?', 'आज कितना माल आया?']
+    ? ['How do I add stock?', 'Open job cards', 'Where do I record a payment?', 'आज कितना माल आया?']
     : ["What's happening today?", 'Who folded how much today?', 'Open job cards', 'Shortage by worker this week'];
-  const fresh = d.messages.length <= 1 && !voiceOn;
-  const busy = d.messages.some((m) => m.loading);
+  const fresh = d.messages.length === 0 && !voiceOn;
+  const busy = pending || d.chatLoading || !d.chatReady;
   const caption = voice.state === 'listening' ? 'Listening' : voice.state === 'thinking' ? 'Thinking' : voice.state === 'speaking' ? 'Speaking' : 'Mic is off';
 
   return (
@@ -451,39 +464,29 @@ export default function ChatDock({ ctx, open, setOpen }: { ctx: Ctx; open: boole
               <span className="strong ellipsis">Ask {firm().name}</span>
               <span className="muted tiny">{voiceOn ? `Voice · ${LANG_LABEL[voice.lang]}` : 'English · हिंदी · ગુજરાતી'}</span>
             </div>
-            {!fresh && !voiceOn && <button className="ib sm-ib" aria-label="New chat" title="New chat" onClick={() => d.clearChat()}><Icon name="edit" size={16} /></button>}
+            {!fresh && !voiceOn && <button className="ib sm-ib" aria-label="New chat" title="New chat" disabled={busy} onClick={() => { void d.clearChat(); }}><Icon name="edit" size={16} /></button>}
             <button className="ib sm-ib" aria-label="Close chat" onClick={close}><Icon name="x" size={18} /></button>
           </header>
 
-          <div className="chat-pop-body">
+          <div className="chat-pop-body" aria-live="polite">
+            {d.chatLoading && <p className="muted small" role="status">Loading conversation…</p>}
+            {d.chatError && <div className="chat-error" role="alert"><p>{d.chatError}</p><button type="button" className="linkbtn" disabled={d.chatLoading} onClick={() => { void d.loadChat(); }}>Reload conversation</button></div>}
+            {d.chatMore && <button type="button" className="linkbtn small" disabled={busy} onClick={() => { void d.loadChat(true); }}>Earlier messages</button>}
             {fresh ? (
               <div className="chat-empty">
                 <span className="chat-empty-mark"><Icon name="chat" size={26} strokeWidth={1.8} /></span>
                 <h2>What do you want to know?</h2>
-                <p className="muted small">Type or talk — in English, हिंदी or ગુજરાતી.</p>
+                <p className="muted small">Ask me how to do anything in the app.</p><p className="muted small">Type or talk in English, हिंदी, ગુજરાતી, or a mix.</p>
                 <div className="chat-suggest">
-                  {suggestions.map((s) => <button key={s} className="chat-suggest-item" onClick={() => submit(s)}>{s}</button>)}
+                  {suggestions.map((s) => <button key={s} className="chat-suggest-item" disabled={busy} onClick={() => submit(s)}>{s}</button>)}
                 </div>
               </div>
             ) : (
-              d.messages.slice(1).map((m, i) => (
-                <div key={i} className={`cmsg ${m.sender} ${m.error ? 'err' : ''}`}>
+              d.messages.map((m, i) => (
+                <div key={m.id ?? i} className={`cmsg ${m.sender} ${m.error ? 'err' : ''}`}>
                   {m.sender === 'bot' && <span className="cmsg-av"><Icon name="chat" size={14} strokeWidth={2} /></span>}
                   <div className="cmsg-body" lang={m.lang}>
-                    {m.loading ? <span className="typing" aria-label="Thinking"><i /><i /><i /></span> : <span>{m.text}</span>}
-                    {m.rows && m.rows.length > 1 && (
-                      <div className="stack-6">
-                        <button className="linkbtn small left" onClick={() => setRowsOpen(rowsOpen === i ? null : i)}>{rowsOpen === i ? 'Hide rows' : `Show ${m.rows.length} rows`}</button>
-                        {rowsOpen === i && (
-                          <div className="mini-table">
-                            <table className="tbl">
-                              <thead><tr>{Object.keys(m.rows[0]).map((k) => <th key={k}>{k.replace(/_/g, ' ')}</th>)}</tr></thead>
-                              <tbody>{m.rows.slice(0, 20).map((r, ri) => <tr key={ri}>{Object.values(r).map((v, vi) => <td key={vi} className="num">{v == null ? '—' : String(v)}</td>)}</tr>)}</tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    {m.loading ? <span className="typing" aria-label="Thinking"><i /><i /><i /></span> : m.sender === 'bot' ? <ChatMarkdown text={m.text} role={role} navigate={(tab) => { ctx.go(tab); close(); }} /> : <span className="chat-user-text">{m.text}</span>}
                     {m.sources && m.sources.length > 0 && <span className="muted tiny">From: {m.sources.map((s) => s.title).join(', ')}</span>}
                   </div>
                 </div>
@@ -508,16 +511,16 @@ export default function ChatDock({ ctx, open, setOpen }: { ctx: Ctx; open: boole
             </div>
           ) : (
             <form className="chat-compose" onSubmit={(e) => { e.preventDefault(); submit(q); }}>
-              <input aria-label="Ask a question" placeholder={dictating ? 'Listening…' : 'Ask anything'} value={q} onChange={(e) => setQ(e.target.value)} enterKeyHint="send" />
+              <input maxLength={4000} disabled={!d.chatReady || d.chatLoading} aria-label="Ask a question" placeholder={dictating ? 'Listening…' : 'Ask anything'} value={q} onChange={(e) => setQ(e.target.value)} enterKeyHint="send" />
               {engine !== 'server' && (
-                <button type="button" className={`cbtn ${dictating ? 'rec' : ''}`} aria-label={dictating ? 'Stop dictation' : 'Dictate'} aria-pressed={dictating} onClick={toggleDictation}>
+                <button type="button" className={`cbtn ${dictating ? 'rec' : ''}`} aria-label={dictating ? 'Stop dictation' : 'Dictate'} aria-pressed={dictating} disabled={busy} onClick={toggleDictation}>
                   <Icon name="mic" size={18} strokeWidth={2} />
                 </button>
               )}
               {q.trim() || engine === 'server' ? (
                 <button className="cbtn primary" aria-label="Send" type="submit" disabled={!q.trim() || busy}><Icon name="send" size={17} strokeWidth={2} /></button>
               ) : (
-                <button type="button" className="cbtn primary" aria-label="Start voice mode" title="Voice mode"  onClick={startVoice}><Icon name="wave" size={18} strokeWidth={2} /></button>
+                <button type="button" className="cbtn primary" aria-label="Start voice mode" title="Voice mode"  disabled={busy} onClick={startVoice}><Icon name="wave" size={18} strokeWidth={2} /></button>
               )}
             </form>
           )}

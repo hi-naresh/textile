@@ -1068,3 +1068,20 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
 .agent-recent > .grow { flex: 1 1 auto; }
 .agent-head .pill { white-space: nowrap; }
 /* ===== end engineer C ===== */
+
+/* Assistant prose: readable on narrow phones, with safe in-app navigation. */
+.chat-markdown { min-width: 0; overflow-wrap: anywhere; line-height: 1.55; }
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+.chat-markdown p, .chat-markdown ul, .chat-markdown ol { margin: 0 0 .75em; }
+.chat-markdown ul, .chat-markdown ol { padding-left: 1.35em; }
+.chat-markdown li + li { margin-top: .4em; }
+.chat-markdown a { color: inherit; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
+.chat-markdown code { font-size: .92em; white-space: pre-wrap; }
+.chat-table { max-width: 100%; overflow-x: auto; margin: .6em 0; }
+.chat-table table { border-collapse: collapse; font-size: .9em; }
+.chat-table th, .chat-table td { padding: .4em .65em; border-bottom: 1px solid var(--line, #9995); text-align: left; vertical-align: top; }
+.chat-table th { white-space: nowrap; }
+.chat-user-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-error { padding: 10px; border: 1px solid var(--line, #9995); border-radius: 10px; margin-bottom: 12px; }
+.chat-suggest-item:disabled { opacity: .6; }
