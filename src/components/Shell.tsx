@@ -64,10 +64,6 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
           <Logo />
           <div className="stack-0"><span className="brand-name">{firm().name}</span><span className="muted tiny">{firm().city}</span></div>
         </div>
-        <button className="me-card" onClick={() => go('settings')} aria-label="Settings">
-          <span className={`av ${role}`}>{initials(who.name)}</span>
-          <div className="stack-0 min0"><span className="strong small ellipsis">{who.name}</span><span className="muted tiny ellipsis">{who.title}</span></div>
-        </button>
         <nav aria-label="Main" className="side-nav">
           {groups.map((g) => (
             <div key={g} className="stack-4">
@@ -92,6 +88,10 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
           <div className="grow" />
           {now && <span className="pill neutral tall hide-md"><Icon name="clock" size={14} strokeWidth={2} />{today} · {shiftName(now)}</span>}
           {bellOk && <BellButton count={attention} label={bellLabel} open={ctx.attention != null} onClick={openBell} />}
+          <button className="me-chip" onClick={() => go('settings')} aria-label={`${who.name}, ${who.title} — Settings`} title={`${who.name} · ${who.title}`}>
+            <span className={`av ${role} sm`}>{initials(who.name)}</span>
+            <span className="me-chip-name ellipsis">{who.name.split(' ')[0]}</span>
+          </button>
         </header>
 
         {/* ---------- Mobile header ---------- */}
@@ -106,7 +106,6 @@ export default function Shell({ ctx, tab, openChat, children }: ShellProps) {
             {chatOk && (
               <button className="ib m-chat" aria-label="Open chat" onClick={openChat}><Icon name="chat" size={20} strokeWidth={2} /></button>
             )}
-            <button className={`av ${role} m-av`} aria-label="Settings" onClick={() => go('settings')}>{initials(who.name)}</button>
           </div>
         </header>
 

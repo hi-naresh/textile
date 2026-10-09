@@ -1121,3 +1121,21 @@ tr.mv-adj .strong { font-weight: 500; }
   .rtbl .mv-extra { justify-content: flex-end; }
   .rtbl td > .stack-0 { align-items: flex-end; min-width: 0; }
 }
+
+/* ---------- Topbar profile chip (replaces the sidebar name card) ---------- */
+.me-chip { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px 0 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; max-width: 180px; }
+.me-chip:hover { background: var(--surface2); }
+.me-chip .av.sm { width: 30px; height: 30px; font-size: 12px; }
+.me-chip-name { font-size: 13px; font-weight: 600; }
+
+/* ---------- Needs your attention: grouped by category ---------- */
+.attn-cats { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.attn-cats::-webkit-scrollbar { display: none; }
+.attn-cats .chip { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.attn-cats .chip .num { opacity: .7; font-size: 12px; }
+.attn-group { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.attn-group-head { display: flex; align-items: center; gap: 8px; color: var(--text2); }
+.attn-group-head .num { margin-left: auto; }
+.attn-group .agent-tag { display: none; }
+@media (max-width: 720px) { .attn-group { padding: 10px 12px; } .attn-group .attn { flex-wrap: wrap; } }
+.ov-cat .ov-item-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }

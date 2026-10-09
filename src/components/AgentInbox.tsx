@@ -68,11 +68,11 @@ function destination(s: Suggestion, role: Role): { tab: Tab; hash?: string } | n
   }
 }
 
-export default function AgentInbox({ ctx, limit = 8, empty = null, onNavigate }: { ctx: Ctx; limit?: number; empty?: React.ReactNode; onNavigate?: () => void }) {
+export default function AgentInbox({ ctx, limit = 8, empty = null, onNavigate, only }: { ctx: Ctx; limit?: number; empty?: React.ReactNode; onNavigate?: () => void; only?: Suggestion[] }) {
   const { role, d, go, agents } = ctx;
   const [busy, setBusy] = useState<number | null>(null);
   const [all, setAll] = useState(false);
-  const list = agents.list;
+  const list = only ?? agents.list;
   if (!list.length) return agents.loaded ? <>{empty}</> : null;
 
   const open = (s: Suggestion) => {
@@ -129,7 +129,7 @@ export default function AgentInbox({ ctx, limit = 8, empty = null, onNavigate }:
 }
 
 // ---------- Floor items (from the app's own data, no agent needed) ----------
-export interface AttentionItem { key: string; tone: 'bad' | 'warn' | 'info'; title: string; sub: string; action: string; tab: Tab; hash?: string }
+export interface AttentionItem { key: string; tone: 'bad' | 'warn' | 'info'; title: string; sub: string; action: string; tab: Tab; hash?: string; cat?: CatKey }
 
 /** What the owner (whole firm) or a supervisor (own sections) should look at now. */
 export function useAttentionItems(ctx: Ctx, opts: { reads?: boolean } = {}): AttentionItem[] {
@@ -140,26 +140,26 @@ export function useAttentionItems(ctx: Ctx, opts: { reads?: boolean } = {}): Att
     const items: AttentionItem[] = [];
     const owner = role === 'owner';
     if (owner && ctx.signups > 0) {
-      items.push({ key: 'signups', tone: 'warn', title: `${ctx.signups} sign up${ctx.signups > 1 ? 's' : ''} waiting for approval`, sub: 'New supervisors or workers asking to use the app', action: 'Approve', tab: 'firm', hash: 'firm=team' });
+      items.push({ key: 'signups', tone: 'warn', title: `${ctx.signups} sign up${ctx.signups > 1 ? 's' : ''} waiting for approval`, sub: 'New supervisors or workers asking to use the app', action: 'Approve', tab: 'firm', hash: 'firm=team', cat: 'team' });
     }
     const limit = rules().shortageLimitPct;
     d.jobCards.filter((j) => j.flagged && jobInScope(role, j)).slice(0, 2).forEach((j) =>
-      items.push({ key: `jc-${j.id}`, tone: 'bad', title: `Shortage ${j.shortage_pct.toFixed(1)}% on ${j.lot_id}`, sub: `${j.process} · JC-${j.id} · above ${limit}% limit`, action: 'Open', tab: 'jobs' }));
+      items.push({ key: `jc-${j.id}`, tone: 'bad', title: `Shortage ${j.shortage_pct.toFixed(1)}% on ${j.lot_id}`, sub: `${j.process} · JC-${j.id} · above ${limit}% limit`, action: 'Open', tab: 'jobs', cat: 'floor' }));
     const pending = d.captures.filter((c) => c.status === 'pending' && captureInScope(role, c.type));
     if (withReads && pending.length) {
       const autoPct = rules().aiAutoConfirmPct;
       const lowConf = pending.filter((c) => c.confidence * 100 < autoPct).length;
-      items.push({ key: 'reads', tone: 'warn', title: `${pending.length} photo read${pending.length > 1 ? 's' : ''} waiting for review`, sub: lowConf ? `${lowConf} below ${autoPct}% confidence` : `All above ${autoPct}% confidence`, action: 'Review', tab: 'review' });
+      items.push({ key: 'reads', tone: 'warn', title: `${pending.length} photo read${pending.length > 1 ? 's' : ''} waiting for review`, sub: lowConf ? `${lowConf} below ${autoPct}% confidence` : `All above ${autoPct}% confidence`, action: 'Review', tab: 'review', cat: 'floor' });
     }
     const crew = owner ? days : days.filter((x) => inSupervisorScope(x.section));
     crew.filter((x) => x.cam && x.cam.active_pct < 60).slice(0, 2).forEach((x) =>
-      items.push({ key: `idle-${x.worker.id}`, tone: 'warn', title: `${x.worker.name} idle ${Math.round(x.cam!.idle_min)} min`, sub: `CCTV · ${x.cam!.station} · ${x.section}`, action: 'View', tab: owner ? 'people' : 'floor' }));
+      items.push({ key: `idle-${x.worker.id}`, tone: 'warn', title: `${x.worker.name} idle ${Math.round(x.cam!.idle_min)} min`, sub: `CCTV · ${x.cam!.station} · ${x.section}`, action: 'View', tab: owner ? 'people' : 'floor', cat: 'floor' }));
     if (owner) {
       (d.stockSummary?.low_lots ?? []).slice(0, 1).forEach((l) =>
         items.push({
           key: `low-${l.lot_id}`, tone: 'info', title: `${l.lot_id} running low — ${fmtM(l.balance)} left`,
           sub: `${l.quality} · below your low-stock level, so it may not cover the next order. "Open lot" shows this lot's entries in the Stock ledger.`,
-          action: 'Open lot', tab: 'stock',
+          action: 'Open lot', tab: 'stock', cat: 'stock',
           hash: `ledger=${encodeURIComponent(new URLSearchParams({ view: 'moves', lot: l.lot_id, focus: l.lot_id }).toString())}`,
         }));
     }
@@ -167,22 +167,66 @@ export function useAttentionItems(ctx: Ctx, opts: { reads?: boolean } = {}): Att
   }, [role, d.jobCards, d.captures, d.stockSummary, days, withReads, ctx.signups]);
 }
 
-/** The full list: floor items first, then agent suggestions. */
+// ---------- Categories: the bell's Alerts tab groups everything by area ----------
+export type CatKey = 'payments' | 'orders' | 'stock' | 'dispatch' | 'floor' | 'team' | 'reports' | 'other';
+export const CATS: { key: CatKey; label: string; icon: string; agents: string[] }[] = [
+  { key: 'payments', label: 'Payments', icon: 'rupee', agents: ['credit'] },
+  { key: 'orders', label: 'Orders & inquiries', icon: 'cart', agents: ['orders', 'inquiry'] },
+  { key: 'stock', label: 'Stock', icon: 'box', agents: ['inventory', 'allocation'] },
+  { key: 'dispatch', label: 'Dispatch & invoices', icon: 'truck', agents: ['logistics', 'documents'] },
+  { key: 'floor', label: 'Floor', icon: 'factory', agents: [] },
+  { key: 'team', label: 'Team', icon: 'users', agents: [] },
+  { key: 'reports', label: 'Reports', icon: 'chart', agents: ['reports', 'costing'] },
+  { key: 'other', label: 'Other', icon: 'alert', agents: [] },
+];
+export const catOfAgent = (agent: string): CatKey => CATS.find((c) => c.agents.includes(agent))?.key ?? 'other';
+const SEV: Record<string, number> = { bad: 0, warn: 1, info: 2 };
+
+/** Everything that needs attention, grouped by category (worst first inside each), with a category filter on top. */
 export function AttentionList({ ctx, onNavigate, emptyText = 'All clear. Nothing needs you right now.', reads = true }: { ctx: Ctx; onNavigate?: () => void; emptyText?: string; reads?: boolean }) {
   const items = useAttentionItems(ctx, { reads });
+  const agentList = ctx.agents.list;
+  const [pick, setPick] = useState<CatKey | 'all'>('all');
+  const groups = useMemo(() => CATS.map((c) => ({
+    ...c,
+    floor: items.filter((i) => (i.cat ?? 'other') === c.key).sort((a, b) => SEV[a.tone] - SEV[b.tone]),
+    sugg: agentList.filter((s) => catOfAgent(s.agent) === c.key).sort((a, b) => SEV[a.severity] - SEV[b.severity]),
+  })).map((g) => ({ ...g, n: g.floor.length + g.sugg.length, bad: g.floor.some((i) => i.tone === 'bad') || g.sugg.some((s) => s.severity === 'bad') }))
+    .filter((g) => g.n > 0), [items, agentList]);
+  const total = groups.reduce((t, g) => t + g.n, 0);
+  if (!total) return ctx.agents.loaded || items.length ? <p className="muted" style={{ margin: 0 }}>{emptyText}</p> : null;
+  const current = pick !== 'all' && groups.some((g) => g.key === pick) ? pick : 'all';
+  const shown = current === 'all' ? groups : groups.filter((g) => g.key === current);
   return (
-    <div className="stack-8">
-      {items.map((a) => (
-        <div className="attn" key={a.key}>
-          <span className={`dot-sm ${a.tone}`} />
-          <div className="grow min0">
-            <div className="attn-title">{a.title}</div>
-            <div className="attn-sub">{a.sub}</div>
-          </div>
-          <button className="btn sm" onClick={() => { onNavigate?.(); if (a.hash) openLink(ctx.go, a.tab, a.hash); else ctx.go(a.tab); }}>{a.action}</button>
+    <div className="stack-12">
+      {groups.length > 1 && (
+        <div className="attn-cats" role="group" aria-label="Show category">
+          <button type="button" className={`chip ${current === 'all' ? 'on' : ''}`} aria-pressed={current === 'all'} onClick={() => setPick('all')}>All <span className="num">{total}</span></button>
+          {groups.map((g) => (
+            <button key={g.key} type="button" className={`chip ${current === g.key ? 'on' : ''}`} aria-pressed={current === g.key} onClick={() => setPick(g.key)}>
+              {g.bad && <span className="dot-sm bad" aria-hidden />}{g.label} <span className="num">{g.n}</span>
+            </button>
+          ))}
         </div>
+      )}
+      {shown.map((g) => (
+        <section key={g.key} className="attn-group" aria-label={`${g.label}: ${g.n}`}>
+          <div className="attn-group-head"><Icon name={g.icon} size={15} strokeWidth={2} /><span className="strong">{g.label}</span><span className="muted small num">{g.n}</span></div>
+          <div className="stack-8">
+            {g.floor.map((a) => (
+              <div className="attn" key={a.key}>
+                <span className={`dot-sm ${a.tone}`} />
+                <div className="grow min0">
+                  <div className="attn-title">{a.title}</div>
+                  <div className="attn-sub">{a.sub}</div>
+                </div>
+                <button className="btn sm" onClick={() => { onNavigate?.(); if (a.hash) openLink(ctx.go, a.tab, a.hash); else ctx.go(a.tab); }}>{a.action}</button>
+              </div>
+            ))}
+            {g.sugg.length > 0 && <AgentInbox ctx={ctx} onNavigate={onNavigate} only={g.sugg} limit={current === 'all' ? 4 : 50} />}
+          </div>
+        </section>
       ))}
-      <AgentInbox ctx={ctx} onNavigate={onNavigate} empty={items.length === 0 ? <p className="muted" style={{ margin: 0 }}>{emptyText}</p> : null} />
     </div>
   );
 }

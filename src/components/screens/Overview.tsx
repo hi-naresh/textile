@@ -7,12 +7,12 @@ import React, { useMemo } from 'react';
 import Icon from '../Icon';
 import { Pill, Track, effTone, fmt, inr, time, type Tone } from '../ui';
 import { Calm, LiveNow, StockFlow, fmtMeters } from './Today';
-import { useAttentionCount, useAttentionItems } from '../AgentInbox';
+import { CATS, catOfAgent, useAttentionCount, useAttentionItems, type CatKey } from '../AgentInbox';
 import type { Ctx } from '../ctx';
 import type { Tab } from '@/lib/access';
 import { supervisorFor, rules, owner, can } from '@/lib/access';
 import { sectionRows } from '@/lib/derive';
-import { useApi } from '@/lib/useApi';
+import { openLink, useApi } from '@/lib/useApi';
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -136,33 +136,39 @@ function Figure({ label, value, sub, tone, to, go }: { label: string; value: Rea
 }
 
 /** The top few items (worst first), for the owner's Overview and the supervisor's Floor. Everything, with accept / dismiss, lives in the bell panel. */
+/** Owner/supervisor home: what needs attention, one line per category (worst item shown), opens the bell panel. */
 export function Attention({ ctx, limit }: { ctx: Ctx; limit: number }) {
   const items = useAttentionItems(ctx);
   const agents = ctx.agents.list;
-  const rows = useMemo(() => {
+  const groups = useMemo(() => {
     const rank: Record<string, number> = { bad: 0, warn: 1, info: 2 };
-    const all = [
-      ...items.map((a) => ({ key: a.key, tone: a.tone, title: a.title, sub: a.sub, open: () => { if (a.hash) window.history.replaceState(null, '', `#${a.hash}`); ctx.go(a.tab); } })),
-      ...agents.map((s) => ({ key: `s${s.id}`, tone: s.severity, title: s.title, sub: s.detail ?? '', open: () => ctx.openAttention('alerts') })),
-    ];
-    return all.map((r, i) => ({ r, i })).sort((a, b) => (rank[a.r.tone] - rank[b.r.tone]) || a.i - b.i).map((x) => x.r);
+    type Row = { key: string; tone: string; title: string; open: () => void };
+    const by = new Map<CatKey, Row[]>();
+    const add = (c: CatKey, r: Row) => { const l = by.get(c) ?? []; l.push(r); by.set(c, l); };
+    items.forEach((a) => add(a.cat ?? 'other', { key: a.key, tone: a.tone, title: a.title, open: () => { if (a.hash) openLink(ctx.go, a.tab, a.hash); else ctx.go(a.tab); } }));
+    agents.forEach((s) => add(catOfAgent(s.agent), { key: `s${s.id}`, tone: s.severity, title: s.title, open: () => ctx.openAttention('alerts') }));
+    return CATS.filter((c) => by.has(c.key)).map((c) => {
+      const rows = by.get(c.key)!.sort((a, b) => rank[a.tone] - rank[b.tone]);
+      return { ...c, rows, worst: rows[0] };
+    }).sort((a, b) => rank[a.worst.tone] - rank[b.worst.tone] || b.rows.length - a.rows.length);
   }, [items, agents, ctx]);
-  const shown = rows.slice(0, limit);
+  const total = groups.reduce((t, g) => t + g.rows.length, 0);
+  const shown = groups.slice(0, Math.max(limit, 3));
 
   return (
     <section className="card pad stack-14 ov-attn">
       <div className="card-head">
         <h2>Needs your attention</h2>
-        {rows.length > 0 && <span className="ov-badge num">{rows.length}</span>}
+        {total > 0 && <span className="ov-badge num">{total}</span>}
       </div>
       {shown.length ? (
         <div className="ov-list">
-          {shown.map((a) => (
-            <button key={a.key} className="ov-item" onClick={a.open}>
-              <span className={`dot-sm ${a.tone}`} aria-hidden="true" />
+          {shown.map((g) => (
+            <button key={g.key} className="ov-item ov-cat" onClick={g.rows.length === 1 ? g.worst.open : () => ctx.openAttention('alerts')}>
+              <span className={`dot-sm ${g.worst.tone}`} aria-hidden="true" />
               <span className="grow min0 stack-2">
-                <span className="ov-item-title">{a.title}</span>
-                {a.sub && <span className="muted small ellipsis">{a.sub}</span>}
+                <span className="ov-item-title"><Icon name={g.icon} size={14} strokeWidth={2} /> {g.label} <span className="muted num">· {g.rows.length}</span></span>
+                <span className="muted small ellipsis">{g.worst.title}{g.rows.length > 1 ? ` · +${g.rows.length - 1} more` : ''}</span>
               </span>
               <Icon name="arrow" size={16} className="ov-chev" />
             </button>
@@ -171,9 +177,9 @@ export function Attention({ ctx, limit }: { ctx: Ctx; limit: number }) {
       ) : (
         <Calm text={ctx.agents.loaded ? 'All clear. Nothing needs you right now.' : 'Checking…'} />
       )}
-      {rows.length > 0 && (
+      {total > 0 && (
         <button className="linkbtn small left ov-more" onClick={() => ctx.openAttention('alerts')}>
-          {rows.length > shown.length ? `See all ${rows.length}` : 'Open alerts'}
+          {groups.length > shown.length ? `See all ${total}` : 'Open all alerts'}
         </button>
       )}
     </section>
