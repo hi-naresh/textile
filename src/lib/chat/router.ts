@@ -118,7 +118,9 @@ async function fallback(question: string, scope: Scope, recent: Turn[], language
     if (/\b(open|list|pending)\b.*\b(job|card|work)/.test(q) && allowedTemplates(scope).some((t) => t.id === 'open_job_cards')) {
       return { ...base, ...await executeTool('lookup', { template: 'open_job_cards' }, scope), route: 'template' } as ChatAnswer;
     }
-    const spec = parseSemantic(q, EMPTY_VOCAB);
+    // Main's market names and initials still resolve in the offline query path.
+    const markets = await query('SELECT name, code FROM markets WHERE active ORDER BY sort_order');
+    const spec = parseSemantic(q, { ...EMPTY_VOCAB, locations: [...markets.rows.flatMap((m) => [String(m.name), String(m.code)]), 'Dispatched'] });
     if (spec && metricAllowed(spec.metric, scope)) return { ...base, ...await runSpec(spec, scope), route: 'query' };
   }
   return { ...base, answer: phrase('I can help with your app records, app instructions and the firm’s saved policies. The conversational service is unavailable right now. Tell me a specific task, or try again shortly.', 'Hu app na records, app ni madad ane firm ni notes vapru chu. AI atyare available nathi. Thodi vaar pachi fari puchho.', 'Main app ke records, app help aur firm ke notes use karta hoon. AI abhi available nahi hai. Thodi der mein phir poochiye.', 'હું એપના રેકોર્ડ, એપની મદદ અને ફર્મની નોંધો વાપરું છું. AI અત્યારે ઉપલબ્ધ નથી. થોડી વાર પછી ફરી પૂછો.', 'मैं ऐप के रिकॉर्ड, ऐप की मदद और फर्म के नोट्स इस्तेमाल करता हूँ। AI अभी उपलब्ध नहीं है। थोड़ी देर में फिर पूछिए।') };

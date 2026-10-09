@@ -212,6 +212,8 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
     if (!col || !v) continue;
     if (k === 'worker') where.push(`lower(${col}) LIKE '%' || lower(${P(v)}) || '%'`);
     else if (k === 'section') where.push(`${col} = lower(btrim(regexp_replace(${P(v)}, '\\s*section\\s*$', '', 'i')))`);
+    // A market by name or initials ("Landmark", "LM") → its labels "LM 245 · Pipe 3"; anything else matches the label.
+    else if (k === 'location') { const x = P(v); where.push(`(regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = ${P(nameKey(v))} OR lower(${col}) LIKE ANY (SELECT lower(m.code) || ' %' FROM markets m WHERE lower(m.name) = lower(btrim(${x})) OR lower(m.code) = lower(btrim(${x}))))`); }
     else where.push(`regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = ${P(nameKey(v))}`);
   }
   if (scope.role === 'supervisor' && def.sectionScoped) where.push(`${def.sectionScoped} = ANY(${P(scope.sections)}::text[])`);

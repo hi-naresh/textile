@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       `WITH b AS (SELECT generate_series(${r.from}, ${r.to}, interval '${r.step}') AS t)
        SELECT to_char(b.t, 'YYYY-MM-DD"T"HH24:MI') AS key,
               COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters END), 0) AS in_m,
-              COALESCE(SUM(CASE WHEN sm.direction = 'OUT' THEN sm.meters END), 0) AS out_m
+              COALESCE(SUM(CASE WHEN sm.direction = 'OUT' AND sm.kind = 'normal' THEN sm.meters END), 0) AS out_m
        FROM b
        LEFT JOIN stock_movements sm ON date_trunc('${r.unit}', sm.ts) = b.t
          AND ($1::text IS NULL OR sm.lot_id IN (SELECT lot_id FROM lots WHERE quality = $1))
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
     const qualities = await query(
       `SELECT l.quality,
               COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters END), 0) AS in_m,
-              COALESCE(SUM(CASE WHEN sm.direction = 'OUT' THEN sm.meters END), 0) AS out_m,
+              COALESCE(SUM(CASE WHEN sm.direction = 'OUT' AND sm.kind = 'normal' THEN sm.meters END), 0) AS out_m,
               COUNT(DISTINCT sm.lot_id) AS lots,
               COUNT(DISTINCT sm.party) FILTER (WHERE sm.direction = 'OUT') AS parties
        FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id

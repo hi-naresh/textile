@@ -4,14 +4,16 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, PageHead, Pill, Segmented, Track, dayTime, fmt, inr } from '../ui';
 import type { Ctx } from '../ctx';
-import { can, captureInScope, inSupervisorScope, jobInScope, sectionName, activeSupervisor, rules, sectionNames, allLocations, markets } from '@/lib/access';
-import { formatMarketLocation, parseMarketLocation, validPart } from '@/lib/location';
-import { checkImportFile, commitImport, type ImportOutcome, type ImportProgress, type ValidateResult } from '@/lib/stockImportClient';
+import { can, captureInScope, inSupervisorScope, jobInScope, sectionName, activeSupervisor, rules, sectionNames, markets } from '@/lib/access';
+import { describeLocation } from '@/lib/location';
+import { LocationPill, MarketLocationPicker } from '../MarketLocationPicker';
+import { checkImportFile, commitImport, downloadFixFile, type ImportOutcome, type ImportProgress, type ValidateResult } from '@/lib/stockImportClient';
 import { CAPTURE_LABEL, ENGINE_LABEL, FIELDS_FOR, FIELD_LABEL, NUMERIC_FIELDS, OPTIONAL_FIELDS, STAGE_LABEL, STATUS_LABEL, STATUS_TONE, locationTone, shortTone } from '@/lib/derive';
 import type { StockEntry } from '@/lib/useTextileData';
 import { LotPicker } from '../LotPicker';
 import { useLotSearch, type PickLot } from '@/lib/useLots';
 import type { CaptureEvent, JobCard, Lot, LotLocationEntry } from '@/lib/types';
+import { LOT_S_GUESS } from '@/lib/registers';
 
 // ---------------- Job cards ----------------
 export function JobCards({ ctx }: { ctx: Ctx }) {
@@ -106,6 +108,7 @@ export function ReviewQueue({ ctx }: { ctx: Ctx }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [badImg, setBadImg] = useState<Record<number, boolean>>({});
+  const [arrival, setArrival] = useState<{ id: number; loc: string; done: boolean } | null>(null); // incoming read: where the lot goes (optional)
   const sel: CaptureEvent | undefined = pending.find((c) => c.id === selId) ?? pending[0];
   // Time spent on each read (for the time-saved figure): from when it was first shown to confirm/reject.
   const shownAt = React.useRef<Record<number, number>>({});
@@ -141,14 +144,16 @@ export function ReviewQueue({ ctx }: { ctx: Ctx }) {
     setEditing(true);
   };
   const act = async (fn: () => Promise<boolean>) => { setBusy(true); const ok = await fn(); setBusy(false); if (ok) setSelId(null); };
+  const arrivalLoc = sel && arrival?.id === sel.id ? arrival.loc : '';
   const confirm = () => {
-    if (!editing) return act(() => d.confirmCapture(role, sel!, undefined, reviewSeconds()));
+    if (sel && arrival?.id === sel.id && !arrival.done) { d.showToast('Finish the location (shop no., pipe no. 1 to 999) or pick "Not now".', 'warning'); return; }
+    if (!editing) return act(() => d.confirmCapture(role, sel!, undefined, reviewSeconds(), arrivalLoc));
     const out: Record<string, unknown> = { ...data };
     keys.forEach((k) => {
       const v = draft[k]?.trim();
       out[k] = v === '' ? null : NUMERIC_FIELDS.has(k) && !Number.isNaN(Number(v.replace(/,/g, ''))) ? Number(v.replace(/,/g, '')) : v;
     });
-    return act(() => d.confirmCapture(role, sel!, out, reviewSeconds()));
+    return act(() => d.confirmCapture(role, sel!, out, reviewSeconds(), arrivalLoc));
   };
 
   return (
@@ -196,6 +201,12 @@ export function ReviewQueue({ ctx }: { ctx: Ctx }) {
                 );
               })}
             </div>
+            {sel!.type === 'incoming_stock' && (
+              <div className="fld">Location on arrival (optional)
+                <MarketLocationPicker key={sel!.id} ctx={ctx} optional value={arrivalLoc} onChange={(v, done) => setArrival({ id: sel!.id, loc: v, done })} />
+                <span className="muted small">Not now: a new lot has no location until it is moved; a lot you already have stays where it is.</span>
+              </div>
+            )}
             {(conf < auto || missing.length > 0) && !editing && (
               <div className="alert bad">{missing.length ? `Could not read: ${missing.map((m) => FIELD_LABEL[m] ?? m).join(', ')}. ` : ''}{conf < auto ? `Confidence is under ${auto}%. ` : ''}Check against the photo before confirming.</div>
             )}
@@ -301,7 +312,7 @@ export function Allot({ ctx }: { ctx: Ctx }) {
 }
 
 // ---------------- Manual stock entry (owner) ----------------
-const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: 'Godown', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '' };
+const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '' };
 
 interface SrInfo { next: number; taken?: { lot_id: string; ts: string } | null; sr?: number }
 
@@ -355,6 +366,13 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const srTaken = sr?.taken && String(sr.sr) === srText ? sr.taken : null;
   const srBad = srText !== '' && !/^\d{1,9}$/.test(srText);
   const piecesBad = f.pieces.trim() !== '' && !/^\d{1,7}$/.test(f.pieces.trim());
+  const numOk = (v: string | undefined, min: number, max: number, minOpen = false) => { const t = (v ?? '').trim(); if (!t) return true; const n = Number(t); return Number.isFinite(n) && (minOpen ? n > min : n >= min) && n <= max; };
+  const moreBad = isIn
+    ? (!numOk(f.register_pct, 0, 100) ? '% must be a number from 0 to 100.' : (f.loc_code ?? '').trim() && !/^[A-Za-z0-9][A-Za-z0-9 +\-/.]{0,39}$/.test((f.loc_code ?? '').trim()) ? 'Location code: letters, digits, + - / . only.' : null)
+    : (!numOk(f.bill_pct, 0, 1000, true) ? 'L must be a number above 0.' : !numOk(f.billed_meters, 0, 10_000_000) ? 'NQTY must be a number, 0 or more.' : null);
+  const lotQty = parseFloat(f.meters);
+  const lPct = parseFloat(f.bill_pct ?? '');
+  const nqtyHint = !isIn && Number.isFinite(lotQty) && Number.isFinite(lPct) ? Math.round(lotQty * lPct) / 100 : null;
 
   const switchDirection = (v: 'IN' | 'OUT') => { setSrTouched(false); setSr(null); setF({ ...f, direction: v, sr_no: '' }); };
 
@@ -367,9 +385,10 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     if (piecesBad) return d.showToast('Pieces (taka) must be a whole number.', 'warning');
     if (isIn && !entry.grey_meters && !entry.finished_meters) return d.showToast('Enter grey meters or finished meters.', 'warning');
     if (isIn && !entry.mill_name.trim()) return d.showToast('Mill name is required.', 'warning');
-    if (isIn && !entry.location) return d.showToast('Pick a location. For a market, type the shop number.', 'warning');
+    if (isIn && !entry.location) return d.showToast('Pick the location: market and shop no. (pipe no. if any, 1 to 999).', 'warning');
     if (isIn && lotChecked && !known && (!entry.quality.trim() || !entry.design.trim())) return d.showToast('New lot: enter quality and design.', 'warning');
     if (!isIn && (!entry.meters || !entry.party.trim())) return d.showToast('Meters and party (client) are required.', 'warning');
+    if (moreBad) return d.showToast(moreBad, 'warning');
     setBusy(true);
     const ok = await d.addStock(role, entry);
     setBusy(false);
@@ -428,7 +447,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <label className="check"><input type="checkbox" checked={sameAsMill} onChange={(e) => setSameAsMill(e.target.checked)} />Same as mill</label>
           </div>
           <div className="fld">Location on arrival
-            <LocationPicker key={round} value={f.location} onChange={(v) => setF((cur) => ({ ...cur, location: v }))} />
+            <MarketLocationPicker key={round} ctx={ctx} value={f.location} onChange={(v) => setF((cur) => ({ ...cur, location: v }))} />
           </div>
           {!known && f.lot_id.trim() && lotChecked && (
             <div className="two-col">
@@ -436,6 +455,14 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
               <label className="fld">Design (new lot)<input name="design" value={f.design} onChange={set('design')} /></label>
             </div>
           )}
+          <details className="sf-more">
+            <summary>More fields (optional)</summary>
+            <div className="two-col">
+              <label className="fld">% (register)<input className="num" inputMode="decimal" value={f.register_pct ?? ''} onChange={set('register_pct')} placeholder="e.g. 9.55" /></label>
+              <label className="fld">Location code<input value={f.loc_code ?? ''} onChange={set('loc_code')} placeholder="e.g. 212 or 142+143" autoComplete="off" /></label>
+            </div>
+            <span className="muted small hint">As written in your Incoming register. Saved as notes; they don’t change stock.</span>
+          </details>
         </>
       ) : (
         <>
@@ -447,7 +474,21 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <input list="party-list" value={f.party} onChange={set('party')} autoComplete="off" />
             <datalist id="party-list">{d.names.parties.map((n) => <option key={n} value={n} />)}</datalist>
           </label>
-          <label className="fld">Dispatch challan / invoice no.<input className="num" value={f.source_doc} onChange={set('source_doc')} /></label>
+          <label className="fld">Bill / challan no.<input className="num" value={f.source_doc} onChange={set('source_doc')} /></label>
+          <details className="sf-more">
+            <summary>More fields (optional)</summary>
+            <div className="two-col">
+              <label className="fld">L<input className="num" inputMode="decimal" value={f.bill_pct ?? ''} onChange={set('bill_pct')} placeholder="e.g. 100" /></label>
+              <label className="fld">NQTY (billed m)<input className="num" inputMode="decimal" value={f.billed_meters ?? ''} onChange={set('billed_meters')} placeholder={nqtyHint != null ? String(nqtyHint) : ''} /></label>
+            </div>
+            <label className="fld">LOT S
+              <select value={f.lot_status_code ?? ''} onChange={(e) => setF({ ...f, lot_status_code: e.target.value })}>
+                <option value="">—</option>
+                {Object.entries(LOT_S_GUESS).map(([k, g]) => <option key={k} value={k}>{k} — {g.split(' — ')[0]}?</option>)}
+              </select>
+            </label>
+            <span className="muted small hint">As written in your sales register{nqtyHint != null ? ` (QTY × L ÷ 100 = ${nqtyHint})` : ''}. LOT S meanings are our guess. These don’t change stock.</span>
+          </details>
           {known && <span className="muted small hint">If this empties the lot, its location becomes “Dispatched”.</span>}
         </>
       )}
@@ -457,67 +498,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
 }
 
 // ---------------- Lot location ----------------
-
-/**
- * A place from the firm's fixed list (My firm → Markets & locations), or a market address:
- * market + shop no. + pipe no. (optional) → "RRTM 245 · Pipe 3". "Dispatched" is set by the system.
- * onChange gets "" while a market address is incomplete. Remount (key) to reset it.
- */
-export function LocationPicker({ value, onChange, exclude }: { value: string; onChange: (v: string) => void; exclude?: string | null }) {
-  const list = allLocations().filter((l) => l !== exclude);
-  const mks = markets();
-  const parsed = value ? parseMarketLocation(value, mks) : null;
-  const [mode, setMode] = useState<'fixed' | 'market'>(parsed ? 'market' : 'fixed');
-  const [market, setMarket] = useState(parsed?.market ?? mks[0] ?? '');
-  const [shop, setShop] = useState(parsed?.shop ?? '');
-  const [pipe, setPipe] = useState(parsed?.pipe ?? '');
-  const shopOk = validPart(shop);
-  const pipeOk = !pipe.trim() || validPart(pipe);
-  const address = market && shopOk && pipeOk ? formatMarketLocation(market, shop.trim().toUpperCase(), pipe.trim().toUpperCase() || null) : '';
-  const same = !!address && address === exclude;
-
-  const emit = (m: string, s: string, p: string) => {
-    const ok = m && validPart(s) && (!p.trim() || validPart(p));
-    onChange(ok ? formatMarketLocation(m, s.trim().toUpperCase(), p.trim().toUpperCase() || null) : '');
-  };
-
-  return (
-    <div className="stack-10">
-      <div role="group" aria-label="Location" className="loc-opts">
-        {list.map((l) => (
-          <button key={l} type="button" className={`opt ${mode === 'fixed' && value === l ? 'on' : ''}`} aria-pressed={mode === 'fixed' && value === l} onClick={() => { setMode('fixed'); onChange(l); }}>{l}</button>
-        ))}
-        {mks.length > 0 && (
-          <button type="button" className={`opt ${mode === 'market' ? 'on' : ''}`} aria-pressed={mode === 'market'} aria-label="Market: shop and pipe number" onClick={() => { setMode('market'); emit(market, shop, pipe); }}>
-            Market<span className="opt-sub">shop · pipe</span>
-          </button>
-        )}
-      </div>
-      {mode === 'market' && mks.length > 0 && (
-        <div className="loc-market">
-          <label className="fld">Market
-            <select value={market} onChange={(e) => { setMarket(e.target.value); emit(e.target.value, shop, pipe); }}>
-              {mks.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </label>
-          <label className="fld">Shop no.
-            <input className="num" value={shop} onChange={(e) => { setShop(e.target.value); emit(market, e.target.value, pipe); }} placeholder="e.g. 245" autoComplete="off" aria-invalid={shop !== '' && !shopOk} />
-          </label>
-          <label className="fld">Pipe no.
-            <input className="num" value={pipe} onChange={(e) => { setPipe(e.target.value); emit(market, shop, e.target.value); }} placeholder="optional" autoComplete="off" aria-invalid={!pipeOk} />
-          </label>
-          <span className={`loc-preview small ${(shop && !shopOk) || !pipeOk || same ? 'bad' : ''}`}>
-            {!shop.trim() ? 'Type the shop number.'
-              : !shopOk ? 'Shop no.: letters, digits, "-" or "/" only (up to 12).'
-              : !pipeOk ? 'Pipe no.: letters, digits, "-" or "/" only (up to 12).'
-              : same ? `Already at ${address}.`
-              : <>Saved as <span className="strong">{address}</span></>}
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
+// Picking a location: MarketLocationPicker (src/components/MarketLocationPicker.tsx).
 
 export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: string; onDone?: () => void }) {
   const { d, role } = ctx;
@@ -536,7 +517,7 @@ export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: stri
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loc.trim()) return d.showToast('Pick a location. For a market, type the shop number.', 'warning');
+    if (!loc.trim()) return d.showToast('Pick the market and shop no. (pipe no. if any, 1 to 999).', 'warning');
     if (loc.trim() === lot?.location) return d.showToast(`${lotId} is already at ${loc.trim()}.`, 'warning');
     setBusy(true);
     const ok = await d.moveLot(role, lotId, loc.trim(), note.trim());
@@ -548,13 +529,14 @@ export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: stri
     <div className="stack-16">
       <div className="card pad stack-6 flat">
         <span className="muted small">Now at</span>
-        <span className="loc-now"><Pill tone={locationTone(lot?.location ?? null)} className="tall">{lot?.location ?? 'Not recorded'}</Pill>{lot?.location_ts && <span className="muted small">since {dayTime(lot.location_ts)}</span>}</span>
+        <span className="loc-now"><LocationPill location={lot?.location} className="tall" />{lot?.location_ts && <span className="muted small">since {dayTime(lot.location_ts)}</span>}</span>
+        {lot?.location && describeLocation(lot.location, markets()) && <span className="t2 small">{describeLocation(lot.location, markets())}</span>}
         {lot && <span className="muted small">{lot.quality} · {fmt(lot.balance, 1)} m in stock</span>}
       </div>
       {canMove && lot?.location !== 'Dispatched' && (
         <form className="stack-12" onSubmit={submit}>
           <span className="fld">Move to</span>
-          <LocationPicker value={loc} onChange={setLoc} exclude={lot?.location} />
+          <MarketLocationPicker ctx={ctx} value={loc} onChange={setLoc} exclude={lot?.location} />
           <label className="fld">Note (optional)<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. for cutting, customer viewing" /></label>
           <button className="btn primary big" type="submit" disabled={busy}>{loc ? `Move to ${loc}` : 'Move lot'}</button>
         </form>
@@ -568,7 +550,7 @@ export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: stri
             <li key={h.id}>
               <span className={`tl-dot ${locationTone(h.location)}`} />
               <div className="stack-2">
-                <span className="strong">{h.location} <span className="muted small">· {STAGE_LABEL[h.stage] ?? h.stage}</span></span>
+                <span className="strong" title={describeLocation(h.location, markets()) ?? undefined}>{h.location} <span className="muted small">· {STAGE_LABEL[h.stage] ?? h.stage}</span></span>
                 {h.note && <span className="t2 small">{h.note}</span>}
                 <span className="muted tiny">{dayTime(h.ts)}{h.moved_by_name ? ` · ${h.moved_by_name}` : ''}</span>
               </div>
@@ -604,6 +586,7 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
   const [inputKey, setInputKey] = useState(0);
   const stop = React.useRef(false);
   const [csvUrl, setCsvUrl] = useState<string | null>(null);
+  const [fixBusy, setFixBusy] = useState(false);
   useEffect(() => () => { if (csvUrl) URL.revokeObjectURL(csvUrl); }, [csvUrl]);
 
   const check = async (file: File | null) => {
@@ -621,7 +604,7 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
   };
 
   const start = async () => {
-    if (ph.k !== 'checked' || !ph.r.ok || !ph.r.batch || !ph.r.rows) return;
+    if (ph.k !== 'checked' || !ph.r.ok || !ph.r.batch || !ph.r.rows?.length) return;
     const { name, r } = ph;
     stop.current = false;
     const out = await commitImport(r.batch!, r.rows!, (p) => setPh({ k: 'importing', name, r, p }), () => stop.current);
@@ -629,28 +612,44 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
     if (out.saved > 0) await d.afterImport(out.saved);
   };
 
+  const fixFile = async (name: string, r: ValidateResult) => {
+    if (!r.fix) return;
+    setFixBusy(true);
+    try { await downloadFixFile(name, r.fix); } catch (e) { d.showToast(e instanceof Error ? e.message : 'Could not make the file.', 'danger'); } finally { setFixBusy(false); }
+  };
+
   const again = () => { setPh({ k: 'pick' }); setInputKey((k) => k + 1); };
   const busy = ph.k === 'checking' || ph.k === 'importing';
+  const isReg = (r: ValidateResult) => r.format !== 'template';
+  const unit = (r: ValidateResult, n: number) => (r.format === 'incoming' ? (n === 1 ? 'lot' : 'lots') : n === 1 ? 'row' : 'rows');
 
   return (
     <div className="stack-16 imp">
       <ol className="steps">
-        <li><a className="linkbtn" href="/api/stock/export?kind=template" download>Download the template</a> — SR no., pieces (taka), dropdowns for IN/OUT and locations.</li>
-        <li>One row per challan. Save as .xlsx (up to 20,000 rows).</li>
-        <li>Upload: the whole file is checked first. Nothing is saved until every row is right.</li>
+        <li>Upload your <span className="strong">Incoming register</span> (lots), your <span className="strong">Outgoing register</span> (sales) or the app template — the app sees which one it is. Incoming first, then sales.</li>
+        <li>Templates:{' '}
+          <a className="linkbtn" href="/api/stock/export?kind=incoming_template" download>Incoming register</a>{' · '}
+          <a className="linkbtn" href="/api/stock/export?kind=outgoing_template" download>Outgoing register</a>{' · '}
+          <a className="linkbtn" href="/api/stock/export?kind=template" download>App template</a>
+        </li>
+        <li>The whole file is checked first. Rows the app can’t place are listed; you choose to import the rest. Importing the same file again never adds a row twice.</li>
       </ol>
-      <label className="fld">Excel file
+      <label className="fld">Excel file (.xlsx, up to 20,000 rows)
         <input key={inputKey} type="file" name="file" disabled={busy} accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => check(e.target.files?.[0] ?? null)} />
       </label>
 
       {ph.k === 'checking' && <div className="imp-box" role="status"><span className="spinner" aria-hidden /> Checking {ph.name}…</div>}
+
+      {(ph.k === 'checked' || ph.k === 'importing' || ph.k === 'done') && ph.r.detected && (
+        <div className="imp-detect"><Icon name="card" size={15} /> <span className="strong">{ph.r.detected}</span></div>
+      )}
 
       {ph.k === 'checked' && !ph.r.ok && (
         <div className="alert bad stack-8" role="alert">
           <span className="strong">
             {ph.r.headerProblems.length > 0 && `${ph.r.headerProblems.length} column problem${ph.r.headerProblems.length > 1 ? 's' : ''}`}
             {ph.r.headerProblems.length > 0 && ph.r.problemCount > 0 && ' · '}
-            {ph.r.problemCount > 0 && `${n0(ph.r.problemCount)} problem${ph.r.problemCount > 1 ? 's' : ''} in ${n0(ph.r.problemRows)} of ${n0(ph.r.total)} rows`}
+            {ph.r.problemCount > 0 && `${n0(ph.r.problemCount)} error${ph.r.problemCount > 1 ? 's' : ''} in ${n0(ph.r.problemRows)} of ${n0(ph.r.total)} rows`}
             {' — nothing was saved. Fix the file and upload it again.'}
           </span>
           {ph.r.headerProblems.length > 0 && (
@@ -676,21 +675,36 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
         <ul className="imp-notes muted small">{ph.r.notes.map((x, i) => <li key={i}>{x}</li>)}</ul>
       )}
 
+      {ph.k === 'checked' && ph.r.ok && ph.r.warningCount > 0 && <ImportWarnings r={ph.r} />}
+
       {ph.k === 'checked' && ph.r.ok && (
-        <div className="imp-box good stack-8">
+        <div className={`imp-box stack-8 ${ph.r.rows!.length ? 'good' : ''}`}>
           {ph.r.rows!.length ? (
             <>
-              <span className="strong"><Icon name="check" size={16} strokeWidth={2} /> {ph.name}: all {n0(ph.r.rows!.length)} rows are ready</span>
-              <span className="t2 small">{n0(ph.r.counts.in)} incoming · {n0(ph.r.counts.out)} outgoing{ph.r.counts.newLots ? ` · ${n0(ph.r.counts.newLots)} new lots` : ''}</span>
+              <span className="strong"><Icon name="check" size={16} strokeWidth={2} /> {n0(ph.r.rows!.length)} {unit(ph.r, ph.r.rows!.length)} ready{ph.r.skipCount ? `, ${n0(ph.r.skipCount)} will be skipped` : ''}</span>
+              <span className="t2 small">
+                {ph.r.format === 'incoming' ? <>{n0(ph.r.counts.newLots)} new lots · {n0(ph.r.counts.adjustments)} with an opening adjustment (so the balance matches STOCK)</>
+                  : ph.r.format === 'outgoing' ? <>{n0(ph.r.counts.out)} sales, each taken out of its lot</>
+                  : <>{n0(ph.r.counts.in)} incoming · {n0(ph.r.counts.out)} outgoing{ph.r.counts.newLots ? ` · ${n0(ph.r.counts.newLots)} new lots` : ''}</>}
+              </span>
               <div className="imp-actions">
-                <button type="button" className="btn primary" onClick={start}>Import {n0(ph.r.rows!.length)} rows</button>
+                <button type="button" className="btn primary" onClick={start}>
+                  {ph.r.skipCount ? `Import ${n0(ph.r.rows!.length)}, skip ${n0(ph.r.skipCount)}` : `Import ${n0(ph.r.rows!.length)} ${unit(ph.r, ph.r.rows!.length)}`}
+                </button>
+                {ph.r.fix && <button type="button" className="btn" disabled={fixBusy} onClick={() => fixFile(ph.name, ph.r)}><Icon name="download" size={14} />Rows to fix (.xlsx)</button>}
                 <button type="button" className="btn" onClick={again}>Cancel</button>
               </div>
             </>
           ) : (
             <>
-              <span className="strong">Every row of this file was already imported. Nothing to add.</span>
-              <div className="imp-actions"><button type="button" className="btn" onClick={again}>Choose another file</button></div>
+              <span className="strong">
+                {ph.r.skipCount ? `None of the rows can be placed (${n0(ph.r.skipCount)} skipped)${ph.r.alreadySaved ? ` · ${n0(ph.r.alreadySaved)} already in the app` : ''}. Nothing to add.`
+                  : 'Every row of this file was already imported. Nothing to add.'}
+              </span>
+              <div className="imp-actions">
+                {ph.r.fix && <button type="button" className="btn" disabled={fixBusy} onClick={() => fixFile(ph.name, ph.r)}><Icon name="download" size={14} />Rows to fix (.xlsx)</button>}
+                <button type="button" className="btn" onClick={again}>Choose another file</button>
+              </div>
             </>
           )}
         </div>
@@ -709,21 +723,51 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
       {ph.k === 'done' && (
         <div className={`imp-box stack-8 ${ph.out.ok ? 'good' : 'bad'}`} role="status">
           {ph.out.ok ? (
-            <span className="strong"><Icon name="check" size={16} strokeWidth={2} /> Imported {n0(ph.out.saved)} rows from {ph.name}</span>
+            <span className="strong"><Icon name="check" size={16} strokeWidth={2} /> Imported {n0(ph.out.saved)} {isReg(ph.r) ? unit(ph.r, ph.out.saved) : 'rows'} from {ph.name}</span>
           ) : (
             <span className="strong">Import stopped{ph.out.failedChunk ? ` at rows ${n0(ph.out.failedChunk.from)}–${n0(ph.out.failedChunk.to)}` : ''}</span>
           )}
           {!ph.out.ok && ph.out.error && <span>{ph.out.error}</span>}
           <span className="t2 small">
-            Saved: {n0(ph.out.saved)} rows ({n0(ph.out.in)} incoming · {n0(ph.out.out)} outgoing){ph.out.skipped ? ` · ${n0(ph.out.skipped)} already there, skipped` : ''}.
+            Saved: {n0(ph.out.saved)} rows ({n0(ph.out.in)} incoming · {n0(ph.out.out)} outgoing){ph.out.skipped ? ` · ${n0(ph.out.skipped)} already there, skipped` : ''}{ph.r.skipCount ? ` · ${n0(ph.r.skipCount)} left out (rows to fix)` : ''}.
             {!ph.out.ok && ph.out.failedChunk && ` Nothing from rows ${n0(ph.out.failedChunk.from)} onwards was saved.`}
           </span>
           {!ph.out.ok && <span className="t2 small">To finish: upload the same file again (saved rows are skipped automatically), or delete the saved rows from the file, fix the problem and upload it.</span>}
           <div className="imp-actions">
+            {ph.r.fix && <button type="button" className="btn" disabled={fixBusy} onClick={() => fixFile(ph.name, ph.r)}><Icon name="download" size={14} />Rows to fix (.xlsx)</button>}
             {ph.out.ok ? <button type="button" className="btn primary" onClick={() => onDone?.()}>Done</button> : <button type="button" className="btn" onClick={again}>Upload again</button>}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Warnings after a clean check: rows that will be skipped (can't be placed) and rows saved with a note. */
+function ImportWarnings({ r }: { r: ValidateResult }) {
+  const skips = r.warnings.filter((w) => w.skip);
+  const notes = r.warnings.filter((w) => !w.skip);
+  const more = r.warningCount - r.warnings.length;
+  return (
+    <div className="alert warn stack-8" role="status">
+      {skips.length > 0 && (
+        <>
+          <span className="strong">{n0(r.skipCount)} {r.skipCount === 1 ? 'row' : 'rows'} can’t be placed and will be skipped</span>
+          <ul className="err-list imp-rows">
+            {skips.slice(0, 200).map((w, i) => <li key={i}><span className="num strong">Row {w.row}</span>{w.field && w.field !== 'Row' ? <span className="t2"> · {w.field}</span> : null}: {w.message}</li>)}
+            {skips.length > 200 && <li className="muted">…and {n0(skips.length - 200)} more — see “Rows to fix”.</li>}
+          </ul>
+        </>
+      )}
+      {notes.length > 0 && (
+        <details open={notes.length <= 8}>
+          <summary className="strong">{n0(notes.length)} {notes.length === 1 ? 'note' : 'notes'} (these rows are saved)</summary>
+          <ul className="err-list imp-rows">
+            {notes.slice(0, 200).map((w, i) => <li key={i}><span className="num strong">Row {w.row}</span>{w.field ? <span className="t2"> · {w.field}</span> : null}: {w.message}</li>)}
+          </ul>
+        </details>
+      )}
+      {more > 0 && <span className="muted small">…and {n0(more)} more.</span>}
     </div>
   );
 }

@@ -15,7 +15,8 @@ const LIST_SQL = `
   SELECT d.id, d.order_id, d.party_id, p.name AS party_name, p.address AS party_address, p.gstin AS party_gstin, p.state_code AS party_state,
          p.city AS party_city, d.challan_no, d.transporter, d.lr_no, d.vehicle_no, d.packages, d.dispatched_at,
          COALESCE(m.meters, 0) AS meters, COALESCE(m.lots, ARRAY[]::text[]) AS lots, COALESCE(m.qualities, ARRAY[]::text[]) AS qualities,
-         inv.id AS invoice_id, inv.invoice_no
+         inv.id AS invoice_id, inv.invoice_no, (p.phone IS NOT NULL AND p.phone <> '') AS party_has_phone,
+         wa.status AS wa_status, wa.at AS wa_at, wa.error AS wa_error
   FROM dispatches d
   LEFT JOIN parties p ON p.id = d.party_id
   LEFT JOIN LATERAL (
@@ -23,7 +24,9 @@ const LIST_SQL = `
     FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id
     WHERE sm.dispatch_id = d.id AND sm.direction = 'OUT'
   ) m ON TRUE
-  LEFT JOIN LATERAL (SELECT id, invoice_no FROM invoices WHERE dispatch_id = d.id AND status <> 'cancelled' ORDER BY id DESC LIMIT 1) inv ON TRUE`;
+  LEFT JOIN LATERAL (SELECT id, invoice_no FROM invoices WHERE dispatch_id = d.id AND status <> 'cancelled' ORDER BY id DESC LIMIT 1) inv ON TRUE
+  LEFT JOIN LATERAL (SELECT status, GREATEST(created_at, updated_at) AS at, error FROM whatsapp_messages
+                     WHERE dispatch_id = d.id AND purpose = 'dispatch' AND direction = 'out' ORDER BY id DESC LIMIT 1) wa ON TRUE`;
 
 export type DispatchRow = Dispatch & { qualities: string[]; party_address: string | null; party_gstin: string | null; party_state: string | null; party_city: string | null };
 
@@ -38,6 +41,8 @@ function toDispatch(r: Record<string, unknown>, owner: boolean): DispatchRow {
     invoice_id: owner && r.invoice_id != null ? Number(r.invoice_id) : null, invoice_no: owner ? ((r.invoice_no as string) ?? null) : null,
     party_address: (r.party_address as string) ?? null, party_gstin: (r.party_gstin as string) ?? null,
     party_state: (r.party_state as string) ?? null, party_city: (r.party_city as string) ?? null,
+    wa: r.wa_status ? { status: r.wa_status as NonNullable<Dispatch['wa']>['status'], at: new Date(String(r.wa_at)).toISOString(), error: (r.wa_error as string) ?? null } : null,
+    party_has_phone: !!r.party_has_phone,
   };
 }
 

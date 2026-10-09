@@ -5,10 +5,14 @@ import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 import { piecesValue, srValue } from './ledger';
 import { canonicalLotAttr, canonicalName, challanCode, nameValue } from './normalize';
+import { billedMetersValue, billPctValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 import { markAgentsStale } from './agents/stale';
 import { ledgerRowsByIds, type LedgerRow } from './ledger-query';
 
-export const MOVEMENT_FIELDS = ['sr_no', 'pieces', 'source_doc_id', 'mill_name', 'weaver_name', 'party', 'quality', 'design'] as const;
+export const MOVEMENT_FIELDS = ['sr_no', 'pieces', 'source_doc_id', 'mill_name', 'weaver_name', 'party', 'quality', 'design',
+  'register_pct', 'loc_code', 'bill_pct', 'billed_meters', 'lot_status_code'] as const;
+const IN_ONLY = ['mill_name', 'weaver_name', 'register_pct', 'loc_code'];
+const OUT_ONLY = ['party', 'bill_pct', 'billed_meters', 'lot_status_code'];
 export const LOT_FIELDS = ['quality', 'design', 'grade', 'status'] as const;
 export const LOT_STATUSES = ['active', 'completed', 'dispatched', 'hold'] as const;
 export const MAX_CHANGES = 500;
@@ -35,6 +39,7 @@ export class EditProblems extends LedgerError {
 const FIELD_LABEL: Record<string, string> = {
   sr_no: 'SR no.', pieces: 'Pieces (taka)', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver',
   party: 'Party', quality: 'Quality', design: 'Design', grade: 'Grade', status: 'Status',
+  register_pct: '%', loc_code: 'Location code', bill_pct: 'L', billed_meters: 'NQTY (billed meters)', lot_status_code: 'LOT S',
 };
 
 /** Structural check of the request body. Anything malformed (unknown field, bad id) → 400. */
@@ -61,7 +66,10 @@ export function parseChanges(body: Record<string, unknown>): EditChange[] {
   });
 }
 
-interface MovementRow { id: number; lot_id: string; direction: 'IN' | 'OUT'; sr_no: number | null; pieces: number | null; source_doc_id: string | null; mill_name: string | null; weaver_name: string | null; party: string | null }
+interface MovementRow {
+  id: number; lot_id: string; direction: 'IN' | 'OUT'; kind: string; sr_no: number | null; pieces: number | null; source_doc_id: string | null; mill_name: string | null; weaver_name: string | null; party: string | null;
+  register_pct: number | null; loc_code: string | null; bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null;
+}
 interface LotRow { lot_id: string; quality: string; design: string; grade: string | null; status: string | null }
 export interface EditedLot { lot_id: string; quality: string; design: string; grade: string | null; status: string | null }
 
@@ -96,9 +104,13 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
   // 1. Lock the rows (in a fixed order, so two saves can't deadlock).
   const mvIds = [...new Set(changes.filter((c) => c.target === 'movement').map((c) => c.id as number))].sort((a, b) => a - b);
   const mvRes = mvIds.length
-    ? await q(`SELECT id, lot_id, direction, sr_no, pieces, source_doc_id, mill_name, weaver_name, party FROM stock_movements WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`, [mvIds])
+    ? await q(`SELECT id, lot_id, direction, kind, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code
+                 FROM stock_movements WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`, [mvIds])
     : { rows: [] };
-  const movements = new Map<number, MovementRow>(mvRes.rows.map((r) => [Number(r.id), { ...r, id: Number(r.id), sr_no: r.sr_no == null ? null : Number(r.sr_no), pieces: r.pieces == null ? null : Number(r.pieces) }]));
+  const n = (v: unknown) => (v == null ? null : Number(v));
+  const movements = new Map<number, MovementRow>(mvRes.rows.map((r) => [Number(r.id), {
+    ...r, id: Number(r.id), sr_no: n(r.sr_no), pieces: n(r.pieces), register_pct: n(r.register_pct), bill_pct: n(r.bill_pct), billed_meters: n(r.billed_meters),
+  } as MovementRow]));
 
   // Quality / design belong to the lot: a change on a movement row edits its lot.
   type LotChange = { lot: string; field: LotField; value: Value; origin: { target: 'movement' | 'lot'; id: number | string; field: string } };
@@ -108,6 +120,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     if (c.target === 'lot') { lotChanges.push({ lot: c.id, field: c.field, value: c.value, origin: { target: 'lot', id: c.id, field: c.field } }); continue; }
     const m = movements.get(c.id);
     if (!m) { problem(c, `Movement #${c.id} no longer exists. Reload the ledger.`); continue; }
+    if (m.kind === 'adjustment') { problem(c, 'Opening adjustments (from the Incoming register) can’t be edited.'); continue; }
     if (c.field === 'quality' || c.field === 'design') lotChanges.push({ lot: m.lot_id, field: c.field, value: c.value, origin: { target: 'movement', id: c.id, field: c.field } });
     else mvChanges.push({ m, field: c.field, value: c.value, origin: { target: 'movement', id: c.id, field: c.field, message: '' } });
   }
@@ -126,8 +139,14 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
       if (field === 'sr_no') v = srValue(c.value);
       else if (field === 'pieces') v = piecesValue(c.value);
       else if (field === 'source_doc_id') v = challanCode(c.value);
+      else if (IN_ONLY.includes(field) && m.direction !== 'IN') throw new LedgerError(`${FIELD_LABEL[field]} is only for incoming (IN) entries.`);
+      else if (OUT_ONLY.includes(field) && field !== 'party' && m.direction !== 'OUT') throw new LedgerError(`${FIELD_LABEL[field]} is only for outgoing (OUT) entries.`);
+      else if (field === 'register_pct') v = registerPctValue(c.value);
+      else if (field === 'loc_code') v = locCodeValue(c.value);
+      else if (field === 'bill_pct') v = billPctValue(c.value);
+      else if (field === 'billed_meters') v = billedMetersValue(c.value);
+      else if (field === 'lot_status_code') v = lotStatusCodeValue(c.value);
       else if (field === 'mill_name' || field === 'weaver_name') {
-        if (m.direction !== 'IN') throw new LedgerError(`${FIELD_LABEL[field]} is only for incoming (IN) entries.`);
         v = await canonicalName(q, field, nameValue(c.value, FIELD_LABEL[field]), editedMvIds);
       } else {
         if (m.direction !== 'OUT') throw new LedgerError('Party is only for outgoing (OUT) entries. Use Mill / Weaver for incoming.');
@@ -211,6 +230,9 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
       // Column names come from the MOVEMENT_FIELDS whitelist, never from the request text.
       const cols = sets.map(([f], i) => `${f} = $${i + 2}`).join(', ');
       await q(`UPDATE stock_movements SET ${cols} WHERE id = $1`, [id, ...sets.map(([, v]) => v)]);
+      // The lot keeps the location code of its incoming entry (Lots & balance shows it).
+      const loc = sets.find(([f]) => f === 'loc_code');
+      if (loc) await q(`UPDATE lots SET loc_code = $2 WHERE lot_id = $1`, [mvSet.get(id)!.m.lot_id, loc[1]]);
     }
     for (const [lotId, sets] of lotSet) {
       const cols = sets.map(([f], i) => `${f} = $${i + 2}`).join(', ');

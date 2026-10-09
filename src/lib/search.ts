@@ -96,7 +96,7 @@ const SCREEN_WORDS: { tab: Tab; hash?: string; title: string; words: string; cap
   { tab: 'people', title: 'People & CCTV', words: 'people cctv efficiency attendance' },
   { tab: 'firm', hash: 'firm=firm', title: 'My firm · Firm & billing', words: 'my firm billing gst gstin bank invoice numbering' },
   { tab: 'firm', hash: 'firm=parties', title: 'My firm · Parties', words: 'parties party clients customers buyers' },
-  { tab: 'firm', hash: 'firm=places', title: 'My firm · Markets & locations', words: 'markets locations places godown shop' },
+  { tab: 'firm', hash: 'firm=places', title: 'My firm · Markets & locations', words: 'markets locations places shop shops pipe landmark' },
   { tab: 'firm', hash: 'firm=policy', title: 'My firm · Policy', words: 'policy rules low stock alerts knowledge' },
   { tab: 'firm', hash: 'firm=team', title: 'My firm · Team', words: 'team workers supervisors sections sign ups users staff' },
   { tab: 'settings', title: 'Settings', words: 'settings account password language theme preferences' },

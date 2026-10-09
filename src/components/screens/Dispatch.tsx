@@ -14,6 +14,7 @@ import type { Allocation, Dispatch as DispatchRow, Invoice, Order, Party } from 
 import s from './Dispatch.module.css';
 import { LotPicker } from '../LotPicker';
 import { useLotSearch, useLotsById } from '@/lib/useLots';
+import { WA_STATUS_LABEL, WA_STATUS_TONE } from '@/lib/whatsapp/status';
 
 type InvoiceRow = Invoice & { days_overdue: number; exported_at: string | null };
 type View = 'dispatches' | 'invoices';
@@ -95,6 +96,20 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
   const q = who(ctx.role, actor);
 
   const [invFor, setInvFor] = useState<DispatchRow | null>(null);
+  // WhatsApp column: when connected, or when a message was sent earlier.
+  const waOn = !!ctx.d.status?.whatsapp;
+  const showWa = waOn || rows.some((r) => r.wa);
+  const [waBusy, setWaBusy] = useState<number | null>(null);
+  const sendWa = async (d: DispatchRow) => {
+    setWaBusy(d.id);
+    try {
+      const r = await apiSend<{ ok: boolean; message: string }>('/api/whatsapp/dispatch', 'POST', { dispatch_id: d.id });
+      ctx.d.showToast(r.message, r.ok ? 'success' : 'danger');
+      onChanged();
+    } catch (e) {
+      ctx.d.showToast(e instanceof Error ? e.message : 'Could not send.', 'danger');
+    } finally { setWaBusy(null); }
+  };
   const createInvoice = async (d: DispatchRow, rates: Record<string, number>) => {
     setBusy(d.id);
     try {
@@ -126,7 +141,7 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
             <thead>
               <tr>
                 <th>Date</th><th>Party</th><th>Lots</th><th className="r">Meters</th><th>Challan</th>
-                <th className="d">Transport</th>{owner && <th>Invoice</th>}<th className="r">Documents</th>
+                <th className="d">Transport</th>{owner && <th>Invoice</th>}{showWa && <th>WhatsApp</th>}<th className="r">Documents</th>
               </tr>
             </thead>
             <tbody>
@@ -144,6 +159,15 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
                   {owner && (
                     <td data-label="Invoice" className="num">
                       {d.invoice_no ?? <button className="btn sm" disabled={busy === d.id} onClick={() => setInvFor(d)}>{busy === d.id ? 'Creating…' : 'Create'}</button>}
+                    </td>
+                  )}
+                  {showWa && (
+                    <td data-label="WhatsApp">
+                      <div className="wa-cell" data-wa-dispatch={d.id}>
+                        {d.wa ? <span title={d.wa.error ?? undefined}><Pill tone={WA_STATUS_TONE[d.wa.status]}>{WA_STATUS_LABEL[d.wa.status]}</Pill></span> : <span className="muted small">{d.party_has_phone ? 'Not sent' : 'No number'}</span>}
+                        {waOn && d.party_has_phone && <button className="btn sm" disabled={waBusy === d.id} onClick={() => sendWa(d)}>{waBusy === d.id ? 'Sending…' : d.wa ? 'Send again' : 'Send'}</button>}
+                      </div>
+                      {d.wa?.status === 'failed' && d.wa.error && <div className="wa-err tiny">{d.wa.error.slice(0, 140)}</div>}
                     </td>
                   )}
                   <td data-label="Documents" className="r">
@@ -270,11 +294,11 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
     const rateMap = Object.fromEntries(Object.entries(rates).filter(([, x]) => parseFloat(x) > 0).map(([k, x]) => [k, parseFloat(x)]));
     setBusy(true);
     try {
-      const r = await apiSend<{ dispatch: DispatchRow; invoice?: Invoice; note?: string | null }>('/api/dispatches', 'POST', {
+      const r = await apiSend<{ dispatch: DispatchRow; invoice?: Invoice; note?: string | null; whatsapp?: { queued: boolean; message: string } | null }>('/api/dispatches', 'POST', {
         party: party.trim(), order_id: order?.id ?? null, lines: ls.map((l) => ({ lot_id: l.lot_id, meters: parseFloat(l.meters) })),
         ...f, packages: f.packages === '' ? null : Number(f.packages), create_invoice: owner && invoice, rates: owner && invoice ? rateMap : undefined, role, actor,
       });
-      d.showToast(`Dispatched ${fmt(r.dispatch.meters, 1)} m · challan ${r.dispatch.challan_no}${r.invoice ? ` · invoice ${r.invoice.invoice_no}` : ''}`);
+      d.showToast(`Dispatched ${fmt(r.dispatch.meters, 1)} m · challan ${r.dispatch.challan_no}${r.invoice ? ` · invoice ${r.invoice.invoice_no}` : ''}${r.whatsapp?.queued ? ' · WhatsApp to the party on its way' : ''}`);
       if (r.note) d.showToast(r.note, 'warning');
       d.refresh();
       onDone();

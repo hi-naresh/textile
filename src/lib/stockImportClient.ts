@@ -1,9 +1,9 @@
 'use client';
 
 // Browser side of the Excel import: check the file, then send the checked rows in chunks with progress.
-import type { ImportRow, ValidateResult } from './stock-import';
+import type { AnyImportRow, FixFile, ValidateResult } from './stock-import';
 
-export type { ImportRow, ValidateResult };
+export type { AnyImportRow, FixFile, ValidateResult };
 export const CHUNK_SIZE = 500;
 
 export async function checkImportFile(file: File): Promise<ValidateResult> {
@@ -18,7 +18,7 @@ export async function checkImportFile(file: File): Promise<ValidateResult> {
 export interface ImportProgress { done: number; total: number; saved: number; skipped: number; in: number; out: number }
 export interface ImportOutcome extends ImportProgress { ok: boolean; error?: string; failedRow?: number; failedChunk?: { from: number; to: number } }
 
-async function postChunk(batch: string, rows: ImportRow[]) {
+async function postChunk(batch: string, rows: AnyImportRow[]) {
   const res = await fetch('/api/stock/import/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch, rows }) });
   const data = await res.json().catch(() => ({}));
   return { res, data };
@@ -28,7 +28,7 @@ async function postChunk(batch: string, rows: ImportRow[]) {
  * Send rows in order, CHUNK_SIZE at a time; each chunk is saved all-or-nothing on the server.
  * A network failure is retried twice (safe: the server skips rows it already saved). Stops at the first failing chunk.
  */
-export async function commitImport(batch: string, rows: ImportRow[], onProgress: (p: ImportProgress) => void, shouldStop?: () => boolean): Promise<ImportOutcome> {
+export async function commitImport(batch: string, rows: AnyImportRow[], onProgress: (p: ImportProgress) => void, shouldStop?: () => boolean): Promise<ImportOutcome> {
   const p: ImportProgress = { done: 0, total: rows.length, saved: 0, skipped: 0, in: 0, out: 0 };
   onProgress({ ...p });
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
@@ -51,4 +51,21 @@ export async function commitImport(batch: string, rows: ImportRow[], onProgress:
     onProgress({ ...p });
   }
   return { ...p, ok: true };
+}
+
+/** "Rows to fix": the skipped rows as an Excel file (same columns as the uploaded file + why each was skipped). */
+export async function downloadFixFile(fileName: string, fix: FixFile) {
+  const res = await fetch('/api/stock/import/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fileName, ...fix }) });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || 'Could not make the file.');
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `rows-to-fix-${fileName.replace(/\.xlsx$/i, '')}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

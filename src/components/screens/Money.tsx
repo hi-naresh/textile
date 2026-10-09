@@ -3,7 +3,7 @@
 // Money (owner only): Outstanding (credit & ageing, reminders, statements), Payments, Margin.
 import React, { useEffect, useState } from 'react';
 import Icon from '../Icon';
-import { Empty, Kpi, PageHead, Pill, Segmented, Sheet, fmt, inr, type Tone } from '../ui';
+import { Empty, Kpi, PageHead, Pill, Segmented, Sheet, dayTime, fmt, inr, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
 import { apiSend, flashWhenReady, useApi, useHashLink, who } from '@/lib/useApi';
 import { actorId } from '@/lib/useTextileData';
@@ -11,6 +11,8 @@ import type { Party, Payment } from '@/lib/domain';
 import type { BucketKey, CreditTotals, PartyCredit } from '@/lib/money/credit';
 import type { MarginBy, MarginRow } from '@/lib/money/costing';
 import type { Reminder } from '@/lib/money/reminder';
+import type { LastMessage } from '@/lib/whatsapp/send';
+import { WA_STATUS_LABEL, WA_STATUS_TONE } from '@/lib/whatsapp/status';
 import s from './Money.module.css';
 
 type View = 'out' | 'pay' | 'margin';
@@ -158,16 +160,35 @@ function Outstanding({ ctx, data, error, loading, onPay, onRemind }: { ctx: Ctx;
 }
 
 // ---------- Reminder ----------
+type ReminderView = Reminder & { wa?: { connected: boolean; has_number: boolean; last: LastMessage | null } };
+
 function ReminderPanel({ ctx, party }: { ctx: Ctx; party: PartyCredit }) {
   const [lang, setLang] = useState<Lang>(ctx.lang);
   const [polish, setPolish] = useState(false);
+  const [sending, setSending] = useState(false);
   const url = `/api/credit/reminder?party_id=${party.party_id}&lang=${lang}${polish ? '&polish=1' : ''}&${who(ctx.role, actorId(ctx.role))}`;
-  const { data, error, loading } = useApi<Reminder>(url);
+  const { data, error, loading, reload } = useApi<ReminderView>(url);
   const aiOn = !!ctx.d.status?.aiWriting;
+  const wa = data?.wa;
+  const canSend = !!wa?.connected && wa.has_number;
   const copy = async () => {
     if (!data) return;
     try { await navigator.clipboard.writeText(data.text); ctx.d.showToast('Reminder copied'); } catch { ctx.d.showToast('Could not copy — select the text and copy it', 'warning'); }
   };
+  const sendWa = async (force = false) => {
+    setSending(true);
+    try {
+      const r = await apiSend<{ ok: boolean; message: string; needs_force?: boolean; last_at?: string }>('/api/whatsapp/reminder', 'POST', { party_id: party.party_id, force });
+      if (r.needs_force) {
+        const when = r.last_at ? new Date(r.last_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'recently';
+        if (window.confirm(`A reminder already went to ${party.name} on ${when}. Send another one now?`)) { setSending(false); return sendWa(true); }
+      } else ctx.d.showToast(r.message, r.ok ? 'success' : 'danger');
+      reload();
+    } catch (e) {
+      ctx.d.showToast(e instanceof Error ? e.message : 'Could not send.', 'danger');
+    } finally { setSending(false); }
+  };
+  const last = wa?.last;
   return (
     <div className="stack-16">
       <div className="fld">Language
@@ -180,11 +201,23 @@ function ReminderPanel({ ctx, party }: { ctx: Ctx; party: PartyCredit }) {
       {error && <span className="small" style={{ color: 'var(--bad)' }}>{error}</span>}
       <textarea className={s.draft} aria-label="Reminder text" readOnly value={loading && !data ? 'Preparing…' : data?.text ?? ''} />
       {!party.phone && <span className="muted small">No phone saved for {party.name}. WhatsApp will ask you to pick the chat. Add the number in My firm → Parties.</span>}
+      {last && (
+        <div className="wa-status small" data-wa-last>
+          <span className="t2">Last WhatsApp reminder {dayTime(last.at)}</span>
+          <Pill tone={WA_STATUS_TONE[last.status]}>{WA_STATUS_LABEL[last.status]}</Pill>
+          <button type="button" className="linkbtn small" onClick={reload}>Refresh</button>
+          {last.status === 'failed' && last.error && <span className="wa-err tiny">{last.error}</span>}
+        </div>
+      )}
       <div className="row-8" style={{ flexWrap: 'wrap' }}>
+        {canSend && <button className="btn primary" disabled={!data || sending} onClick={() => sendWa(false)}>{sending ? 'Sending…' : 'Send on WhatsApp'}</button>}
+        <a className={`btn ${canSend ? '' : 'primary'} ${!data ? 'disabled' : ''}`} aria-disabled={!data} href={data?.whatsapp_url ?? '#'} target="_blank" rel="noreferrer">Open in WhatsApp</a>
         <button className="btn" disabled={!data} onClick={copy}>Copy</button>
-        <a className={`btn primary ${!data ? 'disabled' : ''}`} aria-disabled={!data} href={data?.whatsapp_url ?? '#'} target="_blank" rel="noreferrer">Open WhatsApp</a>
         {aiOn && <button className="btn" disabled={loading || polish} onClick={() => setPolish(true)}>{polish && data?.polished ? 'Reworded' : 'Reword with AI'}</button>}
       </div>
+      {wa && (canSend
+        ? <span className="muted small">“Send on WhatsApp” sends your approved reminder message (party, amount pending and bills) straight from the firm’s WhatsApp number. “Open in WhatsApp” opens the text above for you to send yourself.</span>
+        : <span className="muted small">{wa.connected ? `No mobile number saved for ${party.name}, so it can’t be sent from the app.` : 'WhatsApp not connected — “Open in WhatsApp” opens the message ready to send.'}</span>)}
       {polish && data && !data.polished && !loading && <span className="muted small">AI rewording was not used — the standard text is shown.</span>}
     </div>
   );

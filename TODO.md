@@ -18,11 +18,11 @@ Last updated: 9 Oct 2026
 
 Validation and rollout:
 
-- [x] 15 repeatable regression tests: persistence, reset, retries, concurrent turns, expired leases, scope isolation, language preferences, date boundaries, help, Markdown, authenticated handlers and simulated model/tool exchanges. Run `npm run test:chat` with a disposable local `DATABASE_URL` ending in `_test` (see `tests/chat/README.md`).
+- [x] 16 repeatable regression tests: persistence, reset, retries, concurrent turns, expired leases, scope isolation, language preferences, date boundaries, help, Markdown, authenticated handlers and simulated model/tool exchanges. Run `npm run test:chat` with a disposable local `DATABASE_URL` ending in `_test` (see `tests/chat/README.md`).
 - [x] Desktop and mobile Chrome checks against a production build: close/reopen, reload, follow-up help, navigation links, New chat and clearing across reloads.
 - [x] Migration `012_chat_conversations.sql` applied successfully on an isolated PostgreSQL database.
 - [x] TypeScript, lint and production build pass; lint retains 15 existing warnings in older black-box test files.
-- [ ] **Live Gemini acceptance:** run the reported Gujarati/Hinglish examples with the configured service. Local model/tool simulation passes; the external test awaits explicit approval after automatic approval review blocked sending the test payload to Gemini.
+- [ ] **Live Gemini acceptance:** run the reported Gujarati/Hinglish examples with the configured service. Local model/tool simulation passes; live service testing is deferred at the user’s request to keep testing local.
 - [ ] **Configured database migration:** read-only inspection on 9 Oct confirms migration `012` and both chat tables are absent. Apply the tested migration when rolling out this change; it is included in the normal build/start migration flow. No deployment performed.
 - [ ] Check speech recognition and spoken replies on the firm's actual phones; browser validation above covers typed chat.
 

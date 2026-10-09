@@ -22,6 +22,8 @@ if (!['localhost', '127.0.0.1'].includes(url.hostname) || !url.pathname.endsWith
 process.env.DB_QUIET = '1';
 process.env.GEMINI_API_KEY = '';
 const id = `chat-test-${randomUUID().slice(0, 8)}`;
+const marketCode = `T${randomUUID().slice(0, 5).toUpperCase()}`;
+const marketName = `Chat Test Market ${marketCode}`;
 const owner: Scope = { role: 'owner', sections: [], userId: id };
 const supervisor: Scope = { role: 'supervisor', sections: ['folding'], userId: `${id}-s` };
 const answer: ChatAnswer = { answer: 'Saved answer', rows: [], lang: 'en', via: 'rules', route: 'help' };
@@ -39,6 +41,8 @@ before(async () => {
   card = (await query("INSERT INTO job_cards (lot_id, worker_id, process, meters_in, ts_created) VALUES ($1, $1, 'Folding', 600, CURRENT_DATE - 9) RETURNING id", [id])).rows[0].id;
   await query("INSERT INTO job_cards (lot_id, worker_id, process, meters_in) VALUES ($1, $1, 'Packing', 200)", [`${id}-p`]);
   await query("INSERT INTO stock_movements (lot_id, direction, meters, source_doc_id, ts) VALUES ($1, 'IN', 100, $2, CURRENT_DATE - 1), ($1, 'IN', 200, $3, CURRENT_DATE)", [id, `${id}-y`, `${id}-t`]);
+  await query('INSERT INTO markets (name, code) VALUES ($1, $2)', [marketName, marketCode]);
+  await query("INSERT INTO lot_locations (lot_id, location, stage) VALUES ($1, $2, 'arrival')", [id, `${marketCode} 245 · Pipe 3`]);
   const s = await createSession(query, id, 'client', request('GET'));
   cookie = `tb_at=${s.tokens.access}`;
   const w = await createSession(query, `${id}-w`, 'client', request('GET'));
@@ -48,6 +52,8 @@ after(async () => {
   setAccessOff({});
   await query('DELETE FROM job_cards WHERE lot_id = ANY($1::text[])', [[id, `${id}-p`]]);
   await query('DELETE FROM stock_movements WHERE lot_id = $1', [id]);
+  await query('DELETE FROM lot_locations WHERE lot_id = $1', [id]);
+  await query('DELETE FROM markets WHERE code = $1', [marketCode]);
   await query('DELETE FROM lots WHERE lot_id = ANY($1::text[])', [[id, `${id}-p`]]);
   await query('DELETE FROM workers WHERE id = ANY($1::text[])', [[id, `${id}-p`]]);
   await query('DELETE FROM chat_audit WHERE user_id = ANY($1::text[])', [[id, `${id}-s`, `${id}-w`]]);
@@ -104,6 +110,17 @@ test('fallback answers how-many queries and preserves yesterday boundaries', asy
   assert.equal(result.result.route, 'query');
   assert.match(result.result.answer, /yesterday/);
   assert.equal(result.result.rows[0].value, 100);
+});
+
+test('merged market names and initials filter stock in tools and fallback replies', async () => {
+  for (const location of [marketName, marketCode]) {
+    const tool = await executeTool('query_data', { metric: 'stock', filters: { location } }, owner);
+    assert.equal(tool.rows?.[0].value, 300);
+    const fallback = await answerQuestion(`stock in ${location}`, owner, 'test', context);
+    assert.equal(fallback.result.route, 'query');
+    assert.equal(fallback.result.rows[0].value, 300);
+  }
+  assert.doesNotMatch(appHelp('owner', 'job-cards')[0].steps.join(' '), /returns to the godown/);
 });
 
 test('follow-up help uses the preceding topic without AI', async () => {

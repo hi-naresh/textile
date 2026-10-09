@@ -10,6 +10,8 @@ export interface Lot {
   location: string | null; // current physical location (latest lot_locations row)
   location_stage: LocationStage | null;
   location_ts: string | null;
+  loc_code?: string | null; // location code from the Incoming register
+  reg_lot_no?: string | null; // lot no. as written in the register (lot_id may carry "-SR<n>")
 }
 
 /** Stock on hand at a glance (GET /api/stock). low_lots: 0 < balance < the firm's low-stock level, 20 lowest. */
@@ -173,6 +175,7 @@ export interface Toast {
 export interface Features {
   photoReading: boolean; // a photo can be read (OCR or AI) and stored
   aiWriting: boolean; // AI can polish text (reminders, replies)
+  whatsapp?: boolean; // WhatsApp Cloud API connected: messages are sent from the app (else wa.me drafts)
 }
 
 export type AiState = 'connected' | 'missing' | 'invalid_key' | 'model_unavailable' | 'unreachable' | 'demo';

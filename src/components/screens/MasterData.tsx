@@ -96,7 +96,7 @@ function Parties({ list, error, send, link }: { list: Party[] | null; error: str
   return (
     <section className={`card pad stack-16 ${s.full}`}>
       <div className={s.head}>
-        <div className="stack-4 grow"><h2 className="h2">Parties</h2><span className="muted small">Clients you sell to: phone, GSTIN, credit limit and days.</span></div>
+        <div className="stack-4 grow"><h2 className="h2">Parties</h2><span className="muted small">Clients you sell to: mobile (WhatsApp), GSTIN, credit limit and days.</span></div>
         <button className="btn primary" onClick={() => setEdit('new')}><Icon name="plus" size={16} strokeWidth={2} />Add party</button>
       </div>
       <input className={`input ${s.search}`} aria-label="Search parties" placeholder="Search name, city, phone or GSTIN" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -144,7 +144,7 @@ function PartyForm({ party, send, onDone }: { party: Party | null; send: Send; o
     }}>
       <label className="fld">Name<input value={f.name} maxLength={150} onChange={set('name')} required autoFocus={!party} /></label>
       <div className={s.formGrid}>
-        <label className="fld">Phone<input inputMode="tel" value={f.phone} onChange={set('phone')} placeholder="98250 12345" /></label>
+        <label className="fld">Mobile (WhatsApp)<input inputMode="tel" value={f.phone} onChange={set('phone')} placeholder="98250 12345" /><span className={s.fldHint}>Reminders and dispatch messages go here</span></label>
         <label className="fld">City<input value={f.city} maxLength={100} onChange={set('city')} /></label>
         <label className={`fld ${s.span2}`}>GSTIN
           <input className="num" value={f.gstin} maxLength={18} onChange={set('gstin')} placeholder="24AAACC1206D1ZM" style={{ textTransform: 'uppercase' }} />

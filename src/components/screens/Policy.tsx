@@ -1,12 +1,14 @@
 'use client';
 
 // My firm → Policy (owner): the firm's rules (flags, auto-saving photo reads, time-saved baseline),
-// stock alerts, and firm knowledge notes the chat answers from.
+// stock alerts, WhatsApp switches (reminders, dispatch messages, morning summary) and firm knowledge notes the chat answers from.
 import React, { useCallback, useEffect, useState } from 'react';
 import Icon from '../Icon';
 import type { Ctx } from '../ctx';
 import type { KnowledgeDoc } from '@/lib/useTextileData';
 import { LIMITS } from '@/lib/config';
+import { apiSend, useApi } from '@/lib/useApi';
+import { Pill, dayTime } from '../ui';
 import { StockAlerts } from './MasterData';
 import { Toggle } from './MyFirm';
 
@@ -15,6 +17,7 @@ export function PolicyPart({ ctx }: { ctx: Ctx }) {
     <div className="settings-grid">
       <Rules ctx={ctx} />
       <StockAlerts ctx={ctx} />
+      <WhatsAppCard ctx={ctx} />
       <Knowledge ctx={ctx} />
     </div>
   );
@@ -77,6 +80,91 @@ function Knowledge({ ctx }: { ctx: Ctx }) {
         <textarea className="input" aria-label="Note text" rows={3} placeholder="The note…" value={body} maxLength={5000} onChange={(e) => setBody(e.target.value)} />
         <div className="row-8"><button className="btn primary" type="submit" disabled={!title.trim() || !body.trim()}><Icon name="plus" size={16} strokeWidth={2} />Add note</button></div>
       </form>
+    </section>
+  );
+}
+
+// ---------- WhatsApp ----------
+interface WaView {
+  connected: boolean;
+  settings: { auto_reminders: boolean; reminder_days: number; dispatch_messages: boolean; morning_summary: boolean; summary_extra: string[] };
+  owner_phone: string | null; gap_days: number;
+  incoming: { id: number; from: string; name: string | null; body: string; at: string }[];
+}
+
+/** Owner switches for messages the app sends on WhatsApp by itself, plus a test message. */
+function WhatsAppCard({ ctx }: { ctx: Ctx }) {
+  const [tick, setTick] = useState(0);
+  const { data, error } = useApi<WaView>(ctx.role === 'owner' ? '/api/whatsapp' : null, tick);
+  if (ctx.role !== 'owner') return null;
+  if (error) return <section className="card pad"><span className="muted small">{error}</span></section>;
+  if (!data) return <section className="card pad"><span className="muted small">Loading WhatsApp…</span></section>;
+  return <WhatsAppForm key={JSON.stringify(data.settings)} ctx={ctx} v={data} onSaved={() => setTick((t) => t + 1)} />;
+}
+
+function WhatsAppForm({ ctx, v, onSaved }: { ctx: Ctx; v: WaView; onSaved: () => void }) {
+  const st = v.settings;
+  const [days, setDays] = useState(String(st.reminder_days));
+  const [extra, setExtra] = useState(st.summary_extra.join(', '));
+  const [busy, setBusy] = useState<string | null>(null);
+  const save = async (body: Record<string, unknown>, ok: string) => {
+    setBusy(Object.keys(body)[0]);
+    try { await apiSend('/api/whatsapp', 'PUT', body); ctx.d.showToast(ok); onSaved(); } catch (e) { ctx.d.showToast(e instanceof Error ? e.message : 'Could not save.', 'danger'); } finally { setBusy(null); }
+  };
+  const test = async () => {
+    setBusy('test');
+    try { const r = await apiSend<{ message: string }>('/api/whatsapp/test', 'POST', {}); ctx.d.showToast(r.message); onSaved(); } catch (e) { ctx.d.showToast(e instanceof Error ? e.message : 'Could not send.', 'danger'); } finally { setBusy(null); }
+  };
+  const row = (key: 'auto_reminders' | 'dispatch_messages' | 'morning_summary', title: string, sub: React.ReactNode) => (
+    <div className="wa-row">
+      <div className="stack-2 grow min0"><span className="strong">{title}</span><span className="muted small">{sub}</span></div>
+      <Toggle on={st[key]} label={title} onChange={(on) => { if (!busy) void save({ [key]: on }, `${title}: ${on ? 'on' : 'off'}`); }} />
+    </div>
+  );
+  const daysDirty = days !== String(st.reminder_days);
+  const extraDirty = extra.trim() !== st.summary_extra.join(', ');
+  return (
+    <section className="card pad stack-16" data-wa-card>
+      <div className="wa-head">
+        <div className="stack-4 min0"><h2 className="h2">WhatsApp</h2><span className="muted small">Messages the app sends for you on WhatsApp.</span></div>
+        <Pill tone={v.connected ? 'good' : 'neutral'}>{v.connected ? 'Connected' : 'Not connected'}</Pill>
+      </div>
+      {!v.connected && <div className="alert wa-note">WhatsApp not connected. Reminders open in WhatsApp for you to send yourself. Your developer can connect it; these switches work once it is.</div>}
+      <div className="stack-12">
+        {row('auto_reminders', 'Payment reminders by themselves', <>Every morning, to parties with a bill overdue by {st.reminder_days}+ days. Each party at most once in {v.gap_days} days.</>)}
+        {st.auto_reminders && (
+          <form className="wa-inline" onSubmit={(e) => { e.preventDefault(); void save({ reminder_days: Number(days) }, 'Days saved'); }}>
+            <label className="fld">Overdue by at least (days)<input className="num" inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} /></label>
+            <button className="btn" type="submit" disabled={!daysDirty || busy != null}>Save</button>
+          </form>
+        )}
+        {row('dispatch_messages', 'Dispatch message to the party', 'When a dispatch is saved: challan no., date, lots, meters and transport. No rates or ₹. Parties without a mobile number are skipped.')}
+        {row('morning_summary', 'Morning summary to me', <>About 7 am: stock, yesterday in / out, orders due, overdue payments, alerts.{v.owner_phone ? ` To ${v.owner_phone}.` : ' Add your mobile number in My firm → Team first.'}</>)}
+        {st.morning_summary && (
+          <form className="wa-inline" onSubmit={(e) => { e.preventDefault(); void save({ summary_extra: extra.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean) }, 'Numbers saved'); }}>
+            <label className="fld">Also send to (optional)<input inputMode="tel" value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="98250 12345, 98790 54321" /><span className="muted small">Up to 5 mobile numbers, comma between them.</span></label>
+            <button className="btn" type="submit" disabled={!extraDirty || busy != null}>Save</button>
+          </form>
+        )}
+      </div>
+      <div className="row-8" style={{ flexWrap: 'wrap' }}>
+        <button className="btn" disabled={!v.connected || busy != null} onClick={test}>{busy === 'test' ? 'Sending…' : 'Send me a test message'}</button>
+        {v.connected && !v.owner_phone && <span className="muted small">Needs your mobile number.</span>}
+      </div>
+      {v.incoming.length > 0 && (
+        <div className="stack-8">
+          <span className="strong small">Last messages received</span>
+          <div className="list">
+            {v.incoming.map((m) => (
+              <div key={m.id} className="list-row wa-msg">
+                <div className="stack-2 grow min0"><span className="small"><b>{m.name ?? m.from}</b>{m.name ? <span className="muted"> · {m.from}</span> : null}</span><span className="t2 small wa-body">{m.body}</span></div>
+                <span className="muted tiny">{dayTime(m.at)}</span>
+              </div>
+            ))}
+          </div>
+          <span className="muted tiny">The app only keeps these here — it does not answer them. Call or message the party yourself.</span>
+        </div>
+      )}
     </section>
   );
 }

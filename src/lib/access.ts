@@ -34,13 +34,13 @@ export function firmConfig(): FirmConfig { return current; }
 export function firm() { return current.firm; }
 export function owner() { return current.owner; }
 export function rules() { return current.rules; }
-export function locationPresets() { return current.locationPresets; }
+/** Every market (also switched-off ones), with shops — for labels and My firm. */
 export function markets() { return current.markets ?? []; }
-/** Locations a person can pick: the firm's fixed list (+ Floor, used by job cards). */
-export function allLocations(): string[] {
-  const l = current.locationPresets;
-  return l.some((x) => x.toLowerCase() === 'floor') ? l : [...l, 'Floor'];
-}
+/** Markets a person can pick a location in. */
+export function activeMarkets() { return (current.markets ?? []).filter((m) => m.active); }
+/** Owner and supervisors may add a shop no. to a market while picking a location; only the owner adds / changes markets. */
+export function canAddShops(role: Role) { return role === 'owner' || role === 'supervisor'; }
+export function canManageMarkets(role: Role) { return can(role, 'settings.manage'); }
 export function activeSupervisors() { return current.supervisors.filter((s) => s.active); }
 export function sectionNames(): string[] { return current.sections.filter((s) => s.active).map((s) => s.name); }
 
@@ -136,7 +136,7 @@ export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string
   { layer: 'Control', cap: 'capture.confirm', label: 'Confirm AI reads to ledger', owner: 'Full + override', supervisor: 'Section', worker: '—' },
   { layer: 'Control', cap: 'jobs.manage', label: 'Create / close job cards', owner: 'Full', supervisor: 'Section', worker: '—' },
   { layer: 'Control', cap: 'work.allot', label: 'Allot work', owner: 'Full', supervisor: 'Section crew', worker: '—' },
-  { layer: 'Control', cap: 'lots.move', label: 'Move lots (godown / shop / floor)', owner: 'Full', supervisor: 'Via job cards', worker: '—' },
+  { layer: 'Control', cap: 'lots.move', label: 'Move lots (market / shop / pipe)', owner: 'Full', supervisor: 'Via job cards', worker: '—' },
   { layer: 'Control', cap: 'ledger.edit', label: 'Manual ledger entries', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'settings.manage', label: 'Firm settings & rules', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'users.manage', label: 'Users, roles & sections', owner: 'Full', supervisor: '—', worker: '—' },

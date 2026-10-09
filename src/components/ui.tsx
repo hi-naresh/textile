@@ -38,8 +38,8 @@ export const dayTime = (ts: string) => {
 
 export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join('').toUpperCase();
 
-export function Pill({ tone = 'neutral', children, className = '' }: { tone?: Tone; children: React.ReactNode; className?: string }) {
-  return <span className={`pill ${tone} ${className}`}>{children}</span>;
+export function Pill({ tone = 'neutral', children, className = '', title }: { tone?: Tone; children: React.ReactNode; className?: string; title?: string }) {
+  return <span className={`pill ${tone} ${className}`} title={title}>{children}</span>;
 }
 
 export function LockTag({ label = 'Owner only' }: { label?: string }) {

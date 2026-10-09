@@ -6,10 +6,10 @@
 import React, { useMemo, useState } from 'react';
 import { Pill, Segmented, dayTime } from '@/components/ui';
 import { useApi } from '@/lib/useApi';
-import { APIS, CRONS, ENV_VARS, FEATURES, MIGRATIONS, type DocRole } from '@/lib/docs/catalog';
+import { APIS, CRONS, ENV_VARS, FEATURES, MIGRATIONS, OPEN_QUESTIONS, type DocRole } from '@/lib/docs/catalog';
 import { AGENT_CATALOG } from '@/lib/agents/catalog';
 
-type Section = 'features' | 'agents' | 'apis' | 'data' | 'setup';
+type Section = 'features' | 'agents' | 'apis' | 'data' | 'setup' | 'questions';
 interface Live {
   migrations: { name: string; applied_at: string }[];
   env: { name: string; set: boolean }[];
@@ -34,6 +34,7 @@ export function DocsPanel() {
   const applied = new Map((live?.migrations ?? []).map((m) => [m.name, m.applied_at]));
   const migNames = [...new Set([...MIGRATIONS.map((m) => m.name), ...applied.keys()])].sort();
   const envSet = new Map((live?.env ?? []).map((e) => [e.name, e.set]));
+  const questions = OPEN_QUESTIONS.filter((x) => has(q, x.topic, x.see, x.now, x.ask));
 
   return (
     <div className="stack-16">
@@ -50,7 +51,7 @@ export function DocsPanel() {
           </select>
         </div>
         <Segmented label="Docs section" value={section} onChange={setSection} className="fit docs-tabs"
-          options={[{ value: 'features', label: `Screens & features (${features.length})` }, { value: 'agents', label: `Agents (${agents.length})` }, { value: 'apis', label: `APIs (${apis.length})` }, { value: 'data', label: 'Migrations' }, { value: 'setup', label: 'Cron & env' }]} />
+          options={[{ value: 'features', label: `Screens & features (${features.length})` }, { value: 'agents', label: `Agents (${agents.length})` }, { value: 'apis', label: `APIs (${apis.length})` }, { value: 'data', label: 'Migrations' }, { value: 'setup', label: 'Cron & env' }, { value: 'questions', label: `Open questions (${questions.length})` }]} />
         {error && <div className="alert bad">{error}</div>}
       </section>
 
@@ -129,6 +130,17 @@ export function DocsPanel() {
               <tr key={n}><td className="mono tiny">{n}</td><td>{MIGRATIONS.find((m) => m.name === n)?.what ?? <span className="t-warn">Not documented yet</span>}</td>
                 <td>{live ? (applied.has(n) ? dayTime(applied.get(n)!) : <Pill tone="bad">Not applied</Pill>) : '…'}</td></tr>
             ))}</tbody>
+          </table></div>
+        </section>
+      )}
+
+      {section === 'questions' && (
+        <section className="card pad stack-12">
+          <h2 className="h2">Open questions about the firm&apos;s registers</h2>
+          <span className="muted small">Things the Excel registers don&apos;t make clear. The app stores these columns as data and works with the guess below until the owner answers. Full text with examples: docs/AMBIGUOUS.md.</span>
+          <div className="dev-scroll"><table className="dev-table">
+            <thead><tr><th>Topic</th><th>We see</th><th>App now</th><th>Question for the owner</th></tr></thead>
+            <tbody>{questions.map((x) => <tr key={x.topic}><td className="strong">{x.topic}</td><td>{x.see}</td><td>{x.now}</td><td>{x.ask}</td></tr>)}</tbody>
           </table></div>
         </section>
       )}

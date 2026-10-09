@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap } from '@/lib/apiAuth';
+import { canAddShops } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError, moveLotManually } from '@/lib/ledger';
 import { lotsByIds } from '@/lib/lots-query';
@@ -26,12 +27,13 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST { lot_id, location, note? } → move a lot (e.g. godown → shop). moved_by = the signed-in user.
+// POST { lot_id, location, note? } → move a lot to a market location ("LM 245 · Pipe 3"; a new shop no. is added to the
+// market for owner / supervisor). Floor and Dispatched are set by job cards / dispatch only. moved_by = the signed-in user.
 export async function POST(request: NextRequest) {
   try {
     const a = await requireCap(request, 'lots.move');
     const body = await readObject(request);
-    const entry = await withTransaction((q) => moveLotManually(q, { lot_id: body.lot_id, location: body.location, note: body.note, moved_by: a.by }));
+    const entry = await withTransaction((q) => moveLotManually(q, { lot_id: body.lot_id, location: body.location, note: body.note, moved_by: a.by, add_shops_by: canAddShops(a.role) ? a.by : false }));
     return NextResponse.json({ success: true, entry });
   } catch (error) {
     const { status, body } = errorResponseBody(error);

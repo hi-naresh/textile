@@ -1,6 +1,7 @@
 // Strict formats + canonical names for everything written to the ledger.
 // Used by manual entry, Excel import and photo reads, so the same lot / party / mill
-import { formatMarketLocation, parseMarketLocation } from './location';
+import { formatMarketLocation, marketList, OLD_PLACES, parseMarketLocation, SYSTEM_PLACES } from './location';
+import { addShop } from './markets';
 // is always stored the same way ("haridwar textiles " → "HARIDWAR TEXTILES" if that spelling exists).
 
 import type { Q } from './db';
@@ -81,31 +82,61 @@ export async function canonicalLotAttr(q: Q, col: 'quality' | 'design', value: s
 }
 
 // ---------- locations ----------
-export const SYSTEM_LOCATIONS = { floor: 'Floor', dispatched: 'Dispatched', godown: 'Godown' } as const;
+/** Places the app writes itself (never picked by a person). Godown is only on rows from before markets (migration 014). */
+export const SYSTEM_LOCATIONS = { floor: 'Floor', dispatched: 'Dispatched' } as const;
 
-export async function locationPresetsFrom(q: Q): Promise<string[]> {
-  const r = await q(`SELECT location_presets FROM app_settings WHERE id = 1`);
-  return r.rows[0]?.location_presets ?? ['Godown', 'Shop', 'Floor'];
+/** A checked market location: the label stored in lot_locations.location + its structured copy. */
+export interface Place { location: string; market_id: number; shop_no: string; pipe_no: number | null }
+
+export interface MarketRow { id: number; name: string; code: string; active: boolean }
+export async function marketRows(q: Q): Promise<MarketRow[]> {
+  const r = await q(`SELECT id, name, code, active FROM markets ORDER BY sort_order, lower(name), id`);
+  return r.rows.map((x) => ({ id: Number(x.id), name: String(x.name), code: String(x.code), active: !!x.active }));
 }
 
 /**
- * Only locations from the firm's fixed list (My firm → Markets & locations) are accepted.
- * Returns the list's spelling. "Dispatched" is set by the system only.
+ * Read a location typed / picked / imported by a person against the active markets → the stored label + parts.
+ * Errors (plain words) when there is no market or shop no., the pipe no. is not 1–999, or it names a fixed place
+ * (Godown, Shop) or a place only the app sets (Floor, Dispatched): throws the reason. Pure (no database).
  */
-export async function allowedLocation(q: Q, v: unknown, required: boolean): Promise<string | null> {
+export type ReadPlace = Omit<Place, 'market_id'> & { market: MarketRow };
+export function readPlace(text: string, markets: MarketRow[]): ReadPlace {
+  const s = collapse(text);
+  const example = `${markets.find((m) => m.active)?.code ?? 'LM'} 245 · Pipe 3`;
+  const list = marketList(markets);
+  const hint = list ? ` Markets: ${list}.` : ' No markets yet — the owner adds them in My firm → Markets & locations.';
+  const r = parseMarketLocation(s, markets);
+  if (r && !r.ok) throw new LedgerError(r.error);
+  if (!r) {
+    const key = nameKey(s);
+    if (SYSTEM_PLACES.some((p) => nameKey(p) === key)) throw new LedgerError(`"${s}" is set by the app (job cards and dispatch), not picked. Use a market and shop no., like "${example}".`);
+    if (OLD_PLACES.some((p) => nameKey(p) === key)) throw new LedgerError(`"${s}" is no longer a location. Use a market and shop no., like "${example}".${hint}`);
+    const off = parseMarketLocation(s, markets, { includeInactive: true });
+    if (off && off.ok) throw new LedgerError(`Market ${off.place.market.name} (${off.place.market.code}) is switched off. Switch it on in My firm, or pick another market.`);
+    throw new LedgerError(`"${s}" is not a market location. Write it like "${example}" (market, shop no., pipe no.).${hint}`);
+  }
+  const m = r.place.market as MarketRow;
+  return { market: m, location: formatMarketLocation(m.code, r.place.shop, r.place.pipe), shop_no: r.place.shop, pipe_no: r.place.pipe };
+}
+
+/**
+ * The location a person gave (manual entry, moving a lot, confirming a photo read, the app's Excel template).
+ * Accepts only an active market + shop no. (+ optional pipe 1–999). A shop not in that market's list is added when
+ * `addShopsBy` is set (owner / supervisor: user id, or null for "unknown user"), otherwise refused.
+ */
+export async function allowedLocation(q: Q, v: unknown, opts: { required: boolean; addShopsBy?: string | null | false }): Promise<Place | null> {
   const s = collapse(v);
   if (!s) {
-    if (required) throw new LedgerError('Location is required.');
+    if (opts.required) throw new LedgerError('Pick a location: market and shop no.');
     return null;
   }
-  const presets = await locationPresetsFrom(q);
-  const list = presets.some((p) => nameKey(p) === nameKey(SYSTEM_LOCATIONS.floor)) ? presets : [...presets, SYSTEM_LOCATIONS.floor];
-  const hit = list.find((p) => nameKey(p) === nameKey(s));
-  if (hit) return hit;
-  // Or a market address: "<market> <shop> · Pipe <pipe>" with a market from My firm → Markets.
-  const mk = await q(`SELECT markets FROM app_settings WHERE id = 1`);
-  const markets: string[] = mk.rows[0]?.markets ?? [];
-  const m = parseMarketLocation(s, markets);
-  if (m) return formatMarketLocation(m.market, m.shop, m.pipe);
-  throw new LedgerError(`"${s}" is not a known location. Use one of ${list.join(', ')}, or a market address like "${markets[0] ?? 'RRTM'} 245 · Pipe 3" (markets are set in My firm).`);
+  const place = readPlace(s, await marketRows(q));
+  const shop = await q(`SELECT id, active FROM market_shops WHERE market_id = $1 AND shop_no = $2`, [place.market.id, place.shop_no]);
+  if (!shop.rows[0]?.active) {
+    if (opts.addShopsBy === false || opts.addShopsBy === undefined) {
+      throw new LedgerError(`Shop ${place.shop_no} is not in ${place.market.name}'s list. Ask the owner or a supervisor to add it.`);
+    }
+    await addShop(q, place.market.id, place.shop_no, opts.addShopsBy);
+  }
+  return { location: place.location, market_id: place.market.id, shop_no: place.shop_no, pipe_no: place.pipe_no };
 }

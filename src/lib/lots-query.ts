@@ -6,6 +6,7 @@
 import type { NextRequest } from 'next/server';
 import type { Q } from './db';
 import { COOKIE } from './auth/config';
+import { marketSearchPatterns } from './markets';
 
 /** Must match idx_lots_search_trgm in scripts/migrations/010_stock_state_and_search.sql exactly. */
 export const LOT_DOC = `lower(l.lot_id::text || ' ' || l.quality::text || ' ' || l.design::text || ' ' || COALESCE(l.cur_location, '')::text)`;
@@ -13,7 +14,7 @@ export const LOT_DOC = `lower(l.lot_id::text || ' ' || l.quality::text || ' ' ||
 const LOT_KEY = `lower(l.lot_id::text)`;
 
 export const LOT_COLS = `l.lot_id, l.quality, l.design, l.grade, l.status, l.bal_m AS balance,
-  l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts`;
+  l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no`;
 
 /** Beyond this, counts show as "10,000+" (an exact count over millions of rows is the slow part). */
 export const COUNT_CAP = 10_000;
@@ -21,6 +22,7 @@ export const COUNT_CAP = 10_000;
 export type LotRow = {
   lot_id: string; quality: string; design: string; grade: string; status: string; balance: number;
   location: string | null; location_stage: string | null; location_ts: string | null;
+  loc_code: string | null; reg_lot_no: string | null; // from the Incoming register (migration 013)
 };
 
 export function toLot(r: Record<string, unknown>): LotRow {
@@ -29,6 +31,7 @@ export function toLot(r: Record<string, unknown>): LotRow {
     status: String(r.status ?? ''), balance: Number(r.balance ?? 0), location: (r.location as string) ?? null,
     location_stage: (r.location_stage as string) ?? null,
     location_ts: r.location_ts == null ? null : r.location_ts instanceof Date ? r.location_ts.toISOString() : String(r.location_ts),
+    loc_code: (r.loc_code as string) ?? null, reg_lot_no: (r.reg_lot_no as string) ?? null,
   };
 }
 
@@ -52,13 +55,20 @@ export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
   };
 }
 
-function lotWhere(f: LotFilters, params: unknown[]): string[] {
+/** Search words that name a market → LIKE patterns for its location labels ("landmark" → "% lm %"). */
+const lotAlts = (q: Q, f: LotFilters) => marketSearchPatterns(q, f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6));
+
+function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> = new Map()): string[] {
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const parts: string[] = [];
   if (f.inStock) parts.push('l.bal_m > 0');
   if (f.status) parts.push(`l.status = ${p(f.status)}`);
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
-  for (const word of f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6)) parts.push(`${LOT_DOC} LIKE ${p(`%${likeEscape(word)}%`)}`);
+  for (const word of f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6)) {
+    const w = `${LOT_DOC} LIKE ${p(`%${likeEscape(word)}%`)}`;
+    const mk = (alts.get(word) ?? []).map((x) => ` OR ${LOT_DOC} LIKE ${p(x)}`).join('');
+    parts.push(mk ? `(${w}${mk})` : w);
+  }
   return parts;
 }
 
@@ -75,7 +85,7 @@ export async function cappedCount(q: Q, from: string, where: string, params: unk
 /** One page of lots, lot no. newest first. `total` on the first page only. */
 export async function lotsPage(q: Q, f: LotFilters, opts: { limit: number; cursor: string | null }) {
   const params: unknown[] = [];
-  const parts = lotWhere(f, params);
+  const parts = lotWhere(f, params, await lotAlts(q, f));
   const countParams = [...params];
   const countWhere = parts.length ? `WHERE ${parts.join(' AND ')}` : '';
   if (opts.cursor) { params.push(opts.cursor); parts.push(`l.lot_id < $${params.length}`); }
@@ -120,7 +130,7 @@ export async function lotSearch(q: Q, f: LotFilters, limit: number): Promise<Lot
   const out = starts.rows.map(toLot);
   if (out.length >= limit) return out;
   const p2 = [...base];
-  const w2 = [...common, ...lotWhere({ q: f.q, status: '', inStock: false, quality: '' }, p2)];
+  const w2 = [...common, ...lotWhere({ q: f.q, status: '', inStock: false, quality: '' }, p2, await lotAlts(q, f))];
   p2.push(`${likeEscape(text)}%`);
   w2.push(`NOT (${LOT_KEY} COLLATE "C" LIKE $${p2.length})`);
   const has = await q(`SELECT ${LOT_COLS} FROM lots l WHERE ${w2.join(' AND ')} ORDER BY l.lot_id DESC LIMIT ${limit - out.length}`, p2);
@@ -130,7 +140,7 @@ export async function lotSearch(q: Q, f: LotFilters, limit: number): Promise<Lot
 /** Every matching lot (Excel), lot no. order. Capped. */
 export async function lotsAll(q: Q, f: LotFilters, cap = 200_000): Promise<LotRow[]> {
   const params: unknown[] = [];
-  const parts = lotWhere(f, params);
+  const parts = lotWhere(f, params, await lotAlts(q, f));
   const r = await q(`SELECT ${LOT_COLS} FROM lots l ${parts.length ? `WHERE ${parts.join(' AND ')}` : ''} ORDER BY l.lot_id LIMIT ${cap}`, params);
   return r.rows.map(toLot);
 }

@@ -42,6 +42,12 @@ export interface StockEntry {
   source_doc: string;
   sr_no: string; // paper-register serial (suggested: last + 1)
   pieces: string; // taka, optional
+  // Register fields, optional ("More fields"): IN → %, location code; OUT → L, NQTY, LOT S
+  register_pct?: string;
+  loc_code?: string;
+  bill_pct?: string;
+  billed_meters?: string;
+  lot_status_code?: string;
 }
 
 /**
@@ -202,10 +208,10 @@ export function useTextileData() {
   const addStock = (role: Role, form: StockEntry) => {
     const both = { sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role) };
     const body = form.direction === 'IN'
-      ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, ...both }
-      : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, ...both };
+      ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, register_pct: form.register_pct?.trim() || null, loc_code: form.loc_code?.trim() || null, ...both }
+      : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, bill_pct: form.bill_pct?.trim() || null, billed_meters: form.billed_meters?.trim() || null, lot_status_code: form.lot_status_code?.trim() || null, ...both };
     const sr = form.sr_no.trim() ? `SR ${form.sr_no.trim()} · ` : '';
-    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'Godown'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`, 'success', refreshStock);
+    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'no location'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`, 'success', refreshStock);
   };
 
   const moveLot = (role: Role, lotId: string, location: string, note: string) =>
@@ -225,7 +231,8 @@ export function useTextileData() {
   const closeJobCard = (role: Role, id: number, metersOut: string) =>
     run(() => send('/api/job-cards', 'PATCH', { id, meters_out: metersOut, moved_by: actorId(role) }), `Job card JC-${id} closed`);
 
-  const confirmCapture = (role: Role, ev: CaptureEvent, corrected?: Record<string, unknown>, reviewSeconds?: number | null) =>
+  /** `location`: incoming reads only — where the lot is put ("LM 245 · Pipe 3"), optional. */
+  const confirmCapture = (role: Role, ev: CaptureEvent, corrected?: Record<string, unknown>, reviewSeconds?: number | null, location?: string | null) =>
     run(
       () => send('/api/capture/confirm', 'POST', {
         event_id: ev.id,
@@ -233,8 +240,9 @@ export function useTextileData() {
         status: corrected ? 'corrected' : 'confirmed',
         corrected_data: corrected ?? ev.ai_json,
         review_seconds: reviewSeconds ?? null,
+        location: location || null,
       }),
-      `Read #${ev.id} ${corrected ? 'corrected and ' : ''}confirmed · added to ledger`,
+      `Read #${ev.id} ${corrected ? 'corrected and ' : ''}confirmed · added to ledger${location ? ` · at ${location}` : ''}`,
     );
 
   const rejectCapture = (role: Role, ev: CaptureEvent, reviewSeconds?: number | null) =>
@@ -305,10 +313,33 @@ export function useTextileData() {
     };
   }, [refresh, showToast]);
 
+  // ---------- Markets & shops (lot locations) ----------
+  // Each call updates the firm config in place (the pickers see a new market / shop straight away) and answers
+  // { ok, error } so forms can show the reason next to the field.
+  const marketsApi = useMemo(() => {
+    type R = { ok: true; data: Record<string, unknown> } | { ok: false; error: string };
+    const call = async (path: string, method: string, body: unknown, ok: string | null): Promise<R> => {
+      try {
+        const data = await send(path, method, body);
+        if (data?.config) { setFirmConfig(data.config); setConfigState(data.config); }
+        if (ok) showToast(ok, 'success');
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : 'Could not save.' };
+      }
+    };
+    return {
+      addMarket: (name: string, code: string) => call('/api/markets', 'POST', { name, code }, `Market ${name} (${code.toUpperCase()}) added`),
+      updateMarket: (id: number, body: { name?: string; code?: string; active?: boolean }) => call('/api/markets', 'PATCH', { id, ...body }, 'Market saved'),
+      addShop: (marketId: number, shopNo: string, marketName: string) => call('/api/markets/shops', 'POST', { market_id: marketId, shop_no: shopNo }, `Shop ${shopNo.trim().toUpperCase()} added to ${marketName}`),
+      updateShop: (id: number, active: boolean) => call('/api/markets/shops', 'PATCH', { id, active }, active ? 'Shop switched on' : 'Shop removed'),
+    };
+  }, [showToast]);
+
   const chat = useChat();
 
   return {
-    config, settingsApi, status, checkStatus,
+    config, settingsApi, marketsApi, status, checkStatus,
     stockSummary, qualities, stockRev, ledger, flow, today, names, jobCards, allotments, workers, efficiency, cctv, captures,
     loading, dbOk, lastSync, toast, showToast, refresh, refreshStock,
     value, afterImport,

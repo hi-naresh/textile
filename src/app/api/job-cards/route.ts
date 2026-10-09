@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH (owner / supervisor): Close a job card with meters_out (updates worker efficiency; lot returns to godown when its last card closes).
+// PATCH (owner / supervisor): Close a job card with meters_out (updates worker efficiency; lot goes back to its place before the floor when its last card closes).
 export async function PATCH(request: NextRequest) {
   try {
     const a = await requireCap(request, 'jobs.manage');
