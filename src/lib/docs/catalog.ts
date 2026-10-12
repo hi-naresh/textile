@@ -301,6 +301,14 @@ export const FEATURES: DocFeature[] = [
     apis: ['GET /api/dev/access', 'PUT /api/dev/access'],
     code: ['src/lib/access.ts', 'src/lib/apiAuth.ts', 'src/app/api/dev/access/route.ts'],
   },
+  {
+    id: 'reset', area: 'Access & sign-in', title: 'Reset data', roles: ['owner', 'developer'], where: 'My firm → Reset data (owner); Developer console → Reset data',
+    what: 'Wipe one kind of data, several, or everything to start fresh: stock, floor work, orders & inquiries, dispatches / bills / payments, parties, employees, alerts & activity. Shows exactly how much goes, offers a backup file first, and needs RESET typed plus the person\'s password.',
+    data: 'Empties lots, stock_movements, lot_locations, ledger_edits, capture_events, job_cards, allotments, orders, inquiries, allocations, dispatches, invoices, payments, parties, rates, agent_* and log tables; employees are soft-removed (users / workers.deleted_at). Logged as data.reset in auth_audit.',
+    rules: ['Always kept: the owner account, the developer, firm details & billing, policy, stock alert levels, firm knowledge, markets & shops, sections, app settings, the sign-in audit trail.', 'Stock also takes floor work (job cards point at lots); parties also take orders and bills.', 'One transaction; whole stock uses TRUNCATE (instant at any size) and empties the derived name / quality lists.', 'Numbers (order #, SR ids) start again at 1 when a table becomes empty.', 'Open alerts are cleared on any reset; agents raise fresh ones.', 'The backup is a JSON file of exactly the rows that would go (no password hashes).'],
+    apis: ['GET /api/reset', 'POST /api/reset', 'GET /api/dev/reset', 'POST /api/dev/reset'],
+    code: ['src/lib/reset.ts', 'src/lib/resetRoute.ts', 'src/components/ResetData.tsx'],
+  },
   // ---------------- Assistant ----------------
   {
     id: 'chat', area: 'Assistant', title: 'Chat and voice', roles: ['owner', 'supervisor'], where: 'Chat button (desktop bottom-right; phone top bar)',
@@ -386,6 +394,8 @@ export const APIS: DocApi[] = [
   { path: '/api/credit/reminder', methods: 'GET', who: 'owner', what: 'Payment reminder text + WhatsApp link (en / hi / gu) + WhatsApp Cloud API state (connected, number, last reminder status).' },
   { path: '/api/db-check', methods: 'GET', who: 'developer', what: 'Table counts.' },
   { path: '/api/dev/access', methods: 'GET · PUT', who: 'developer', what: 'Capability matrix; switch a capability off / on for a role.' },
+  { path: '/api/dev/reset', methods: 'GET · POST', who: 'developer', what: 'Reset data (same as the owner\'s); confirmed with the developer password.' },
+  { path: '/api/reset', methods: 'GET · POST', who: 'owner', what: 'Counts per part, ?backup=parts JSON file, POST { parts, confirm: RESET, password } wipes them.' },
   { path: '/api/dev/agents', methods: 'GET · PUT · POST', who: 'developer', what: 'Agents: status + stats · switch on/off, max cards · run now.' },
   { path: '/api/dev/audit', methods: 'GET', who: 'developer', what: 'Audit trail.' },
   { path: '/api/dev/docs', methods: 'GET', who: 'developer', what: 'Live parts of the Docs tab: migrations applied, env vars set / not set, routes on disk.' },

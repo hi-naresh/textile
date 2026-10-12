@@ -13,11 +13,12 @@ import { levelTone, type Capability } from '@/lib/access';
 import { AgentsPanel } from './AgentsPanel';
 import { DocsPanel } from './DocsPanel';
 import { WhatsAppPanel } from './WhatsAppPanel';
+import { ResetData } from '@/components/ResetData';
 
 // Developer console: everything technical lives here and nowhere in the client app —
 // service health, agents (what each is for, on/off, stats, run now), WhatsApp (connection, webhook, templates, log), docs of everything built,
 // connections, AI usage + cost, technical errors, accounts, "View as", audit trail.
-type Tab = 'health' | 'agents' | 'whatsapp' | 'docs' | 'usage' | 'errors' | 'users' | 'access' | 'audit';
+type Tab = 'health' | 'agents' | 'whatsapp' | 'docs' | 'usage' | 'errors' | 'users' | 'access' | 'reset' | 'audit';
 
 export default function DevConsole() {
   const [me, setMe] = useState<Me | null>(null);
@@ -45,7 +46,7 @@ export default function DevConsole() {
         </div>
       )}
       <Segmented label="Section" value={tab} onChange={setTab} className="fit"
-        options={[{ value: 'health', label: 'Health' }, { value: 'agents', label: 'Agents' }, { value: 'whatsapp', label: 'WhatsApp' }, { value: 'docs', label: 'Docs' }, { value: 'usage', label: 'AI usage & cost' }, { value: 'errors', label: 'Errors' }, { value: 'users', label: 'Users & view as' }, { value: 'access', label: 'Access & roles' }, { value: 'audit', label: 'Audit trail' }]} />
+        options={[{ value: 'health', label: 'Health' }, { value: 'agents', label: 'Agents' }, { value: 'whatsapp', label: 'WhatsApp' }, { value: 'docs', label: 'Docs' }, { value: 'usage', label: 'AI usage & cost' }, { value: 'errors', label: 'Errors' }, { value: 'users', label: 'Users & view as' }, { value: 'access', label: 'Access & roles' }, { value: 'reset', label: 'Reset data' }, { value: 'audit', label: 'Audit trail' }]} />
       {tab === 'health' && <Health />}
       {tab === 'agents' && <AgentsPanel />}
       {tab === 'whatsapp' && <WhatsAppPanel />}
@@ -54,6 +55,7 @@ export default function DevConsole() {
       {tab === 'errors' && <Errors />}
       {tab === 'users' && <Users onViewAs={() => window.location.assign('/')} />}
       {tab === 'access' && <AccessRoles />}
+      {tab === 'reset' && <ResetData api="/api/dev/reset" developer />}
       {tab === 'audit' && <Audit />}
     </div>
   );
@@ -206,9 +208,14 @@ interface DevUser {
 
 function Users({ onViewAs }: { onViewAs: () => void }) {
   const [tick, setTick] = useState(0);
-  const { data, error } = useApi<{ users: DevUser[]; developers: { id: string; name: string; email: string; last_login_at: string | null; live_sessions: number }[] }>('/api/dev/users', tick);
+  const { data, error } = useApi<{ users: DevUser[]; developers: { id: string; name: string; email: string; last_login_at: string | null; live_sessions: number }[]; me: string }>('/api/dev/users', tick);
+  const [devName, setDevName] = useState('');
+  const [devEmail, setDevEmail] = useState('');
+  const [devPw, setDevPw] = useState('');
   const [msg, setMsg] = useState<{ tone: 'bad' | 'good'; text: string } | null>(null);
-  const [issued, setIssued] = useState<{ message: string; password: string } | null>(null);
+  const [issued, setIssued] = useState<{ message: string; password: string; dev?: boolean } | null>(null);
+  const [myCur, setMyCur] = useState('');
+  const [myNext, setMyNext] = useState('');
   const [ownerName, setOwnerName] = useState('');
   const [ownerPhone, setOwnerPhone] = useState('');
   const owner = data?.users.find((u) => u.role === 'owner');
@@ -217,11 +224,13 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
     setMsg(null);
     try {
       const r = await apiSend<{ message: string; temp_password?: string }>('/api/dev/users', 'POST', body);
-      if (r.temp_password) setIssued({ message: r.message, password: r.temp_password });
+      if (r.temp_password) setIssued({ message: r.message, password: r.temp_password, dev: String(body.action).includes('developer') });
       else setMsg({ tone: 'good', text: r.message });
       setTick((t) => t + 1);
+      return true;
     } catch (e) {
       setMsg({ tone: 'bad', text: e instanceof Error ? e.message : 'Failed.' });
+      return false;
     }
   }, []);
   const viewAs = async (id: string) => {
@@ -232,7 +241,8 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
     <div className="stack-16">
       {error && <div className="alert bad">{error}</div>}
       {msg && <div className={`alert ${msg.tone === 'bad' ? 'bad' : ''}`}>{msg.text}</div>}
-      {issued && <StartingPassword issued={issued} onClose={() => setIssued(null)} />}
+      {issued && <StartingPassword issued={issued} onClose={() => setIssued(null)}
+        note={issued.dev ? 'Developer password — shown only once. Give it to them now; they can change it in Developers → Change my password.' : undefined} />}
       <section className="card pad stack-14">
         <div className="stack-4"><h2 className="h2">Owner account</h2>
           <span className="muted small">Only the developer creates the owner. You get a one-time starting password to give the owner; they sign in with this phone and must then choose their own.</span></div>
@@ -262,6 +272,12 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
                     {u.status === 'approved' && u.active && u.role && <button className="btn sm" onClick={() => viewAs(u.id)}>View as</button>}
                     {u.phone && <button className="btn sm" onClick={() => { if (window.confirm(`Reset ${u.name}’s password? They get a new one-time starting password.`)) call({ action: 'reset_password', id: u.id }); }}>Reset password</button>}
                     {u.live_sessions > 0 && <button className="btn sm danger" onClick={() => call({ action: 'revoke_sessions', id: u.id })}>Sign out all</button>}
+                    <button className="btn sm danger" onClick={() => {
+                      const warn = u.role === 'owner'
+                        ? `Delete the OWNER account (${u.name})?\n\nThey are signed out at once and can’t sign in. The firm has no owner until you set up a new one above. Old records keep the name.`
+                        : `Delete ${u.name}?\n\nThey are signed out at once and can’t sign in. Old records keep the name; the phone number can be used again.`;
+                      if (window.confirm(warn)) call({ action: 'delete', id: u.id });
+                    }}><Icon name="trash" size={14} /> Delete</button>
                   </div>
                 </td>
               </tr>
@@ -271,12 +287,40 @@ function Users({ onViewAs }: { onViewAs: () => void }) {
       </section>
 
       <section className="card pad stack-12">
-        <div className="stack-4"><h2 className="h2">Developers</h2><span className="muted small">Created only from DEV_ADMIN_EMAIL / DEV_ADMIN_PASSWORD or `npm run dev:create`. No sign up.</span></div>
+        <div className="stack-4"><h2 className="h2">Developers</h2><span className="muted small">Every developer has full access to this console: they can add or delete developers and delete any account, the owner included. You can’t delete yourself. No sign up — add them here (or from DEV_ADMIN_EMAIL / `npm run dev:create`).</span></div>
         <div className="list">
           {data?.developers.map((d) => (
-            <div key={d.id} className="list-row"><div className="stack-2 grow"><span className="strong">{d.name}</span><span className="muted small">{d.email} · {d.live_sessions} device(s){d.last_login_at ? ` · last ${dayTime(d.last_login_at)}` : ''}</span></div></div>
+            <div key={d.id} className="list-row">
+              <div className="stack-2 grow"><span className="strong">{d.name}{d.id === data.me ? ' (you)' : ''}</span><span className="muted small">{d.email} · {d.live_sessions} device(s){d.last_login_at ? ` · last ${dayTime(d.last_login_at)}` : ''}</span></div>
+              {d.id !== data.me && (
+                <div className="row-8" style={{ flexWrap: 'wrap' }}>
+                  <button className="btn sm" onClick={() => { if (window.confirm(`Give ${d.name} a new password? They are signed out everywhere.`)) call({ action: 'reset_developer_password', id: d.id }); }}>Reset password</button>
+                  <button className="btn sm danger" onClick={() => { if (window.confirm(`Delete developer ${d.name} (${d.email})?\n\nThey are signed out at once and can’t sign in to the console any more.`)) call({ action: 'delete_developer', id: d.id }); }}><Icon name="trash" size={14} /> Delete</button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
+        <form className="add-row" onSubmit={async (e) => {
+          e.preventDefault();
+          if (await call({ action: 'add_developer', name: devName, email: devEmail, password: devPw || undefined })) { setDevName(''); setDevEmail(''); setDevPw(''); }
+        }}>
+          <input className="input" placeholder="Name" aria-label="Developer name" value={devName} onChange={(e) => setDevName(e.target.value)} />
+          <input className="input" type="email" placeholder="Email" aria-label="Developer email" value={devEmail} onChange={(e) => setDevEmail(e.target.value)} />
+          <input className="input" type="password" placeholder="Password (blank = make one)" aria-label="Developer password" autoComplete="new-password" value={devPw} onChange={(e) => setDevPw(e.target.value)} />
+          <button className="btn primary" type="submit" disabled={!devName.trim() || !devEmail.trim()}>Add developer</button>
+        </form>
+        <form className="add-row" onSubmit={async (e) => {
+          e.preventDefault(); setMsg(null);
+          try {
+            await apiSend('/api/auth/password', 'POST', { current: myCur, next: myNext });
+            setMyCur(''); setMyNext(''); setMsg({ tone: 'good', text: 'Your password was changed.' });
+          } catch (err) { setMsg({ tone: 'bad', text: err instanceof Error ? err.message : 'Failed.' }); }
+        }}>
+          <input className="input" type="password" placeholder="Current password" aria-label="Current password" autoComplete="current-password" value={myCur} onChange={(e) => setMyCur(e.target.value)} />
+          <input className="input" type="password" placeholder="New password (12+)" aria-label="New password" autoComplete="new-password" value={myNext} onChange={(e) => setMyNext(e.target.value)} />
+          <button className="btn" type="submit" disabled={!myCur || myNext.length < 12}>Change my password</button>
+        </form>
       </section>
     </div>
   );
@@ -292,7 +336,7 @@ function Audit() {
       <div className="card-head"><h2 className="h2">Audit trail</h2>
         <select className="input sel" aria-label="Event" value={event} onChange={(e) => setEvent(e.target.value)}>
           <option value="">All events</option>
-          {['login', 'login.failed', 'signup', 'user', 'password', 'session', 'view_as', 'access', 'agent', 'whatsapp', 'dev.client_data', 'logout'].map((x) => <option key={x} value={x}>{x}</option>)}
+          {['login', 'login.failed', 'signup', 'user', 'password', 'session', 'view_as', 'access', 'agent', 'whatsapp', 'data', 'dev.client_data', 'logout'].map((x) => <option key={x} value={x}>{x}</option>)}
         </select></div>
       {error && <div className="alert bad">{error}</div>}
       <div className="dev-scroll"><table className="dev-table">

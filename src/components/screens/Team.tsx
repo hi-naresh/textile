@@ -241,12 +241,12 @@ function Sessions({ u, busy, run }: { u: Account; busy: boolean; run: (action: s
 }
 
 /** A newly issued starting password: shown once, with a copy button. */
-export function StartingPassword({ issued, onClose }: { issued: { message: string; password: string }; onClose: () => void }) {
+export function StartingPassword({ issued, onClose, note }: { issued: { message: string; password: string }; onClose: () => void; note?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <section className="card pad stack-10" role="status" style={{ borderColor: 'var(--accent)' }}>
       <strong>{issued.message}</strong>
-      <span className="muted small">Starting password — shown only once. Give it to them now; they must choose their own when they first sign in.</span>
+      <span className="muted small">{note ?? 'Starting password — shown only once. Give it to them now; they must choose their own when they first sign in.'}</span>
       <code className="temp-pw">{issued.password}</code>
       <div className="row-8">
         <button type="button" className="btn sm" onClick={() => { navigator.clipboard?.writeText(issued.password).then(() => setCopied(true)).catch(() => {}); }}>{copied ? 'Copied' : 'Copy'}</button>

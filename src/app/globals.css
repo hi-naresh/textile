@@ -1155,3 +1155,22 @@ tr.mv-adj .strong { font-weight: 500; }
 .attn-group .agent-tag { display: none; }
 @media (max-width: 720px) { .attn-group { padding: 10px 12px; } .attn-group .attn { flex-wrap: wrap; } }
 .ov-cat .ov-item-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+
+/* ---------- Reset data (My firm → Reset data, developer console → Reset data) ---------- */
+.reset-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.reset-row { display: grid; grid-template-columns: 20px 1fr auto; gap: 12px; align-items: start; padding: 12px 14px; cursor: pointer; border-top: 1px solid var(--line); }
+.reset-row:first-child { border-top: 0; }
+.reset-row.all { background: var(--hover); }
+.reset-row.on { background: var(--badSoft); }
+.reset-row input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--bad); }
+.reset-row input:disabled { opacity: 1; }
+.reset-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.reset-auto { color: var(--bad); }
+.reset-count { text-align: right; color: var(--text2); max-width: 220px; }
+.btn.reset-go { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.reset-go:disabled { opacity: .45; }
+@media (max-width: 640px) {
+  .reset-row { grid-template-columns: 20px 1fr; }
+  .reset-count { grid-column: 2; text-align: left; max-width: none; }
+}
+.reset-card a.btn { text-decoration: none; }

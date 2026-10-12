@@ -2,7 +2,8 @@
 
 // My firm (owner): everything about the firm itself, in five parts —
 //  Firm & billing · Parties · Markets & locations · Policy (rules, stock alerts, firm knowledge) ·
-//  Team (sign ups waiting for approval first, then owner & supervisors, workers, sections, sign-ins).
+//  Team (sign ups waiting for approval first, then owner & supervisors, workers, sections, sign-ins) ·
+//  Reset data (wipe stock / employees / orders / … or everything, with a backup and typed confirmation).
 // Settings keeps only things about you and this device (account, preferences, connections).
 import React, { useCallback, useEffect, useState } from 'react';
 import Icon from '../Icon';
@@ -16,14 +17,16 @@ import { checkCode, checkMarketName, checkShop, type MarketInfo } from '@/lib/lo
 import { FirmBilling, FirmParties } from './MasterData';
 import { UsersAndSignUps } from './Team';
 import { PolicyPart } from './Policy';
+import { ResetData } from '../ResetData';
 
-type Part = 'firm' | 'parties' | 'places' | 'policy' | 'team';
+type Part = 'firm' | 'parties' | 'places' | 'policy' | 'team' | 'reset';
 const PARTS: { value: Part; label: string; icon: string }[] = [
   { value: 'firm', label: 'Firm & billing', icon: 'factory' },
   { value: 'parties', label: 'Parties', icon: 'users' },
   { value: 'places', label: 'Markets & locations', icon: 'box' },
   { value: 'policy', label: 'Policy', icon: 'shield' },
   { value: 'team', label: 'Team', icon: 'userPlus' },
+  { value: 'reset', label: 'Reset data', icon: 'refresh' },
 ];
 const isPart = (v: string | null): v is Part => PARTS.some((p) => p.value === v);
 const store = {
@@ -73,6 +76,7 @@ export function MyFirm({ ctx }: { ctx: Ctx }) {
       {part === 'places' && <PlacesPart ctx={ctx} />}
       {part === 'policy' && <PolicyPart ctx={ctx} />}
       {part === 'team' && <TeamPart ctx={ctx} />}
+      {part === 'reset' && <ResetData />}
     </div>
   );
 }

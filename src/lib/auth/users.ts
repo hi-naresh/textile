@@ -210,10 +210,12 @@ async function accountActionInner(c: Ctx, id: string, action: AccountAction, b: 
       return `${ended} device${ended === 1 ? '' : 's'} signed out`;
     }
     case 'delete': {
-      if (isSelf || ownerAccount) throw new LedgerError('The owner account can’t be deleted.', 403);
+      // The owner can remove supervisors / workers; a developer can remove any client account, the owner included.
+      if (isSelf) throw new LedgerError('You can’t delete your own account.', 403);
+      if (ownerAccount && !c.asDeveloper) throw new LedgerError('The owner account can’t be deleted.', 403);
       const ended = await removePerson(q, u, by);
       await log('user.deleted', { role: u.role, status: u.status, worker_id: u.worker_id, sessions_ended: ended });
-      return `${u.name} removed from the team`;
+      return ownerAccount ? `${u.name} (owner) deleted. Set up a new owner under Owner account.` : `${u.name} removed from the team`;
     }
     default:
       throw new LedgerError('Unknown action.');
