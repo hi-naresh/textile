@@ -7,7 +7,7 @@ import { markAgentsStale } from './agents/stale';
 import { trimReservations } from './stock';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, lotCode, metersValue, nameKey, nameValue, SYSTEM_LOCATIONS, type Place } from './normalize';
+import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, dateValue, lotCode, lotStatusValue, metersValue, nameKey, nameValue, SYSTEM_LOCATIONS, type Place } from './normalize';
 import { billedMetersValue, billPctValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 
 export { LedgerError };
@@ -141,16 +141,17 @@ export async function moveLot(
     lot_id: string; location: string; stage: LocationStage; note?: string | null; job_card_id?: number | null; stock_movement_id?: number | null; moved_by?: string | null;
     /** Market parts of the label (from allowedLocation / currentPlace); omitted for Floor / Dispatched. */
     place?: Pick<StoredPlace, 'market_id' | 'shop_no' | 'pipe_no'> | null;
+    ts?: string | null;
   },
 ) {
   const location = text(input.location, 100);
   if (!location) throw new LedgerError('Location is required.');
   const p = input.place?.market_id != null ? input.place : null;
   const r = await q(
-    `INSERT INTO lot_locations (lot_id, location, stage, note, job_card_id, stock_movement_id, moved_by, market_id, shop_no, pipe_no)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    `INSERT INTO lot_locations (lot_id, location, stage, note, job_card_id, stock_movement_id, moved_by, market_id, shop_no, pipe_no, ts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11::timestamp, CURRENT_TIMESTAMP)) RETURNING *`,
     [input.lot_id, location, input.stage, text(input.note, 500), input.job_card_id ?? null, input.stock_movement_id ?? null, input.moved_by ?? null,
-      p?.market_id ?? null, p?.shop_no ?? null, p?.pipe_no ?? null],
+      p?.market_id ?? null, p?.shop_no ?? null, p?.pipe_no ?? null, input.ts ?? null],
   );
   return r.rows[0];
 }
@@ -185,6 +186,7 @@ export interface IncomingInput {
   moved_by?: string | null;
   register_pct?: unknown; // Incoming register "%" (optional, meaning not confirmed)
   loc_code?: unknown; // Incoming register location code ("212", "142+143")
+  date?: unknown; // back-date entry (YYYY-MM-DD or DD-MM-YYYY)
   /** Set by the server route, never from the request body: a new shop no. in `location` is added for this user (owner / supervisor). */
   add_shops_by?: string | null | false;
 }
@@ -197,6 +199,7 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   const memo = opts.memo;
   await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
+  const date = dateValue(input.date);
   const sr = srValue(input.sr_no);
   const pieces = piecesValue(input.pieces);
   const ref = importRef(input.import_ref);
@@ -221,14 +224,18 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
     const design = await lotAttrMemo(memo, q, 'design', nameValue(input.design, 'Design'));
     if (opts.requireLotDetails && (!quality || !design)) throw new LedgerError('Quality and design are required for a new lot.');
     await q(`INSERT INTO lots (lot_id, quality, design, grade, status, loc_code) VALUES ($1, $2, $3, 'A', 'active', $4)`, [lotId, quality ?? 'Unknown Quality', design ?? 'Unknown Design', locCode]);
-  } else if (locCode) {
-    await q(`UPDATE lots SET loc_code = $2 WHERE lot_id = $1 AND loc_code IS DISTINCT FROM $2`, [lotId, locCode]);
+  } else {
+    if (locCode) {
+      await q(`UPDATE lots SET loc_code = $2 WHERE lot_id = $1 AND loc_code IS DISTINCT FROM $2`, [lotId, locCode]);
+    }
+    // Re-activate a lot that was marked dispatched if new incoming stock arrives
+    await q(`UPDATE lots SET status = 'active' WHERE lot_id = $1 AND status = 'dispatched'`, [lotId]);
   }
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id, purchase_rate, sr_no, pieces, import_ref, register_pct, loc_code)
-     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
-    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null, metersValue(input.purchase_rate, 'Purchase rate'), sr, pieces, ref, pct, locCode],
+    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id, purchase_rate, sr_no, pieces, import_ref, register_pct, loc_code, ts)
+     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE(($15::date + interval '12 hours'), CURRENT_TIMESTAMP)) RETURNING *`,
+    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null, metersValue(input.purchase_rate, 'Purchase rate'), sr, pieces, ref, pct, locCode, date],
   );
   const movement = mv.rows[0];
   // No location given (e.g. a photo read): an existing lot stays where it is; a new lot (or one that was dispatched)
@@ -243,6 +250,7 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
     note: `${stockMeters} m received${challan ? ` on challan ${challan}` : ''}`,
     stock_movement_id: movement.id,
     moved_by: input.moved_by ?? null,
+    ts: date ? `${date} 12:00:00` : null,
   });
   return movement;
 }
@@ -263,6 +271,8 @@ export interface OutgoingInput {
   bill_pct?: unknown; // sales register "L" (optional)
   billed_meters?: unknown; // sales register NQTY (optional)
   lot_status_code?: unknown; // sales register "LOT S" code (optional, data only)
+  date?: unknown; // back-date entry (YYYY-MM-DD or DD-MM-YYYY)
+  status?: unknown; // lot status ('active' | 'completed' | 'dispatched' | 'hold')
 }
 
 /** Record a dispatch. Party (destination client) is required. */
@@ -270,6 +280,7 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   const memo = opts.memo;
   await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
+  const date = dateValue(input.date);
   const sr = srValue(input.sr_no);
   const pieces = piecesValue(input.pieces);
   const ref = importRef(input.import_ref);
@@ -280,17 +291,17 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   const billPct = billPctValue(input.bill_pct);
   const billed = billedMetersValue(input.billed_meters);
   const statusCode = lotStatusCodeValue(input.lot_status_code);
+  const explicitStatus = lotStatusValue(input.status);
   if (!party) throw new LedgerError('Party (the client receiving the goods) is required for outgoing stock.');
   await assertSrFree(q, 'OUT', sr);
 
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`);
   const balance = await lotBalance(q, lotId);
-  if (balance < meters) throw new LedgerError(`Insufficient stock. Lot ${lotId} has ${balance} m, dispatch asks for ${meters} m.`);
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id, sr_no, pieces, import_ref, bill_pct, billed_meters, lot_status_code)
-     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null, sr, pieces, ref, billPct, billed, statusCode],
+    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id, sr_no, pieces, import_ref, bill_pct, billed_meters, lot_status_code, ts)
+     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE(($14::date + interval '12 hours'), CURRENT_TIMESTAMP)) RETURNING *`,
+    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null, sr, pieces, ref, billPct, billed, statusCode, date],
   );
   const movement = mv.rows[0];
   // Logistics agent: link the dispatch to its order / allocation, update order status (same transaction).
@@ -298,6 +309,14 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   // Stock that was reserved for an order but went out another way: shrink those reservations.
   await trimReservations(q, lotId);
   const remaining = Math.round((balance - meters) * 100) / 100;
+
+  // Status update: if explicit status given, update it; otherwise if lot is emptied or over-dispatched (remaining <= 0), update to 'dispatched'
+  if (explicitStatus) {
+    await q(`UPDATE lots SET status = $2 WHERE lot_id = $1`, [lotId, explicitStatus]);
+  } else if (remaining <= 0) {
+    await q(`UPDATE lots SET status = 'dispatched' WHERE lot_id = $1`, [lotId]);
+  }
+
   // Fully dispatched lots leave the premises; a partial dispatch keeps the rest where it is (no row when it has no location).
   const here = remaining <= 0 ? null : await currentPlace(q, lotId);
   if (remaining <= 0 || here) await moveLot(q, {
@@ -305,9 +324,10 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
     location: remaining <= 0 ? DISPATCHED : here!.location,
     place: remaining <= 0 ? null : here,
     stage: 'dispatch',
-    note: `${meters} m to ${party}${remaining > 0 ? ` · ${remaining} m left` : ''}`,
+    note: `${meters} m to ${party}${remaining > 0 ? ` · ${remaining} m left` : remaining < 0 ? ` · ${remaining} m balance` : ''}`,
     stock_movement_id: movement.id,
     moved_by: input.moved_by ?? null,
+    ts: date ? `${date} 12:00:00` : null,
   });
   return movement;
 }

@@ -630,9 +630,10 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
       if (!bal.has(r.lot_id)) { add(r.row, 'lot_id', `Lot ${r.lot_id} does not exist (and no earlier IN row in this file adds it).`); continue; }
       if (r.meters == null) continue;
       const b = bal.get(r.lot_id)!;
-      // Balances are only meaningful when every column was read.
-      if (b + 0.001 < r.meters) { if (!headerProblems.length) add(r.row, 'meters', `Not enough stock: ${r.lot_id} has ${b} m at this row, this row sends ${r.meters} m.`); }
-      else bal.set(r.lot_id, round(b - r.meters));
+      if (b + 0.001 < r.meters) {
+        notes.push(`Row ${r.row}: ${r.lot_id} dispatches ${r.meters} m with ${b} m in stock (fold excess; balance will be ${round(b - r.meters)} m).`);
+      }
+      bal.set(r.lot_id, round(b - r.meters));
     }
   }
 

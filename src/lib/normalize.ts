@@ -140,3 +140,38 @@ export async function allowedLocation(q: Q, v: unknown, opts: { required: boolea
   }
   return { location: place.location, market_id: place.market.id, shop_no: place.shop_no, pipe_no: place.pipe_no };
 }
+
+/** Date: YYYY-MM-DD or DD-MM-YYYY, validated and normalized to YYYY-MM-DD. */
+export function dateValue(v: unknown): string | null {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const [, y, mo, d] = m;
+    const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+    if (!Number.isNaN(dt.getTime()) && dt.getUTCMonth() === Number(mo) - 1 && dt.getUTCDate() === Number(d)) {
+      return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    }
+  }
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/);
+  if (m) {
+    const [, d, mo, y] = m;
+    let yn = Number(y);
+    if (yn < 100) yn += 2000;
+    const dt = new Date(Date.UTC(yn, Number(mo) - 1, Number(d)));
+    if (!Number.isNaN(dt.getTime()) && dt.getUTCMonth() === Number(mo) - 1 && dt.getUTCDate() === Number(d)) {
+      return `${yn}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    }
+  }
+  throw new LedgerError(`"${s.slice(0, 30)}" is not a valid date. Use YYYY-MM-DD or DD-MM-YYYY.`);
+}
+
+/** Lot status value: active, completed, dispatched, hold. */
+export function lotStatusValue(v: unknown): 'active' | 'completed' | 'dispatched' | 'hold' | null {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).trim().toLowerCase();
+  if (['active', 'completed', 'dispatched', 'hold'].includes(s)) {
+    return s as 'active' | 'completed' | 'dispatched' | 'hold';
+  }
+  throw new LedgerError(`Status "${s.slice(0, 20)}" is not valid. Use active, completed, dispatched or hold.`);
+}

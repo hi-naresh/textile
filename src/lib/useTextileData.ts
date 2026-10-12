@@ -48,6 +48,7 @@ export interface StockEntry {
   bill_pct?: string;
   billed_meters?: string;
   lot_status_code?: string;
+  date?: string; // YYYY-MM-DD back-date entry
 }
 
 /**
@@ -206,7 +207,7 @@ export function useTextileData() {
   }, [refresh, showToast]);
 
   const addStock = (role: Role, form: StockEntry) => {
-    const both = { sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role) };
+    const both = { sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role), date: form.date?.trim() || null };
     const body = form.direction === 'IN'
       ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, register_pct: form.register_pct?.trim() || null, loc_code: form.loc_code?.trim() || null, ...both }
       : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, bill_pct: form.bill_pct?.trim() || null, billed_meters: form.billed_meters?.trim() || null, lot_status_code: form.lot_status_code?.trim() || null, ...both };

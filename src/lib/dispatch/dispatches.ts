@@ -5,7 +5,7 @@ import type { Dispatch } from '../domain';
 import { LedgerError } from '../ledger-error';
 import { recordOutgoing } from '../ledger';
 import { lotStock, reservedForOthers } from '../stock';
-import { challanCode, lotCode, metersValue } from '../normalize';
+import { challanCode, dateValue, lotCode, lotStatusValue, metersValue } from '../normalize';
 import { partyByName } from '../parties';
 import { textOrNull, validActor } from './common';
 
@@ -73,6 +73,7 @@ export async function getDispatch(q: Q, id: number, owner: boolean): Promise<{ d
 
 export interface DispatchInput {
   party?: unknown; order_id?: unknown; lines?: unknown; challan_no?: unknown; transporter?: unknown; lr_no?: unknown; vehicle_no?: unknown; packages?: unknown;
+  date?: unknown; dispatched_at?: unknown;
 }
 
 /** Validates and writes a dispatch + its OUT movements. Run inside a transaction. */
@@ -85,7 +86,8 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
     if (!lot) throw new LedgerError(`Line ${i + 1}: lot number is required.`);
     const meters = metersValue(l.meters, `Line ${i + 1} meters`);
     if (meters == null) throw new LedgerError(`Line ${i + 1}: meters are required.`);
-    return { lot_id: lot, meters };
+    const status = l.status ? lotStatusValue(l.status) : null;
+    return { lot_id: lot, meters, status };
   });
 
   let order: { id: number; party_id: number; party_name: string; status: string } | null = null;
@@ -144,8 +146,19 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
     challan = `DC-${id}`;
     await q(`UPDATE dispatches SET challan_no = $2 WHERE id = $1`, [id, challan]);
   }
+  const dispatchDate = b.date ? dateValue(b.date) : b.dispatched_at ? dateValue(b.dispatched_at) : null;
   for (const l of lines) {
-    await recordOutgoing(q, { lot_id: l.lot_id, meters: l.meters, party: party.name, source_doc: challan, order_id: order?.id ?? null, dispatch_id: id, moved_by: actor });
+    await recordOutgoing(q, {
+      lot_id: l.lot_id,
+      meters: l.meters,
+      party: party.name,
+      source_doc: challan,
+      order_id: order?.id ?? null,
+      dispatch_id: id,
+      moved_by: actor,
+      date: dispatchDate,
+      status: l.status,
+    });
   }
   // The hook may have linked the movements to one order: carry it onto the dispatch.
   if (!order) {

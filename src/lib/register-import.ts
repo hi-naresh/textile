@@ -437,7 +437,9 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
       how = 'lot';
     }
     const b = bal.get(lot.lot_id) ?? lot.bal;
-    if (b + 0.001 < r.meters) { skip(r.row, 'QTY', `Not enough stock: lot ${lot.lot_id} has ${round2(b)} m at this row, this row sends ${r.meters} m.`); return; }
+    if (b + 0.001 < r.meters) {
+      warnings.push({ row: r.row, field: 'QTY', skip: false, message: `Dispatches ${r.meters} m with ${round2(b)} m in stock (fold excess; balance will be ${round2(b - r.meters)} m). Kept as written.` });
+    }
     bal.set(lot.lot_id, round2(b - r.meters));
     if (how === 'lot') warnings.push({ row: r.row, field: 'SR.NO', skip: false, message: r.srNum != null ? `SR.NO ${r.srNum} is not in the app; matched by lot no. ${r.lot_raw} → ${lot.lot_id}.` : `No SR.NO: matched by lot no. ${r.lot_raw} → ${lot.lot_id}.` });
     if (r.quality && nameKey(r.quality) !== nameKey(lot.quality)) warnings.push({ row: r.row, field: 'ITEM', skip: false, message: `ITEM "${r.quality}" differs from lot ${lot.lot_id}'s quality "${lot.quality}". Saved on the lot anyway.` });
@@ -518,18 +520,20 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
   const linked = linkedSrValue(r.linked_sr);
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist. Check the file again.`);
   const b = Number((await q(`SELECT bal_m FROM lots WHERE lot_id = $1`, [lotId])).rows[0].bal_m);
-  if (b + 0.001 < meters) throw new LedgerError(`Not enough stock: lot ${lotId} has ${b} m, this row sends ${meters} m.`);
   const mv = await q(
     `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, import_ref, ts, bill_pct, billed_meters, lot_status_code, linked_sr)
-     VALUES ($1, 'OUT', $2, NULL, $3, $4, $5::date, $6, $7, $8, $9) RETURNING id`,
+     VALUES ($1, 'OUT', $2, NULL, $3, $4, ($5::date + interval '12 hours'), $6, $7, $8, $9) RETURNING id`,
     [lotId, meters, bill, ref, date, billPct, billed, code, linked],
   );
   await trimReservations(q, lotId);
   const remaining = round2(b - meters);
+  if (remaining <= 0 || code === 'E' || code === 'A') {
+    await q(`UPDATE lots SET status = 'dispatched' WHERE lot_id = $1`, [lotId]);
+  }
   const here = remaining <= 0 ? null : await currentPlace(q, lotId);
   if (remaining <= 0 || here) await moveLot(q, {
     lot_id: lotId, location: remaining <= 0 ? DISPATCHED : here!.location, place: remaining <= 0 ? null : here, stage: 'dispatch',
-    note: `${meters} m on bill ${bill ?? '—'}${remaining > 0 ? ` · ${remaining} m left` : ''}`, stock_movement_id: Number(mv.rows[0].id), moved_by: movedBy,
+    note: `${meters} m on bill ${bill ?? '—'}${remaining > 0 ? ` · ${remaining} m left` : remaining < 0 ? ` · ${remaining} m balance` : ''}`, stock_movement_id: Number(mv.rows[0].id), moved_by: movedBy,
   });
   return { in: 0, out: 1 };
 }

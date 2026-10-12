@@ -312,13 +312,14 @@ export function Allot({ ctx }: { ctx: Ctx }) {
 }
 
 // ---------------- Manual stock entry (owner) ----------------
-const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '' };
+const todayDateIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', date: '' };
 
 interface SrInfo { next: number; taken?: { lot_id: string; ts: string } | null; sr?: number }
 
 export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; onDone?: () => void; initialDirection?: 'IN' | 'OUT' }) {
   const { d, role } = ctx;
-  const [f, setF] = useState<StockEntry>({ ...EMPTY_ENTRY, direction: initialDirection });
+  const [f, setF] = useState<StockEntry>({ ...EMPTY_ENTRY, direction: initialDirection, date: todayDateIso() });
   const [sameAsMill, setSameAsMill] = useState(false);
   const [busy, setBusy] = useState(false);
   const [srTouched, setSrTouched] = useState(false);
@@ -378,7 +379,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const entry = { ...f, lot_id: f.lot_id.trim(), weaver_name: sameAsMill ? f.mill_name : f.weaver_name };
+    const entry = { ...f, lot_id: f.lot_id.trim(), weaver_name: sameAsMill ? f.mill_name : f.weaver_name, date: f.date?.trim() || todayDateIso() };
     if (!entry.lot_id) return d.showToast('Lot number is required.', 'warning');
     if (srBad || entry.sr_no.trim() === '0') return d.showToast('SR no. must be a whole number above 0.', 'warning');
     if (srTaken) return d.showToast(`SR no. ${srText} is already used. Next free: ${sr?.next}.`, 'warning');
@@ -392,7 +393,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     setBusy(true);
     const ok = await d.addStock(role, entry);
     setBusy(false);
-    if (ok) { setF({ ...EMPTY_ENTRY, direction: f.direction }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
+    if (ok) { setF({ ...EMPTY_ENTRY, direction: f.direction, date: f.date || todayDateIso() }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
     else setRound((r) => r + (srTouched ? 0 : 1)); // e.g. someone else took the SR no. meanwhile: suggest a fresh one
   };
 
@@ -418,11 +419,15 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
       </div>
       <div className="two-col sr-row">
         {srField}
-        <label className="fld">Lot number
-          <input className="num" list="lot-list" value={f.lot_id} onChange={set('lot_id')} placeholder="e.g. LOT-5030" autoComplete="off" />
-          <datalist id="lot-list">{lotMatches.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.quality}</option>)}</datalist>
+        <label className="fld">Entry date
+          <input className="num" type="date" value={f.date || todayDateIso()} max={todayDateIso()} onChange={set('date')} aria-label="Date of entry" />
+          <span className="sr-note">Back-date entry</span>
         </label>
       </div>
+      <label className="fld">Lot number
+        <input className="num" list="lot-list" value={f.lot_id} onChange={set('lot_id')} placeholder="e.g. LOT-5030" autoComplete="off" />
+        <datalist id="lot-list">{lotMatches.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.quality}</option>)}</datalist>
+      </label>
       {known && <span className="muted small hint">{known.lot_id}: {known.quality} · balance {fmt(known.balance ?? 0, 1)} m{known.location ? ` · at ${known.location}` : ''}</span>}
 
       {isIn ? (
@@ -489,7 +494,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             </label>
             <span className="muted small hint">As written in your sales register{nqtyHint != null ? ` (QTY × L ÷ 100 = ${nqtyHint})` : ''}. LOT S meanings are our guess. These don’t change stock.</span>
           </details>
-          {known && <span className="muted small hint">If this empties the lot, its location becomes “Dispatched”.</span>}
+          {known && <span className="muted small hint">If this empties or over-dispatches the lot (due to mill fold excess), its status and location become “Dispatched”.</span>}
         </>
       )}
       <button className="btn primary big" type="submit" disabled={busy}>{isIn ? 'Record incoming' : 'Record dispatch'}</button>

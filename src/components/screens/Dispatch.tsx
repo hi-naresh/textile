@@ -288,8 +288,6 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
     if (!ls.length) return d.showToast('Add at least one lot.', 'warning');
     for (const l of ls) {
       if (!l.lot_id || !(parseFloat(l.meters) > 0)) return d.showToast('Each line needs a lot and meters.', 'warning');
-      const lot = lotOf(l.lot_id);
-      if (lot && parseFloat(l.meters) > lot.balance) return d.showToast(`${l.lot_id} has only ${fmt(lot.balance, 1)} m.`, 'warning');
     }
     const rateMap = Object.fromEntries(Object.entries(rates).filter(([, x]) => parseFloat(x) > 0).map(([k, x]) => [k, parseFloat(x)]));
     setBusy(true);
@@ -347,15 +345,18 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
         <div className={s.lines}>
           {lines.map((l, i) => {
             const lot = lotOf(l.lot_id);
-            const over = lot != null && parseFloat(l.meters) > lot.balance;
+            const mtr = parseFloat(l.meters) || 0;
+            const over = lot != null && mtr > lot.balance;
+            const excess = over ? Math.round((mtr - lot.balance) * 100) / 100 : 0;
             return (
               <div key={i} className={s.line}>
                 <div className="stack-2 min0"><LotPicker ariaLabel={`Lot ${i + 1}`} value={l.lot_id} onChange={(v) => setLine(i, { lot_id: v })} placeholder="Lot no." refreshKey={d.stockRev} /></div>
                 <input aria-label={`Meters ${i + 1}`} className={over ? s.over : ''} inputMode="decimal" value={l.meters} placeholder="Meters" onChange={(e) => setLine(i, { meters: e.target.value })} />
                 <button type="button" className="btn icon-only" aria-label="Remove line" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ ...EMPTY_LINE }]))}><Icon name="x" size={16} /></button>
                 {lot && (
-                  <span className={`small ${s.sub} ${over ? s.bad : 'muted'}`}>
+                  <span className={`small ${s.sub} ${over ? s.warnText : 'muted'}`}>
                     {lot.quality} · {lot.design} · {fmt(lot.balance, 1)} m in stock{lot.location ? ` · ${lot.location}` : ''}
+                    {over && <> · <span className={s.warnText}>+{fmt(excess, 1)} m fold excess</span></>}
                     {!over && lot.balance > 0 && <> · <button type="button" className="linkbtn" onClick={() => setLine(i, { meters: String(lot.balance) })}>all</button></>}
                   </span>
                 )}

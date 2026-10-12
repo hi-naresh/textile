@@ -114,8 +114,15 @@ export async function POST(request: NextRequest) {
     if (direction !== 'IN' && direction !== 'OUT') {
       return NextResponse.json({ error: 'direction must be IN or OUT.' }, { status: 400 });
     }
-    // import_ref is only set by the Excel import.
-    const input = { ...body, import_ref: null, capture_event_id: null, moved_by: a.by, add_shops_by: (canAddShops(a.role) ? a.by : false) as string | false };
+    // import_ref is only set by the Excel import. date enables back-dated entries.
+    const input = {
+      ...body,
+      date: body?.date ? String(body.date).trim() : null,
+      import_ref: null,
+      capture_event_id: null,
+      moved_by: a.by,
+      add_shops_by: (canAddShops(a.role) ? a.by : false) as string | false,
+    };
     const movement = await withTransaction((q) =>
       direction === 'IN'
         ? recordIncoming(q, input, { requireLotDetails: true })
