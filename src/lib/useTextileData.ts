@@ -5,6 +5,7 @@ import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, C
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
 import { DEFAULT_CONFIG, type FirmConfig } from './config';
 import { useChat } from './useChat';
+import type { EntryStatus } from './registers';
 
 export interface ValueWindow { days: number; captures: number; manualMin: number; actualMin: number; savedMin: number; baseline: { challanMin: number; jobCardMin: number } }
 export interface ValueSummary { today: ValueWindow; week: ValueWindow; month: ValueWindow }
@@ -48,6 +49,7 @@ export interface StockEntry {
   bill_pct?: string;
   billed_meters?: string;
   lot_status_code?: string;
+  entry_status?: EntryStatus; // OUT: packed / running (default) / end
   date?: string; // YYYY-MM-DD back-date entry
 }
 
@@ -210,7 +212,7 @@ export function useTextileData() {
     const both = { sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role), date: form.date?.trim() || null };
     const body = form.direction === 'IN'
       ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, register_pct: form.register_pct?.trim() || null, loc_code: form.loc_code?.trim() || null, ...both }
-      : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, bill_pct: form.bill_pct?.trim() || null, billed_meters: form.billed_meters?.trim() || null, lot_status_code: form.lot_status_code?.trim() || null, ...both };
+      : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, bill_pct: form.bill_pct?.trim() || null, billed_meters: form.billed_meters?.trim() || null, lot_status_code: form.lot_status_code?.trim() || null, entry_status: form.entry_status ?? 'running', ...both };
     const sr = form.sr_no.trim() ? `SR ${form.sr_no.trim()} · ` : '';
     return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'no location'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`, 'success', refreshStock);
   };

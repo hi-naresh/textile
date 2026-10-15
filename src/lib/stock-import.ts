@@ -10,6 +10,7 @@ import { newLedgerMemo, piecesValue, recordIncoming, recordOutgoing, srValue } f
 import { describePlace, marketList } from './location';
 import { challanCode, lotCode, marketRows, metersValue, nameValue, readPlace } from './normalize';
 import type { LedgerRow } from './ledger-query';
+import { CLOSING_LABEL, ENTRY_STATUS_LABEL } from './registers';
 import {
   checkIncoming, checkOutgoing, commitIncomingRow, commitOutgoingRow, detectRegister, INCOMING_COLUMNS, OUTGOING_COLUMNS,
   type HeaderCell, type RawRow, type RegCheck, type RegCol, type RegInRow, type RegOutRow, type RegWarning, type RegisterFormat,
@@ -239,6 +240,7 @@ export function challanSheet(wb: ExcelJS.Workbook, rows: LedgerRow[]) {
     { header: 'L', key: 'l', width: 7 },
     { header: 'Billed Mts (NQTY)', key: 'nqty', width: 14, style: { numFmt: '#,##0.00' } },
     { header: 'LOT S', key: 'lots', width: 7 },
+    { header: 'Status', key: 'status', width: 10 },
     { header: 'Taken before import (S-1…S-10)', key: 'takes', width: 30 },
   ];
   rows.forEach((r, i) => {
@@ -247,8 +249,9 @@ export function challanSheet(wb: ExcelJS.Workbook, rows: LedgerRow[]) {
       quality: r.quality, design: r.design, grey: r.grey_meters, finished: r.finished_meters, meters: r.meters, pieces: r.pieces,
       mill: r.mill_name ?? '', weaver: r.weaver_name ?? '', party: r.direction === 'OUT' ? r.party ?? '' : '', location: r.location ?? '',
       entry: r.capture_event_id ? 'Photo' : r.imported ? 'Excel' : 'Manual',
-      kind: r.kind === 'adjustment' ? 'Opening adjustment (register)' : r.direction === 'OUT' ? 'Sale / dispatch' : 'Received',
+      kind: r.kind === 'adjustment' ? 'Opening adjustment (register)' : r.kind === 'closing' ? CLOSING_LABEL : r.direction === 'OUT' ? 'Sale / dispatch' : 'Received',
       linked_sr: r.linked_sr ?? '', pct: r.register_pct, loc_code: r.loc_code ?? '', l: r.bill_pct, nqty: r.billed_meters, lots: r.lot_status_code ?? '',
+      status: r.entry_status ? ENTRY_STATUS_LABEL[r.entry_status] : '',
       takes: r.takes?.length ? r.takes.map((t) => t ?? '').join(' | ') : '',
     });
   });

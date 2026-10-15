@@ -13,11 +13,14 @@ export const LOT_S_GUESS: Record<string, string> = {
 export const lotSHint = (code: string | null | undefined) => {
   if (!code) return '';
   const g = LOT_S_GUESS[code.toUpperCase()];
-  return g ? `LOT S “${code}”: ${g}. Not confirmed — data only, balances don’t use it.` : `LOT S “${code}”: meaning not known. Data only.`;
+  const st = statusFromLotS(code);
+  return g ? `LOT S “${code}”: ${g}. Sets the status of imported sales: ${st === 'end' ? 'End (closes the lot)' : 'Running'}.` : `LOT S “${code}”: meaning not known. Data only.`;
 };
 
 export const ADJUSTMENT_LABEL = 'Opening adjustment (register)';
 export const ADJUSTMENT_HINT = 'Meters already taken out of this lot before the import (S-1…S-10 in the Incoming register), so the balance matches the register’s STOCK. Not a sale.';
+export const CLOSING_LABEL = 'Closing adjustment (lot closed)';
+export const CLOSING_HINT = 'Written when the lot closed (an End entry, or closed by the owner), so its balance is exactly 0. Not a sale or a receipt.';
 export const PCT_HINT = 'The “%” column of the Incoming register (meaning not confirmed).';
 export const L_HINT = 'The “L” column of the sales register. Billed meters (NQTY) = QTY × L ÷ 100. Meaning not confirmed.';
 
@@ -63,6 +66,31 @@ export function lotStatusCodeValue(v: unknown): string | null {
   const s = String(v).trim().toUpperCase();
   if (!/^[A-Z0-9]{1,5}$/.test(s)) throw new LedgerError(`LOT S must be a short code like R, E, S or A (got "${String(v).trim().slice(0, 20)}").`);
   return s;
+}
+
+// ---------- status of an outgoing entry (migration 015) ----------
+export const ENTRY_STATUSES = ['packed', 'running', 'end'] as const;
+export type EntryStatus = (typeof ENTRY_STATUSES)[number];
+export const ENTRY_STATUS_LABEL: Record<EntryStatus, string> = { packed: 'Packed', running: 'Running', end: 'End' };
+export const ENTRY_STATUS_HINT: Record<EntryStatus, string> = {
+  packed: 'Packed for the party, not sent yet. The lot stays open.',
+  running: 'Sent. More is still left in the lot.',
+  end: 'The last sale from this lot. Saving closes the lot: anything left over (or sent beyond its balance) is written off so it shows 0.',
+};
+
+/**
+ * The sales register's LOT S code → status (issue #7): S (first sale) and R (later sale) → Running; E (last sale) and
+ * A (whole lot in one bill; still our guess, docs/AMBIGUOUS.md §1) → End. Anything else → null (left empty).
+ */
+export const LOT_S_STATUS: Record<string, EntryStatus> = { S: 'running', R: 'running', E: 'end', A: 'end' };
+export const statusFromLotS = (code: string | null | undefined): EntryStatus | null => (code ? LOT_S_STATUS[code.trim().toUpperCase()] ?? null : null);
+
+/** Status of an outgoing entry: packed / running / end (any case, or the label), or null when empty. */
+export function entryStatusValue(v: unknown): EntryStatus | null {
+  if (blank(v)) return null;
+  const s = String(v).trim().toLowerCase();
+  if ((ENTRY_STATUSES as readonly string[]).includes(s)) return s as EntryStatus;
+  throw new LedgerError(`Status must be Packed, Running or End (got "${String(v).trim().slice(0, 20)}").`);
 }
 
 /** Register serial as text (SR.NO): "102" or a combined "146+204". */

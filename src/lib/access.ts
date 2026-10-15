@@ -111,6 +111,8 @@ export type Capability =
   | 'work.allot'
   | 'lots.move'
   | 'ledger.edit'
+  | 'stock.end'
+  | 'stock.closed'
   | 'users.manage'
   | 'settings.manage'
   // Phase 2
@@ -138,6 +140,8 @@ export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string
   { layer: 'Control', cap: 'work.allot', label: 'Allot work', owner: 'Full', supervisor: 'Section crew', worker: '—' },
   { layer: 'Control', cap: 'lots.move', label: 'Move lots (market / shop / pipe)', owner: 'Full', supervisor: 'Via job cards', worker: '—' },
   { layer: 'Control', cap: 'ledger.edit', label: 'Manual ledger entries', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'stock.end', label: 'Mark entries End (closes the lot)', owner: 'Full', supervisor: 'Full', worker: '—' },
+  { layer: 'Data', cap: 'stock.closed', label: 'Closed lots & closing adjustments', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'settings.manage', label: 'Firm settings & rules', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'users.manage', label: 'Users, roles & sections', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Data', cap: 'orders.view', label: 'Orders & allocations', owner: 'Full', supervisor: 'Meters only', worker: '—' },

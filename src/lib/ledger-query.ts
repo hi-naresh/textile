@@ -6,10 +6,12 @@
 import type { Q } from './db';
 import { cappedCount } from './lots-query';
 import { marketSearchPatterns } from './markets';
+import { ENTRY_STATUSES, type EntryStatus } from './registers';
 
 export interface LedgerFilters {
   q: string | null;
   direction: 'IN' | 'OUT' | null;
+  status: EntryStatus | null; // outgoing entry status (migration 015); only outgoing rows have one
   quality: string | null;
   design: string | null;
   lot: string | null;
@@ -17,6 +19,7 @@ export interface LedgerFilters {
   from: string | null; // YYYY-MM-DD
   to: string | null;
   today?: boolean; // the database's today (same "today" as every other today-figure)
+  hideClosed?: boolean; // set by the server for people without stock.closed: no rows of closed lots, no closing adjustments
 }
 
 const clip = (v: string | null, max = 100) => {
@@ -27,9 +30,11 @@ const isDate = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Num
 
 export function filtersFrom(sp: URLSearchParams): LedgerFilters {
   const dir = sp.get('direction');
+  const st = sp.get('status');
   return {
     q: clip(sp.get('q')),
     direction: dir === 'IN' || dir === 'OUT' ? dir : null,
+    status: (ENTRY_STATUSES as readonly string[]).includes(st ?? '') ? (st as EntryStatus) : null,
     quality: clip(sp.get('quality')),
     design: clip(sp.get('design')),
     lot: clip(sp.get('lot'), 50),
@@ -59,6 +64,8 @@ export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map
   const params: unknown[] = [];
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
   if (f.direction) parts.push(`sm.direction = ${p(f.direction)}`);
+  if (f.status) parts.push(`sm.entry_status = ${p(f.status)}`);
+  if (f.hideClosed) parts.push(`l.closed_at IS NULL AND sm.kind <> 'closing'`);
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
   if (f.design) parts.push(`lower(l.design) = lower(${p(f.design)})`);
   if (f.lot) { const w = p(like(f.lot.toLowerCase())); parts.push(`sm.search_doc LIKE ${w} AND lower(sm.lot_id) LIKE ${w}`); }
@@ -83,18 +90,20 @@ const COLS = `sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.fini
   to_char(sm.ts, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS ts_key, l.quality, l.design, (sm.ts::date = CURRENT_DATE) AS is_today,
   (SELECT ll.location FROM lot_locations ll WHERE ll.lot_id = sm.lot_id AND ll.stock_movement_id = sm.id ORDER BY ll.id DESC LIMIT 1) AS location,
   EXISTS (SELECT 1 FROM ledger_edits le WHERE le.target = 'movement' AND le.target_id = sm.id::text) AS edited,
-  sm.kind, sm.register_pct, sm.takes, sm.loc_code, sm.bill_pct, sm.billed_meters, sm.lot_status_code, sm.linked_sr, l.reg_lot_no`;
+  sm.kind, sm.register_pct, sm.takes, sm.loc_code, sm.bill_pct, sm.billed_meters, sm.lot_status_code, sm.linked_sr, l.reg_lot_no, sm.entry_status`;
 
 export interface LedgerRow {
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
   mill_name: string | null; weaver_name: string | null; party: string | null; source_doc_id: string | null; capture_event_id: number | null;
   sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
   edited: boolean; // changed in the ledger's edit mode (see ledger_edits)
-  // Register fields (migration 013). kind 'adjustment' = opening adjustment from the Incoming register (an OUT, not a sale).
-  kind: 'normal' | 'adjustment';
+  // Register fields (migration 013). kind 'adjustment' = opening adjustment from the Incoming register (an OUT, not a sale);
+  // 'closing' = closing adjustment written when the lot closed (migration 016; IN or OUT, not a receipt or sale).
+  kind: 'normal' | 'adjustment' | 'closing';
   register_pct: number | null; takes: (number | null)[] | null; loc_code: string | null; // IN
   bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null; linked_sr: string | null; // OUT
   reg_lot_no: string | null; // the lot's number as written in the register (lot_id may carry "-SR<n>")
+  entry_status: EntryStatus | null; // OUT: packed / running / end (migration 015); null on IN and older rows
 }
 
 const num = (v: unknown) => (v == null ? null : Number(v));
@@ -107,10 +116,11 @@ function toRow(r: Record<string, unknown>): LedgerRow {
     ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts), imported: !!r.imported,
     quality: String(r.quality ?? ''), design: String(r.design ?? ''), is_today: !!r.is_today, location: (r.location as string) ?? null,
     edited: !!r.edited,
-    kind: r.kind === 'adjustment' ? 'adjustment' : 'normal',
+    kind: r.kind === 'adjustment' || r.kind === 'closing' ? r.kind : 'normal',
     register_pct: num(r.register_pct), takes: Array.isArray(r.takes) ? (r.takes as unknown[]).map(num) : null, loc_code: (r.loc_code as string) ?? null,
     bill_pct: num(r.bill_pct), billed_meters: num(r.billed_meters), lot_status_code: (r.lot_status_code as string) ?? null, linked_sr: (r.linked_sr as string) ?? null,
     reg_lot_no: (r.reg_lot_no as string) ?? null,
+    entry_status: (ENTRY_STATUSES as readonly string[]).includes(String(r.entry_status)) ? (r.entry_status as EntryStatus) : null,
   };
 }
 

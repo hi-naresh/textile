@@ -149,7 +149,7 @@ export async function summaryParams(lang: string): Promise<string[]> {
     readBilling(run),
     run(`SELECT COALESCE(SUM(bal_m), 0) AS m, COUNT(*)::int AS n FROM lots WHERE bal_m > 0`),
     run(`SELECT COALESCE(SUM(meters) FILTER (WHERE direction = 'IN'), 0) AS i, COALESCE(SUM(meters) FILTER (WHERE direction = 'OUT'), 0) AS o
-         FROM stock_movements WHERE ts >= CURRENT_DATE - 1 AND ts < CURRENT_DATE`),
+         FROM stock_movements WHERE ts >= CURRENT_DATE - 1 AND ts < CURRENT_DATE AND kind = 'normal'`),
     run(`SELECT COUNT(*) FILTER (WHERE promise_date = CURRENT_DATE)::int AS due, COUNT(*) FILTER (WHERE promise_date < CURRENT_DATE)::int AS late
          FROM orders WHERE status IN ('open', 'partly_dispatched')`),
     run(`SELECT (SELECT COUNT(*)::int FROM agent_suggestions WHERE status = 'open') AS alerts,

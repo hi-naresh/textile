@@ -14,10 +14,10 @@
 import { createHash } from 'crypto';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { DISPATCHED, currentPlace, importRef, lockLot, lotAttrMemo, moveLot, nameMemo, piecesValue, srValue, staleOnce, type LedgerMemo } from './ledger';
+import { DISPATCHED, assertLotOpen, closeLot, currentPlace, importRef, lockLot, lotAttrMemo, moveLot, nameMemo, piecesValue, srValue, staleOnce, type LedgerMemo } from './ledger';
 import { trimReservations } from './stock';
 import { challanCode, lotCode, metersValue, nameKey, nameValue } from './normalize';
-import { billPctValue, billedMetersValue, linkedSrValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
+import { billPctValue, billedMetersValue, linkedSrValue, locCodeValue, lotStatusCodeValue, registerPctValue, statusFromLotS } from './registers';
 
 export type RegisterFormat = 'incoming' | 'outgoing';
 export const NO_DESIGN = 'No design'; // the registers have no design; lots need one
@@ -504,7 +504,11 @@ export async function commitIncomingRow(q: Q, r: Record<string, unknown>, movedB
   return { in: 1, out: 0 };
 }
 
-/** Save one Outgoing-register row as an OUT on its lot (no party). Inside the chunk's transaction. */
+/**
+ * Save one Outgoing-register row as an OUT on its lot (no party). Inside the chunk's transaction.
+ * Its status comes from LOT S (statusFromLotS; no code → Running). E / A = End: the lot closes (reason 'register'),
+ * so a later row for the same lot is refused like any entry on a closed lot.
+ */
 export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedBy: string | null, memo: LedgerMemo) {
   await staleOnce(q, memo);
   const ref = importRef(r.ref);
@@ -518,12 +522,14 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
   const billed = billedMetersValue(r.billed_meters);
   const code = lotStatusCodeValue(r.lot_status_code);
   const linked = linkedSrValue(r.linked_sr);
+  const status = statusFromLotS(code) ?? 'running';
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist. Check the file again.`);
+  await assertLotOpen(q, lotId);
   const b = Number((await q(`SELECT bal_m FROM lots WHERE lot_id = $1`, [lotId])).rows[0].bal_m);
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, import_ref, ts, bill_pct, billed_meters, lot_status_code, linked_sr)
-     VALUES ($1, 'OUT', $2, NULL, $3, $4, ($5::date + interval '12 hours'), $6, $7, $8, $9) RETURNING id`,
-    [lotId, meters, bill, ref, date, billPct, billed, code, linked],
+    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, import_ref, ts, bill_pct, billed_meters, lot_status_code, linked_sr, entry_status)
+     VALUES ($1, 'OUT', $2, NULL, $3, $4, ($5::date + interval '12 hours'), $6, $7, $8, $9, $10) RETURNING id`,
+    [lotId, meters, bill, ref, date, billPct, billed, code, linked, status],
   );
   await trimReservations(q, lotId);
   const remaining = round2(b - meters);
@@ -535,5 +541,6 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
     lot_id: lotId, location: remaining <= 0 ? DISPATCHED : here!.location, place: remaining <= 0 ? null : here, stage: 'dispatch',
     note: `${meters} m on bill ${bill ?? '—'}${remaining > 0 ? ` · ${remaining} m left` : remaining < 0 ? ` · ${remaining} m balance` : ''}`, stock_movement_id: Number(mv.rows[0].id), moved_by: movedBy,
   });
+  if (status === 'end') await closeLot(q, lotId, { reason: 'register', by: movedBy, endMovementId: Number(mv.rows[0].id) });
   return { in: 0, out: 1 };
 }

@@ -6,6 +6,7 @@ import Icon from '../Icon';
 import { Segmented } from '../ui';
 import { EMPTY_FILTERS, filtersActive, type LedgerFacets, type LedgerFilterState } from '@/lib/useLedger';
 import { useLotSearch } from '@/lib/useLots';
+import { ENTRY_STATUSES, ENTRY_STATUS_LABEL, type EntryStatus } from '@/lib/registers';
 
 export function LedgerFilterBar({ value, onChange, facets }: {
   value: LedgerFilterState;
@@ -19,7 +20,7 @@ export function LedgerFilterBar({ value, onChange, facets }: {
   const lotSearch = useLotSearch(value.lot, { limit: 30, enabled: value.lot.trim() !== '' });
   const lotOptions = value.lot.trim() ? (lotSearch.lots ?? []).map((l) => l.lot_id) : [];
   const [open, setOpen] = React.useState(false); // phone: quality / design / lot / dates fold away
-  const extra = [value.quality, value.design, value.lot, value.party, value.from, value.to].filter(Boolean).length;
+  const extra = [value.status, value.quality, value.design, value.lot, value.party, value.from, value.to].filter(Boolean).length;
 
   return (
     <div className={`lf ${open ? 'open' : ''}`} role="search" aria-label="Filter the ledger">
@@ -28,11 +29,17 @@ export function LedgerFilterBar({ value, onChange, facets }: {
         <input type="search" value={value.q} onChange={(e) => set('q', e.target.value)} placeholder="Search lot, quality, design, party, mill, challan, SR…" aria-label="Search the ledger" />
       </label>
       <div className="lf-row">
-        <Segmented label="Direction" value={value.direction || 'ALL'} onChange={(v) => set('direction', v === 'ALL' ? '' : v)}
+        <Segmented label="Direction" value={value.direction || 'ALL'} onChange={(v) => onChange({ ...value, direction: v === 'ALL' ? '' : v, status: v === 'IN' ? '' : value.status })}
           options={[{ value: 'ALL', label: 'All' }, { value: 'IN', label: 'Inward' }, { value: 'OUT', label: 'Outward' }]} />
         <button type="button" className="btn sm lf-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
           <Icon name="filter" size={14} />{open ? 'Fewer filters' : `More filters${extra ? ` (${extra})` : ''}`}
         </button>
+        {/* Only outgoing entries have a status: picking one shows outward rows only. */}
+        <select className="input sel lf-x" aria-label="Status of outgoing entries" value={value.status}
+          onChange={(e) => { const st = e.target.value as '' | EntryStatus; onChange({ ...value, status: st, direction: st && value.direction === 'IN' ? '' : value.direction }); }}>
+          <option value="">All statuses</option>
+          {ENTRY_STATUSES.map((x) => <option key={x} value={x}>{ENTRY_STATUS_LABEL[x]}</option>)}
+        </select>
         <select className="input sel lf-x" aria-label="Quality" value={value.quality} onChange={(e) => onChange({ ...value, quality: e.target.value, design: '' })}>
           <option value="">All qualities</option>
           {facets?.qualities.map((q) => <option key={q} value={q}>{q}</option>)}

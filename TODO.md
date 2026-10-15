@@ -2,7 +2,26 @@
 
 These are parked on purpose: build them once the product flow is confirmed and the app is delivering real value, before production.
 
-Last updated: 9 Oct 2026
+Last updated: 15 Oct 2026
+
+---
+
+## Lot status — Packed / Running / End (issues #3–#7) — built 15 Oct 2026 on branch `feature/lot-status`
+
+- [x] #3 Status on outgoing entries (manual entry, dispatch lines, ledger pill + filter, Excel export); End needs `stock.end`, which the owner switches for supervisors in My firm → Policy → Rules
+- [x] #4 End closes the lot: closing adjustment to 0, lot closed + history (`lot_closures`); closing rows never count as received / dispatched
+- [x] #5 Closed lots hidden from current stock, lists, pickers, search, chat, live feed; owner-only Lots & balance → Closed (`stock.closed`)
+- [x] #6 Status editable in ledger edit mode (End closes, taking End off reopens); owner Close lot / Reopen with a note
+- [x] #7 Sales-register LOT S → status on import (E / A close the lot); one-time backfill script with a dry run
+- [x] 20 regression tests (`npm run test:stock`, disposable local DB), chat suite still 16/16, typecheck, lint, production build
+
+Before rollout:
+- [ ] **Ask the client:** do Packed meters count as out of stock (built: yes)? Can supervisors close / reopen lots (built: owner only)? Is register code A = End (built: yes)?
+- [ ] Apply migrations 015 and 016 on the configured database (they run with the normal build / `npm run db:migrate`)
+- [ ] Run `npm run db:backfill-lot-status` (dry run), give the owner `lot-status-backfill.csv` to check, then `-- --apply --by <owner id>`
+- [ ] Check the new screens on a phone and a desktop browser (not done: tests cover the server side only)
+- [ ] Issue #8 (stock on hand by lot state, from Naresh): build with its own bucket names — e.g. In store / On the floor / On hold — so "Packed" / "Running" don't mean two things
+- [ ] Follow-ups: the app-template Excel import has no Status column (rows import as Running); reservations trimmed when a lot closes are not restored when it reopens; two End entries on the same lot at the same moment are serialised by the lot lock but were not load-tested
 
 ---
 

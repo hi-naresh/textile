@@ -76,7 +76,7 @@ export async function marginMoves(q: Q, days: number): Promise<MarginMove[]> {
      LEFT JOIN dispatches dsp ON dsp.id = m.dispatch_id
      LEFT JOIN parties pn ON m.party IS NOT NULL AND pn.name_key = regexp_replace(lower(m.party), '[^a-z0-9]', '', 'g')
      LEFT JOIN parties pp ON pp.id = COALESCE(o.party_id, dsp.party_id, pn.id)
-     WHERE m.direction = 'OUT' AND m.ts >= CURRENT_DATE - ($1::int - 1)
+     WHERE m.direction = 'OUT' AND m.kind = 'normal' AND m.ts >= CURRENT_DATE - ($1::int - 1)
      ORDER BY m.ts, m.id`,
     [days],
   );

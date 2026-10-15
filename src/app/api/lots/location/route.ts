@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap } from '@/lib/apiAuth';
-import { canAddShops } from '@/lib/access';
+import { can, canAddShops } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError, moveLotManually } from '@/lib/ledger';
 import { lotsByIds } from '@/lib/lots-query';
@@ -8,7 +8,7 @@ import { lotsByIds } from '@/lib/lots-query';
 // GET /api/lots/location?lot_id=LOT-5021 → { history: full location history (newest first), lot: the lot now (balance, location) | null }
 export async function GET(request: NextRequest) {
   try {
-    await requireCap(request, 'stock.quantity');
+    const a = await requireCap(request, 'stock.quantity');
     const lotId = request.nextUrl.searchParams.get('lot_id');
     if (!lotId) throw new LedgerError('lot_id is required.');
     const [res, lot] = await Promise.all([query(
@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
        LIMIT 200`,
       [lotId]
     ), lotsByIds((text, params) => query(text, params), [lotId])]);
+    // Closed lots are the owner's records (stock.closed): anyone else is told there is no such lot.
+    if (lot[0]?.closed_at && !can(a.role, 'stock.closed')) throw new LedgerError('Lot not found.', 404);
     return NextResponse.json({ history: res.rows, lot: lot[0] ?? null }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);

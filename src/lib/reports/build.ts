@@ -32,7 +32,7 @@ export interface Report {
   role: Role;
   generatedAt: string;
   kpis: KpiChange[];
-  stock: { opening: number; in: number; out: number; closing: number; inChallans: number; outChallans: number };
+  stock: { opening: number; in: number; out: number; adjusted: number; closing: number; inChallans: number; outChallans: number }; // adjusted: opening / closing adjustments in the period (not receipts or sales)
   dispatch: { total: number; challans: number; parties: number; byParty: Named[]; byQuality: Named[] };
   receipts: { total: number; challans: number; byMill: (Named & { lossPct: number | null })[] };
   production: {
@@ -61,10 +61,10 @@ const pctOrNull = (num: number, den: number) => (den > 0 ? r1((num / den) * 100)
 async function core(q: Q, from: string, to: string, owner: boolean) {
   const r = await q(
     `SELECT
-       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'OUT' AND ts >= $1::date AND ts < $2::date + 1) AS out_m,
-       (SELECT COUNT(*) FROM stock_movements WHERE direction = 'OUT' AND ts >= $1::date AND ts < $2::date + 1) AS out_n,
-       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'IN' AND ts >= $1::date AND ts < $2::date + 1) AS in_m,
-       (SELECT COUNT(*) FROM stock_movements WHERE direction = 'IN' AND ts >= $1::date AND ts < $2::date + 1) AS in_n,
+       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'OUT' AND kind = 'normal' AND ts >= $1::date AND ts < $2::date + 1) AS out_m,
+       (SELECT COUNT(*) FROM stock_movements WHERE direction = 'OUT' AND kind = 'normal' AND ts >= $1::date AND ts < $2::date + 1) AS out_n,
+       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'IN' AND kind = 'normal' AND ts >= $1::date AND ts < $2::date + 1) AS in_m,
+       (SELECT COUNT(*) FROM stock_movements WHERE direction = 'IN' AND kind = 'normal' AND ts >= $1::date AND ts < $2::date + 1) AS in_n,
        (SELECT COALESCE(SUM(meters_out), 0) FROM job_cards WHERE status = 'closed' AND ts_closed >= $1::date AND ts_closed < $2::date + 1) AS prod_m,
        (SELECT COUNT(*) FROM job_cards WHERE status = 'closed' AND ts_closed >= $1::date AND ts_closed < $2::date + 1) AS prod_n,
        (SELECT COALESCE(SUM(shortage), 0) FROM job_cards WHERE status = 'closed' AND ts_closed >= $1::date AND ts_closed < $2::date + 1) AS short_m,
@@ -117,19 +117,25 @@ export async function buildReport(q: Q, period: ReportPeriod, role: Role, endDat
   const prev = await core(q, rg.prevFrom, rg.prevTo, owner);
 
   // ---- stock ----
-  const opening = await q(`SELECT COALESCE(SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END), 0) AS b FROM stock_movements WHERE ts < $1::date`, [rg.from]);
-  const open = n(opening.rows[0].b);
-  const stock = { opening: r2(open), in: r2(cur.in), out: r2(cur.out), closing: r2(open + cur.in - cur.out), inChallans: cur.inN, outChallans: cur.outN };
+  // Opening / closing = real balances (every kind of entry). In / out count receipts and sales only, so the opening and
+  // closing adjustments of the period (register import, lots closed with a write-off) show as `adjusted`.
+  const bal = await q(
+    `SELECT COALESCE(SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) FILTER (WHERE ts < $1::date), 0) AS o,
+            COALESCE(SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END), 0) AS c
+     FROM stock_movements WHERE ts < $2::date + 1`, [rg.from, rg.to]);
+  const open = n(bal.rows[0].o);
+  const close = n(bal.rows[0].c);
+  const stock = { opening: r2(open), in: r2(cur.in), out: r2(cur.out), adjusted: r2(close - open - cur.in + cur.out), closing: r2(close), inChallans: cur.inN, outChallans: cur.outN };
 
   // ---- dispatch ----
   const byParty = await q(
     `SELECT COALESCE(NULLIF(btrim(party), ''), '—') AS name, SUM(meters) AS m, COUNT(*) AS c
-     FROM stock_movements WHERE direction = 'OUT' AND ts >= $1::date AND ts < $2::date + 1
+     FROM stock_movements WHERE direction = 'OUT' AND kind = 'normal' AND ts >= $1::date AND ts < $2::date + 1
      GROUP BY 1 ORDER BY m DESC LIMIT 10`, P);
   const byQuality = await q(
     `SELECT l.quality AS name, SUM(sm.meters) AS m, COUNT(*) AS c
      FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id
-     WHERE sm.direction = 'OUT' AND sm.ts >= $1::date AND sm.ts < $2::date + 1
+     WHERE sm.direction = 'OUT' AND sm.kind = 'normal' AND sm.ts >= $1::date AND sm.ts < $2::date + 1
      GROUP BY 1 ORDER BY m DESC LIMIT 10`, P);
   const partiesN = await q(`SELECT COUNT(DISTINCT lower(btrim(party))) AS c FROM stock_movements WHERE direction = 'OUT' AND party IS NOT NULL AND ts >= $1::date AND ts < $2::date + 1`, P);
   const named = (rows: Record<string, unknown>[]): Named[] => rows.map((x) => ({ name: String(x.name), meters: r2(n(x.m)), count: n(x.c) }));
@@ -138,7 +144,7 @@ export async function buildReport(q: Q, period: ReportPeriod, role: Role, endDat
   const byMill = await q(
     `SELECT COALESCE(NULLIF(btrim(mill_name), ''), '—') AS name, SUM(meters) AS m, COUNT(*) AS c,
             SUM(grey_meters) FILTER (WHERE finished_meters IS NOT NULL) AS g, SUM(finished_meters) FILTER (WHERE grey_meters IS NOT NULL) AS f
-     FROM stock_movements WHERE direction = 'IN' AND ts >= $1::date AND ts < $2::date + 1
+     FROM stock_movements WHERE direction = 'IN' AND kind = 'normal' AND ts >= $1::date AND ts < $2::date + 1
      GROUP BY 1 ORDER BY m DESC LIMIT 10`, P);
 
   // ---- production ----
@@ -356,7 +362,8 @@ export function stripForRole<T extends Report>(r: T, role: Role): T {
   }
   const { money: _m, ai: _a, ...rest } = r;
   void _m; void _a;
-  const out = { ...rest, kpis: r.kpis.filter((x) => !x.ownerOnly), role } as T;
+  // Opening / closing adjustments are the owner's internal records (closing a lot writes one off): not shown here.
+  const out = { ...rest, kpis: r.kpis.filter((x) => !x.ownerOnly), stock: { ...r.stock, adjusted: 0 }, role } as T;
   // Rebuild the narrative so no ₹ sentence survives.
   return { ...out, narrative: narrativeFor(out), narrativeSource: 'rules' };
 }

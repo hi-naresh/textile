@@ -13,7 +13,8 @@ import type { StockEntry } from '@/lib/useTextileData';
 import { LotPicker } from '../LotPicker';
 import { useLotSearch, type PickLot } from '@/lib/useLots';
 import type { CaptureEvent, JobCard, Lot, LotLocationEntry } from '@/lib/types';
-import { LOT_S_GUESS } from '@/lib/registers';
+import { ENTRY_STATUS_HINT, LOT_S_GUESS } from '@/lib/registers';
+import { EntryStatusPicker } from '../EntryStatus';
 
 // ---------------- Job cards ----------------
 export function JobCards({ ctx }: { ctx: Ctx }) {
@@ -313,7 +314,7 @@ export function Allot({ ctx }: { ctx: Ctx }) {
 
 // ---------------- Manual stock entry (owner) ----------------
 const todayDateIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', date: '' };
+const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', entry_status: 'running', date: '' };
 
 interface SrInfo { next: number; taken?: { lot_id: string; ts: string } | null; sr?: number }
 
@@ -374,6 +375,10 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const lotQty = parseFloat(f.meters);
   const lPct = parseFloat(f.bill_pct ?? '');
   const nqtyHint = !isIn && Number.isFinite(lotQty) && Number.isFinite(lPct) ? Math.round(lotQty * lPct) / 100 : null;
+
+  // Outgoing: End needs stock.end. Suggest End when the meters take everything left in a known lot.
+  const canEnd = can(role, 'stock.end');
+  const takesAll = !isIn && known != null && Number.isFinite(lotQty) && lotQty > 0 && lotQty >= (known.balance ?? 0) - 0.005;
 
   const switchDirection = (v: 'IN' | 'OUT') => { setSrTouched(false); setSr(null); setF({ ...f, direction: v, sr_no: '' }); };
 
@@ -480,6 +485,14 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <datalist id="party-list">{d.names.parties.map((n) => <option key={n} value={n} />)}</datalist>
           </label>
           <label className="fld">Bill / challan no.<input className="num" value={f.source_doc} onChange={set('source_doc')} /></label>
+          <div className="fld">
+            <span>Status</span>
+            <EntryStatusPicker value={f.entry_status ?? 'running'} onChange={(v) => setF({ ...f, entry_status: v })} canEnd={canEnd} />
+            <span className="muted small hint">{ENTRY_STATUS_HINT[f.entry_status ?? 'running']}</span>
+            {takesAll && canEnd && f.entry_status !== 'end' && (
+              <span className="muted small hint">This takes everything left in {known!.lot_id}. <button type="button" className="linkbtn" onClick={() => setF({ ...f, entry_status: 'end' })}>Mark it End?</button></span>
+            )}
+          </div>
           <details className="sf-more">
             <summary>More fields (optional)</summary>
             <div className="two-col">

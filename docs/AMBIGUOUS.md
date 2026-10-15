@@ -29,11 +29,12 @@ The app stores the unclear columns exactly as written. They are not used to work
 - **E** = End: the last sale, and the lot is now finished.
 - **A** = All: the whole lot sold in one bill.
 
-**App now**
-- The code is saved with each sale and shown on the ledger row.
-- On hover, a tooltip shows the guess, marked "our guess".
-- The code is data only. It never changes a balance.
-- Any code other than R / E / S / A is kept, with a note.
+**App now** (issue #7, Oct 2026)
+- The code is saved with each sale and shown on the ledger row; on hover, a tooltip shows the guess.
+- It sets the sale's status: S and R → Running, E and A → End. An End closes the lot on that date: what is left is written off so the balance is 0, and the lot leaves current stock (the owner sees it under Lots & balance → Closed).
+- Sales imported before this change get their status from a one-time backfill (`npm run db:backfill-lot-status`): a dry run lists every lot it would close for the owner to check first.
+- Any code other than R / E / S / A is kept, with a note, and gives no status.
+- A = End is still our guess: if A means something else, change `LOT_S_STATUS` in `src/lib/registers.ts`.
 
 **Question**
 - Is the guess right?

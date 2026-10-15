@@ -115,19 +115,19 @@ export const METRICS: Record<string, MetricDef> = {
   },
   received: {
     title: 'Received', describe: 'meters received (incoming challans)', unit: 'm',
-    from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'IN'`, agg: 'SUM(sm.meters)', time: 'sm.ts',
+    from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'IN' AND sm.kind = 'normal'`, agg: 'SUM(sm.meters)', time: 'sm.ts',
     dims: { mill: `COALESCE(sm.mill_name, '—')`, quality: 'l.quality', lot: 'sm.lot_id', day: DAY('sm.ts'), month: MONTH('sm.ts') },
     filters: { mill: 'sm.mill_name', quality: 'l.quality', lot: 'sm.lot_id' },
   },
   dispatched: {
     title: 'Dispatched', describe: 'meters dispatched (outgoing challans)', unit: 'm',
-    from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'OUT'`, agg: 'SUM(sm.meters)', time: 'sm.ts',
+    from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'OUT' AND sm.kind = 'normal'`, agg: 'SUM(sm.meters)', time: 'sm.ts',
     dims: { party: 'sm.party', quality: 'l.quality', lot: 'sm.lot_id', day: DAY('sm.ts'), month: MONTH('sm.ts') },
     filters: { party: 'sm.party', quality: 'l.quality', lot: 'sm.lot_id' },
   },
   challans: {
     title: 'challans', describe: 'number of challans (incoming + outgoing)', unit: 'count',
-    from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', agg: 'COUNT(*)', time: 'sm.ts',
+    from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.kind = 'normal'`, agg: 'COUNT(*)', time: 'sm.ts',
     dims: { party: 'sm.party', mill: 'sm.mill_name', quality: 'l.quality', day: DAY('sm.ts') },
     filters: { party: 'sm.party', mill: 'sm.mill_name', quality: 'l.quality', lot: 'sm.lot_id' },
   },
@@ -413,9 +413,9 @@ export async function briefing(scope: Scope): Promise<SemanticResult> {
   const sec = scope.role === 'supervisor' ? scope.sections : null;
   const r = await query(
     `SELECT
-       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'OUT' AND ts::date = CURRENT_DATE) AS out_today,
-       (SELECT COUNT(*) FROM stock_movements WHERE direction = 'OUT' AND ts::date = CURRENT_DATE) AS out_n,
-       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'IN' AND ts::date = CURRENT_DATE) AS in_today,
+       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'OUT' AND kind = 'normal' AND ts::date = CURRENT_DATE) AS out_today,
+       (SELECT COUNT(*) FROM stock_movements WHERE direction = 'OUT' AND kind = 'normal' AND ts::date = CURRENT_DATE) AS out_n,
+       (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'IN' AND kind = 'normal' AND ts::date = CURRENT_DATE) AS in_today,
        (SELECT COALESCE(SUM(meters_out), 0) FROM job_cards WHERE status = 'closed' AND ts_closed::date = CURRENT_DATE
           AND ($1::text[] IS NULL OR ${SEC('process')} = ANY($1::text[]))) AS done_today,
        (SELECT COUNT(*) FROM job_cards WHERE status <> 'closed' AND ($1::text[] IS NULL OR ${SEC('process')} = ANY($1::text[]))) AS open_cards,

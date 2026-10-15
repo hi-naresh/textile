@@ -134,9 +134,9 @@ export function gridKeyDown(e: React.KeyboardEvent<HTMLElement>) {
 }
 
 // ---------- one editable cell ----------
-export const EditCell = React.memo(function EditCell({ kind, id, field, orig, draft, problem, label, onEdit, num, list, options, hint }: {
+export const EditCell = React.memo(function EditCell({ kind, id, field, orig, draft, problem, label, onEdit, num, list, options, optionLabels, hint }: {
   kind: Kind; id: number | string; field: string; orig: string; draft: string | undefined; problem?: string;
-  label: string; onEdit: OnEdit; num?: boolean; list?: string; options?: readonly string[]; hint?: string;
+  label: string; onEdit: OnEdit; num?: boolean; list?: string; options?: readonly string[]; optionLabels?: Record<string, string>; hint?: string;
 }) {
   const value = draft ?? orig;
   const changed = draft !== undefined;
@@ -151,7 +151,7 @@ export const EditCell = React.memo(function EditCell({ kind, id, field, orig, dr
       {options ? (
         <select className={cls} data-c={field} aria-label={label} aria-invalid={!!err} aria-describedby={errId} value={value}
           onChange={(e) => onEdit(kind, id, field, e.target.value, orig)} onKeyDown={onKeyDown}>
-          {options.map((o) => <option key={o} value={o}>{o}</option>)}
+          {options.map((o) => <option key={o} value={o}>{optionLabels?.[o] ?? o}</option>)}
         </select>
       ) : (
         <input className={cls} data-c={field} aria-label={label} aria-invalid={!!err} aria-describedby={errId} value={value} list={list}
@@ -195,6 +195,34 @@ export function UnsavedDialog({ count, saving, onSave, onDiscard, onCancel }: { 
           <button type="button" className="btn sm" onClick={onCancel} disabled={saving}>Keep editing</button>
           <button type="button" className="btn sm danger" onClick={onDiscard} disabled={saving}>Discard</button>
           <button type="button" className="btn sm primary" ref={saveRef} onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Yes / no question before something that changes stock (closing / reopening a lot). Optional note field. */
+export function ConfirmDialog({ title, children, confirmLabel, danger = false, busy = false, note, onConfirm, onCancel }: {
+  title: string; children: React.ReactNode; confirmLabel: string; danger?: boolean; busy?: boolean;
+  note?: { value: string; onChange: (v: string) => void; label: string };
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  const okRef = React.useRef<HTMLButtonElement | null>(null);
+  React.useEffect(() => {
+    okRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+  return (
+    <div className="se-overlay" onClick={onCancel}>
+      <div className="se-dialog card pad stack-14" role="alertdialog" aria-modal="true" aria-labelledby="cf-dlg-t" aria-describedby="cf-dlg-d" onClick={(e) => e.stopPropagation()}>
+        <h2 id="cf-dlg-t">{title}</h2>
+        <div id="cf-dlg-d" className="t2 stack-8">{children}</div>
+        {note && <label className="fld">{note.label}<input value={note.value} maxLength={500} onChange={(e) => note.onChange(e.target.value)} /></label>}
+        <div className="se-dlg-actions">
+          <button type="button" className="btn sm" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" className={`btn sm ${danger ? 'danger' : 'primary'}`} ref={okRef} onClick={onConfirm} disabled={busy}>{busy ? 'Saving…' : confirmLabel}</button>
         </div>
       </div>
     </div>

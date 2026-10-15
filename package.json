@@ -9,13 +9,15 @@
     "lint": "eslint && node scripts/check-route-auth.js",
     "lint:auth": "node scripts/check-route-auth.js",
     "test:chat": "node --import tsx --test tests/chat/regression.test.tsx",
+    "test:stock": "node --import tsx --test tests/stock/*.test.ts",
     "dev:create": "node scripts/create-developer.js",
     "db:migrate": "node scripts/migrate.js",
     "db:init": "node scripts/db-init.js && node scripts/migrate.js",
     "db:seed-demo": "node scripts/seed-demo.js && node scripts/seed-demo-logins.js",
     "dev:https": "next dev --experimental-https -H 0.0.0.0",
     "tunnel": "npx -y cloudflared tunnel --url http://localhost:3000",
-    "db:seed-showcase": "tsx scripts/seed-showcase.ts"
+    "db:seed-showcase": "tsx scripts/seed-showcase.ts",
+    "db:backfill-lot-status": "tsx scripts/backfill-lot-status.ts"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

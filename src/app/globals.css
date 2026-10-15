@@ -1121,6 +1121,7 @@ tr.mv-adj .strong { font-weight: 500; }
 /* ===== WhatsApp (Policy card, Money reminder, Dispatch list, developer console) ===== */
 .wa-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .wa-row { display: flex; align-items: center; gap: 12px; }
+.lot-acts { justify-content: flex-end; flex-wrap: wrap; }
 .wa-row .switch { flex: 0 0 auto; }
 .wa-inline { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding-left: 12px; border-left: 2px solid var(--line2, var(--line)); }
 .wa-inline .fld { flex: 1 1 200px; min-width: 0; }
