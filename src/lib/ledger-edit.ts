@@ -214,8 +214,9 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     }
   }
 
-  // 3b. Status → End closes the lot: the lot must be open, and only one entry per lot can end it in one save.
-  //     End → Packed / Running reopens the lot when this entry is the one that closed it.
+  // 3b. Status → End closes the lot, and only one entry per lot can end it in one save. A lot already closed by hand
+  //     with no End entry (closed before closing marked one) takes the End without closing again. A lot already
+  //     closed by another End entry is refused. End → Packed / Running reopens the lot when this entry closed it.
   const statusChanges = [...mvFinal.values()].filter((x) => x.field === 'entry_status' && !same(x.m.entry_status, x.value));
   const ending = statusChanges.filter((x) => x.value === 'end');
   const unending = statusChanges.filter((x) => x.m.entry_status === 'end');
@@ -230,7 +231,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
   for (const x of ending) {
     const st = lotState.get(x.m.lot_id)!;
     const reopening = unending.some((u) => u.m.lot_id === x.m.lot_id && st.endId === u.m.id);
-    if (st.closed && !reopening) problem(x.origin, `Lot ${x.m.lot_id} is already closed. Reopen it first.`);
+    if (st.closed && !reopening && st.endId != null) problem(x.origin, `Lot ${x.m.lot_id} is already closed by another End entry. Reopen it first.`);
     else if (endingLots.has(x.m.lot_id)) problem(x.origin, `Only one entry can be the End of lot ${x.m.lot_id}.`);
     endingLots.add(x.m.lot_id);
   }
@@ -282,11 +283,21 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
 
   // 5. Lots that close or reopen because of a status change (reopen first: an End can move to another entry).
   let reload = false;
+  const reopened = new Set<string>();
   for (const x of unending) {
     const st = lotState.get(x.m.lot_id)!;
-    if (st.closed && st.endId === x.m.id) { await reopenLot(q, x.m.lot_id, { by, keepEndEntry: x.m.id }); reload = true; }
+    if (st.closed && st.endId === x.m.id) { await reopenLot(q, x.m.lot_id, { by, keepEndEntry: x.m.id }); reopened.add(x.m.lot_id); reload = true; }
   }
-  for (const x of ending) { await closeLot(q, x.m.lot_id, { reason: 'end_entry', by, endMovementId: x.m.id }); reload = true; }
+  for (const x of ending) {
+    const st = lotState.get(x.m.lot_id)!;
+    if (st.closed && !reopened.has(x.m.lot_id)) {
+      // Closed by hand without an End entry: this sale becomes its End (reopening turns it back to Running).
+      await q(`UPDATE lot_closures SET end_movement_id = $2 WHERE id = (SELECT id FROM lot_closures WHERE lot_id = $1 AND action = 'close' ORDER BY id DESC LIMIT 1)`, [x.m.lot_id, x.m.id]);
+    } else {
+      await closeLot(q, x.m.lot_id, { reason: 'end_entry', by, endMovementId: x.m.id });
+      reload = true;
+    }
+  }
 
   const rows = await ledgerRowsByIds(q, [...mvSet.keys()]);
   const changedLots = [...lotSet.keys()];

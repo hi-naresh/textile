@@ -77,7 +77,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<null | (() => void)>(null); // action waiting on "save or discard?"
   // Saving a status change that closes / reopens a lot asks first; so do Close lot / Reopen.
-  const [statusConfirm, setStatusConfirm] = useState<string[] | null>(null);
+  const [statusConfirm, setStatusConfirm] = useState<{ notes: string[]; then?: () => void } | null>(null);
   const [lotAction, setLotAction] = useState<{ kind: 'close' | 'reopen'; lot: Lot } | null>(null);
   const [lotNote, setLotNote] = useState('');
   const [lotBusy, setLotBusy] = useState(false);
@@ -120,17 +120,22 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       if (v === undefined) continue;
       const r = lg.rows.find((x) => x.id === Number(id));
       if (!r) continue;
-      if (v === 'end' && r.entry_status !== 'end') out.push(`Lot ${r.lot_id} will close: what is left is written off so its balance is 0, and it leaves current stock.`);
+      if (v === 'end' && r.entry_status !== 'end') {
+        out.push(r.lot_closed
+          ? `Lot ${r.lot_id} is already closed: this sale becomes its End entry. Nothing else changes.`
+          : `Lot ${r.lot_id} will close: what is left is written off so its balance is 0, and it leaves current stock.`);
+      }
       else if (r.entry_status === 'end' && v !== 'end') out.push(`Lot ${r.lot_id} will reopen if this entry closed it: the closing adjustment is removed and the lot is back in stock.`);
     }
     return out;
   };
 
-  const save = async (confirmed = false): Promise<boolean> => {
+  /** `then`: what to do after saving when the save first needs the close / reopen confirmation (e.g. leaving the screen). */
+  const save = async (confirmed = false, then?: () => void): Promise<boolean> => {
     if (!count || saving) return !count;
     if (!confirmed) {
       const fx = statusEffects();
-      if (fx.length) { setStatusConfirm(fx); return false; }
+      if (fx.length) { setStatusConfirm({ notes: fx, then }); return false; }
     }
     const changes: { target: 'movement' | 'lot'; id: number | string; field: string; value: string }[] = [];
     let bad = 0;
@@ -331,13 +336,13 @@ export function Stock({ ctx }: { ctx: Ctx }) {
         <UnsavedDialog count={count} saving={saving}
           onCancel={() => setPending(null)}
           onDiscard={() => { const go = pending; setPending(null); discard(); go(); }}
-          onSave={async () => { const go = pending; if (await save()) { setPending(null); go(); } else setPending(null); }} />
+          onSave={async () => { const go = pending; if (await save(false, go)) { setPending(null); go(); } else setPending(null); }} />
       )}
       {statusConfirm && (
         <ConfirmDialog title="Close or reopen lots?" confirmLabel="Save" busy={saving}
           onCancel={() => setStatusConfirm(null)}
-          onConfirm={async () => { setStatusConfirm(null); await save(true); }}>
-          {statusConfirm.map((x) => <p key={x}>{x}</p>)}
+          onConfirm={async () => { const after = statusConfirm.then; setStatusConfirm(null); if (await save(true)) after?.(); }}>
+          {statusConfirm.notes.map((x, i) => <p key={i}>{x}</p>)}
         </ConfirmDialog>
       )}
       {lotAction && (
@@ -353,7 +358,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
               <p>Its last sale is marked End. The lot leaves current stock and supervisors won’t see it. You can reopen it from Lots &amp; balance → Closed.</p>
             </>
           ) : (
-            <p>The closing adjustment{lotAction.lot.adjustment_m ? <> of <span className="num strong">{fmt(Math.abs(lotAction.lot.adjustment_m), 1)} m</span></> : null} is removed, the End entry that closed it becomes Running, and the lot is back in stock.</p>
+            <p>The closing adjustment{lotAction.lot.adjustment_m ? <> of <span className="num strong">{fmt(Math.abs(lotAction.lot.adjustment_m), 1)} m</span></> : null} is removed, the sale marked End goes back to the status it had before, and the lot is back in stock.</p>
           )}
         </ConfirmDialog>
       )}

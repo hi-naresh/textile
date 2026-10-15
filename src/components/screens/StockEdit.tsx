@@ -208,12 +208,16 @@ export function ConfirmDialog({ title, children, confirmLabel, danger = false, b
   onConfirm: () => void; onCancel: () => void;
 }) {
   const okRef = React.useRef<HTMLButtonElement | null>(null);
+  // Callers pass inline handlers, so the dialog re-renders on every keystroke in the note: focus the button only when
+  // it opens (re-focusing on each render would steal the note's focus) and read the latest onCancel from a ref.
+  const cancelRef = React.useRef(onCancel);
+  React.useEffect(() => { cancelRef.current = onCancel; });
   React.useEffect(() => {
     okRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancelRef.current(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  }, []);
   return (
     <div className="se-overlay" onClick={onCancel}>
       <div className="se-dialog card pad stack-14" role="alertdialog" aria-modal="true" aria-labelledby="cf-dlg-t" aria-describedby="cf-dlg-d" onClick={(e) => e.stopPropagation()}>

@@ -362,11 +362,19 @@ export interface LotClosed { lot_id: string; adjustment_m: number; movement_id: 
  */
 export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by?: string | null; endMovementId?: number | null; note?: unknown }): Promise<LotClosed> {
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
-  const cur = await q(`SELECT closed_at FROM lots WHERE lot_id = $1`, [lotId]);
+  const cur = await q(`SELECT closed_at, status FROM lots WHERE lot_id = $1`, [lotId]);
   if (cur.rows[0].closed_at) throw new LedgerError(`Lot ${lotId} is already closed.`, 409);
+  const prevStatus = (cur.rows[0].status as string | null) ?? null;
   await markAgentsStale(q);
+  // Dated on the End entry only when it is the lot's last entry: closing on an older date while later entries exist
+  // would put the write-off into a past period. Otherwise (or a manual close) it is now.
   const at = o.endMovementId
-    ? ((await q(`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI:SS.US') AS ts FROM stock_movements WHERE id = $1 AND lot_id = $2`, [o.endMovementId, lotId])).rows[0]?.ts as string | undefined) ?? null
+    ? ((await q(
+      `SELECT to_char(e.ts, 'YYYY-MM-DD HH24:MI:SS.US') AS ts FROM stock_movements e
+        WHERE e.id = $1 AND e.lot_id = $2
+          AND NOT EXISTS (SELECT 1 FROM stock_movements x WHERE x.lot_id = e.lot_id AND x.kind = 'normal' AND (x.ts, x.id) > (e.ts, e.id))`,
+      [o.endMovementId, lotId],
+    )).rows[0]?.ts as string | undefined) ?? null
     : null;
   let endId = o.endMovementId ?? null;
   if (!endId) {
@@ -396,6 +404,9 @@ export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by
     `UPDATE lots SET closed_at = COALESCE($2::timestamp, CURRENT_TIMESTAMP), closed_by = $3, close_reason = $4, close_note = $5, status = 'completed' WHERE lot_id = $1`,
     [lotId, at, o.by ?? null, o.reason, note],
   );
+  if (prevStatus !== 'completed') { // logged so reopening can put it back (e.g. a lot on hold)
+    await q(`INSERT INTO ledger_edits (target, target_id, field, old_value, new_value, edited_by) VALUES ('lot', $1, 'status', $2, 'completed', $3)`, [lotId, prevStatus, o.by ?? null]);
+  }
   await trimReservations(q, lotId); // nothing is left to keep aside for orders
   if ((await currentLocation(q, lotId)) !== DISPATCHED) {
     await moveLot(q, {
@@ -412,10 +423,12 @@ export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by
 }
 
 /**
- * Reopen a closed lot: the closing adjustment is removed (its balance is what its entries leave again), the End entry
- * that closed it becomes Running (logged as an edit) — unless `keepEndEntry` is that entry, i.e. the caller is changing
- * it itself — and a lot with stock left goes back to its last place before it closed. Reservations trimmed when it
- * closed are not restored. Run inside the caller's transaction.
+ * Reopen a closed lot: the closing adjustment is removed (its balance is what its entries leave again); the End entry
+ * that closed it gets back the status it had before it was marked End (Running when it was saved as End), unless
+ * `keepEndEntry` is that entry, i.e. the caller is changing it itself; the lot gets back its status from before the
+ * close (hold stays hold); a lot with stock left goes back to its last place, or to no place when it never had one.
+ * Every change is logged in ledger_edits. Reservations trimmed when it closed are not restored. Run inside the
+ * caller's transaction.
  */
 export async function reopenLot(q: Q, lotId: string, o: { by?: string | null; note?: unknown; keepEndEntry?: number | null } = {}): Promise<{ lot_id: string; balance: number }> {
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
@@ -428,19 +441,34 @@ export async function reopenLot(q: Q, lotId: string, o: { by?: string | null; no
   await q(`DELETE FROM stock_movements WHERE lot_id = $1 AND kind = 'closing'`, [lotId]);
   const endId = last?.end_movement_id ?? null;
   if (endId && endId !== o.keepEndEntry) {
-    const up = await q(`UPDATE stock_movements SET entry_status = 'running' WHERE id = $1 AND entry_status = 'end' RETURNING id`, [endId]);
+    const was = (await q(
+      `SELECT old_value FROM ledger_edits WHERE target = 'movement' AND target_id = $1 AND field = 'entry_status' AND new_value = 'end' ORDER BY id DESC LIMIT 1`,
+      [String(endId)],
+    )).rows[0] as { old_value: string | null } | undefined;
+    const back = !was ? 'running' : was.old_value === 'packed' || was.old_value === 'running' ? was.old_value : null;
+    const up = await q(`UPDATE stock_movements SET entry_status = $2 WHERE id = $1 AND entry_status = 'end' RETURNING id`, [endId, back]);
     if (up.rowCount) {
-      await q(`INSERT INTO ledger_edits (target, target_id, field, old_value, new_value, edited_by) VALUES ('movement', $1, 'entry_status', 'end', 'running', $2)`, [String(endId), o.by ?? null]);
+      await q(`INSERT INTO ledger_edits (target, target_id, field, old_value, new_value, edited_by) VALUES ('movement', $1, 'entry_status', 'end', $2, $3)`, [String(endId), back, o.by ?? null]);
     }
   }
   const balance = Math.round((await lotBalance(q, lotId)) * 100) / 100;
-  await q(
-    `UPDATE lots SET closed_at = NULL, closed_by = NULL, close_reason = NULL, close_note = NULL, status = $2 WHERE lot_id = $1`,
-    [lotId, balance > 0 ? 'active' : 'dispatched'],
-  );
+  const before = (await q(
+    `SELECT old_value FROM ledger_edits WHERE target = 'lot' AND target_id = $1 AND field = 'status' AND new_value = 'completed' ORDER BY id DESC LIMIT 1`, [lotId],
+  )).rows[0]?.old_value as string | undefined;
+  const status = before === 'hold' ? 'hold' : balance > 0 ? 'active' : 'dispatched';
+  await q(`UPDATE lots SET closed_at = NULL, closed_by = NULL, close_reason = NULL, close_note = NULL, status = $2 WHERE lot_id = $1`, [lotId, status]);
+  await q(`INSERT INTO ledger_edits (target, target_id, field, old_value, new_value, edited_by) VALUES ('lot', $1, 'status', 'completed', $2, $3)`, [lotId, status, o.by ?? null]);
   if (balance > 0) {
     const place = await currentPlace(q, lotId, true);
     if (place) await moveLot(q, { lot_id: lotId, location: place.location, place, stage: 'moved', note: `Lot reopened · ${balance} m in stock`, moved_by: o.by ?? null });
+    else {
+      // It never had a place (e.g. a register lot, "Not recorded"): undo the move to Dispatched the close made.
+      await q(
+        `DELETE FROM lot_locations WHERE id = (SELECT id FROM lot_locations WHERE lot_id = $1 ORDER BY ts DESC, id DESC LIMIT 1)
+           AND location = $2 AND stage = 'dispatch' AND note LIKE 'Lot closed%'`,
+        [lotId, DISPATCHED],
+      );
+    }
   }
   await q(
     `INSERT INTO lot_closures (lot_id, action, reason, adjustment_m, end_movement_id, by_user, note) VALUES ($1, 'reopen', $2, $3, $4, $5, $6)`,

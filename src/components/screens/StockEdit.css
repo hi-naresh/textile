@@ -10,6 +10,7 @@
 .se-in.num { font-family: var(--font-mono); }
 .se-in.r { text-align: right; }
 select.se-in { padding: 0 4px; }
+select.se-in[data-c="entry_status"] { min-width: 100px; } /* "Not set" / "Running" stay readable */
 .se-in:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accentSoft); }
 .se-in.se-changed { background: var(--warnSoft); border-color: var(--warn); }
 .se-in.se-bad { background: var(--badSoft); border-color: var(--bad); }

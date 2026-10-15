@@ -90,7 +90,8 @@ const COLS = `sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.fini
   to_char(sm.ts, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS ts_key, l.quality, l.design, (sm.ts::date = CURRENT_DATE) AS is_today,
   (SELECT ll.location FROM lot_locations ll WHERE ll.lot_id = sm.lot_id AND ll.stock_movement_id = sm.id ORDER BY ll.id DESC LIMIT 1) AS location,
   EXISTS (SELECT 1 FROM ledger_edits le WHERE le.target = 'movement' AND le.target_id = sm.id::text) AS edited,
-  sm.kind, sm.register_pct, sm.takes, sm.loc_code, sm.bill_pct, sm.billed_meters, sm.lot_status_code, sm.linked_sr, l.reg_lot_no, sm.entry_status`;
+  sm.kind, sm.register_pct, sm.takes, sm.loc_code, sm.bill_pct, sm.billed_meters, sm.lot_status_code, sm.linked_sr, l.reg_lot_no, sm.entry_status,
+  (l.closed_at IS NOT NULL) AS lot_closed`;
 
 export interface LedgerRow {
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
@@ -104,6 +105,7 @@ export interface LedgerRow {
   bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null; linked_sr: string | null; // OUT
   reg_lot_no: string | null; // the lot's number as written in the register (lot_id may carry "-SR<n>")
   entry_status: EntryStatus | null; // OUT: packed / running / end (migration 015); null on IN and older rows
+  lot_closed: boolean; // the row's lot is closed (migration 016)
 }
 
 const num = (v: unknown) => (v == null ? null : Number(v));
@@ -121,6 +123,7 @@ function toRow(r: Record<string, unknown>): LedgerRow {
     bill_pct: num(r.bill_pct), billed_meters: num(r.billed_meters), lot_status_code: (r.lot_status_code as string) ?? null, linked_sr: (r.linked_sr as string) ?? null,
     reg_lot_no: (r.reg_lot_no as string) ?? null,
     entry_status: (ENTRY_STATUSES as readonly string[]).includes(String(r.entry_status)) ? (r.entry_status as EntryStatus) : null,
+    lot_closed: !!r.lot_closed,
   };
 }
 
