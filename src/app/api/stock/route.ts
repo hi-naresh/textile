@@ -14,9 +14,9 @@ import { startEarly } from '@/lib/lots-query';
 const SNAPSHOT_SQL = `
   WITH flow AS (
     SELECT ts::date AS day,
-           SUM(meters) FILTER (WHERE direction = 'IN')  AS in_m,
-           COUNT(*)    FILTER (WHERE direction = 'IN')  AS in_count,
-           SUM(meters) FILTER (WHERE direction = 'OUT' AND kind = 'normal') AS out_m, -- opening adjustments are not dispatches
+           SUM(meters) FILTER (WHERE direction = 'IN' AND kind = 'normal')  AS in_m, -- closing adjustments (016) are not receipts
+           COUNT(*)    FILTER (WHERE direction = 'IN' AND kind = 'normal')  AS in_count,
+           SUM(meters) FILTER (WHERE direction = 'OUT' AND kind = 'normal') AS out_m, -- opening / closing adjustments are not dispatches
            COUNT(*)    FILTER (WHERE direction = 'OUT' AND kind = 'normal') AS out_count
       FROM stock_movements
      WHERE ts >= CURRENT_DATE - 6 AND ts < CURRENT_DATE + 1
@@ -44,10 +44,11 @@ const SNAPSHOT_SQL = `
 // Today's movements, newest first (the live feed on Today). Plain rows so timestamps parse like everywhere else.
 const TODAY_ROWS_SQL = `
   SELECT sm.id, sm.lot_id, sm.direction, sm.meters, sm.party, sm.source_doc_id, sm.capture_event_id, sm.ts,
-         sm.grey_meters, sm.finished_meters, sm.mill_name, sm.weaver_name, l.quality, l.design, true AS is_today
+         sm.grey_meters, sm.finished_meters, sm.mill_name, sm.weaver_name, l.quality, l.design, true AS is_today,
+         (l.closed_at IS NOT NULL) AS lot_closed
     FROM stock_movements sm
     JOIN lots l ON sm.lot_id = l.lot_id
-   WHERE sm.ts >= CURRENT_DATE AND sm.ts < CURRENT_DATE + 1
+   WHERE sm.ts >= CURRENT_DATE AND sm.ts < CURRENT_DATE + 1 AND sm.kind <> 'closing' -- closing adjustments are owner-only records
    ORDER BY sm.ts DESC, sm.id DESC
    LIMIT 100`;
 
@@ -94,7 +95,11 @@ export async function GET(request: NextRequest) {
     if (!can(a.role, 'stock.quantity')) {
       return NextResponse.json({ stockSummary: null, ledger: [], names: { mills: [], weavers: [], parties: [] }, flow: [], qualities: [], rev: '0' });
     }
-    return NextResponse.json(await (early ?? snapshot()), { headers: { 'Cache-Control': 'no-store' } });
+    const snap = await (early ?? snapshot());
+    // Entries of closed lots are the owner's records (stock.closed): left out of everyone else's live feed.
+    const owner = can(a.role, 'stock.closed');
+    const ledger = snap.ledger.filter((r) => owner || !r.lot_closed).map(({ lot_closed: _c, ...r }) => { void _c; return r; });
+    return NextResponse.json({ ...snap, ledger }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });
@@ -103,7 +108,7 @@ export async function GET(request: NextRequest) {
 
 // POST (owner): Add a manual stock movement.
 // IN:  lot_id, grey_meters and/or finished_meters, mill_name, weaver_name, source_doc, location, quality + design (new lot)
-// OUT: lot_id, meters, party (destination client, required), source_doc
+// OUT: lot_id, meters, party (destination client, required), source_doc, entry_status (packed / running (default) / end — end needs stock.end)
 // Both: sr_no (optional, whole number > 0, unique per direction → 409 when taken), pieces (optional taka, whole number ≥ 0)
 // Optional register fields (migration 013): IN register_pct (0–100), loc_code ("212", "142+143"); OUT bill_pct (L), billed_meters (NQTY), lot_status_code (LOT S)
 export async function POST(request: NextRequest) {
@@ -126,7 +131,7 @@ export async function POST(request: NextRequest) {
     const movement = await withTransaction((q) =>
       direction === 'IN'
         ? recordIncoming(q, input, { requireLotDetails: true })
-        : recordOutgoing(q, input)
+        : recordOutgoing(q, input, { endAllowed: can(a.role, 'stock.end') })
     );
     return NextResponse.json({ success: true, movement });
   } catch (error) {

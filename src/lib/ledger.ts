@@ -8,7 +8,7 @@ import { trimReservations } from './stock';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, dateValue, lotCode, lotStatusValue, metersValue, nameKey, nameValue, SYSTEM_LOCATIONS, type Place } from './normalize';
-import { billedMetersValue, billPctValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
+import { billedMetersValue, billPctValue, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 
 export { LedgerError };
 import { afterOutgoing } from './agents/hooks';
@@ -134,6 +134,12 @@ export async function lockLot(q: Q, lotId: string) {
   return (r.rowCount ?? 0) > 0;
 }
 
+/** A closed lot (migration 016) takes no new entries, job cards or moves. Call after lockLot. */
+export async function assertLotOpen(q: Q, lotId: string) {
+  const r = await q(`SELECT closed_at FROM lots WHERE lot_id = $1`, [lotId]);
+  if (r.rows[0]?.closed_at) throw new LedgerError(`Lot ${lotId} is closed. The owner can reopen it from Stock ledger → Lots & balance → Closed.`, 409);
+}
+
 // ---------- location ----------
 export async function moveLot(
   q: Q,
@@ -160,6 +166,7 @@ export async function moveLot(
 export async function moveLotManually(q: Q, input: { lot_id: unknown; location: unknown; note?: unknown; moved_by?: unknown; add_shops_by?: string | null | false }) {
   const lotId = lotCode(input.lot_id)!;
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
+  await assertLotOpen(q, lotId);
   const here = await currentLocation(q, lotId);
   const place = (await allowedLocation(q, input.location, { required: true, addShopsBy: input.add_shops_by ?? false }))!;
   if (here === place.location) throw new LedgerError(`${lotId} is already at ${place.location}.`);
@@ -219,6 +226,7 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   await assertSrFree(q, 'IN', sr);
 
   const exists = await lockLot(q, lotId);
+  if (exists) await assertLotOpen(q, lotId);
   if (!exists) {
     const quality = await lotAttrMemo(memo, q, 'quality', nameValue(input.quality, 'Quality'));
     const design = await lotAttrMemo(memo, q, 'design', nameValue(input.design, 'Design'));
@@ -273,10 +281,14 @@ export interface OutgoingInput {
   lot_status_code?: unknown; // sales register "LOT S" code (optional, data only)
   date?: unknown; // back-date entry (YYYY-MM-DD or DD-MM-YYYY)
   status?: unknown; // lot status ('active' | 'completed' | 'dispatched' | 'hold')
+  entry_status?: unknown; // status of this entry: 'packed' | 'running' (default) | 'end' (migration 015)
 }
 
-/** Record a dispatch. Party (destination client) is required. */
-export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: LedgerMemo } = {}) {
+/**
+ * Record a dispatch. Party (destination client) is required.
+ * `endAllowed`: the caller may mark the entry End (capability stock.end, checked by the route — never from the body).
+ */
+export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: LedgerMemo; endAllowed?: boolean } = {}) {
   const memo = opts.memo;
   await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
@@ -292,16 +304,19 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   const billed = billedMetersValue(input.billed_meters);
   const statusCode = lotStatusCodeValue(input.lot_status_code);
   const explicitStatus = lotStatusValue(input.status);
+  const entryStatus = entryStatusValue(input.entry_status) ?? 'running';
+  if (entryStatus === 'end' && !opts.endAllowed) throw new LedgerError('You can’t mark an entry End. Ask the owner to switch it on for you, or choose Packed or Running.', 403);
   if (!party) throw new LedgerError('Party (the client receiving the goods) is required for outgoing stock.');
   await assertSrFree(q, 'OUT', sr);
 
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`);
+  await assertLotOpen(q, lotId);
   const balance = await lotBalance(q, lotId);
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id, sr_no, pieces, import_ref, bill_pct, billed_meters, lot_status_code, ts)
-     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE(($14::date + interval '12 hours'), CURRENT_TIMESTAMP)) RETURNING *`,
-    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null, sr, pieces, ref, billPct, billed, statusCode, date],
+    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id, sr_no, pieces, import_ref, bill_pct, billed_meters, lot_status_code, entry_status, ts)
+     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE(($15::date + interval '12 hours'), CURRENT_TIMESTAMP)) RETURNING *`,
+    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null, sr, pieces, ref, billPct, billed, statusCode, entryStatus, date],
   );
   const movement = mv.rows[0];
   // Logistics agent: link the dispatch to its order / allocation, update order status (same transaction).
@@ -329,7 +344,94 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
     moved_by: input.moved_by ?? null,
     ts: date ? `${date} 12:00:00` : null,
   });
+  // End = the last sale from this lot: close it (balance → 0 with a closing adjustment).
+  if (entryStatus === 'end') await closeLot(q, lotId, { reason: 'end_entry', by: input.moved_by ?? null, endMovementId: Number(movement.id) });
   return movement;
+}
+
+// ---------- closing a lot (migration 016) ----------
+export type CloseReason = 'end_entry' | 'manual' | 'register';
+export interface LotClosed { lot_id: string; adjustment_m: number; movement_id: number | null }
+
+/**
+ * Close a lot: whatever its entries leave (or overshoot) is written off with a closing adjustment so the balance is
+ * exactly 0, then the lot is marked closed (status completed) and leaves for "Dispatched".
+ * `endMovementId`: the End entry that closes it — the adjustment and closed_at take that entry's time (back-dated
+ * entries close on their own date). Without one (manual close) it is now. Run inside the caller's transaction.
+ */
+export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by?: string | null; endMovementId?: number | null; note?: unknown }): Promise<LotClosed> {
+  if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
+  const cur = await q(`SELECT closed_at FROM lots WHERE lot_id = $1`, [lotId]);
+  if (cur.rows[0].closed_at) throw new LedgerError(`Lot ${lotId} is already closed.`, 409);
+  await markAgentsStale(q);
+  const at = o.endMovementId
+    ? ((await q(`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI:SS.US') AS ts FROM stock_movements WHERE id = $1 AND lot_id = $2`, [o.endMovementId, lotId])).rows[0]?.ts as string | undefined) ?? null
+    : null;
+  const adjustment = Math.round((await lotBalance(q, lotId)) * 100) / 100;
+  let movementId: number | null = null;
+  if (Math.abs(adjustment) >= 0.01) {
+    const mv = await q(
+      `INSERT INTO stock_movements (lot_id, direction, meters, kind, ts) VALUES ($1, $2, $3, 'closing', COALESCE($4::timestamp, CURRENT_TIMESTAMP)) RETURNING id`,
+      [lotId, adjustment > 0 ? 'OUT' : 'IN', Math.abs(adjustment), at],
+    );
+    movementId = Number(mv.rows[0].id);
+  }
+  const note = text(o.note, 500);
+  await q(
+    `UPDATE lots SET closed_at = COALESCE($2::timestamp, CURRENT_TIMESTAMP), closed_by = $3, close_reason = $4, close_note = $5, status = 'completed' WHERE lot_id = $1`,
+    [lotId, at, o.by ?? null, o.reason, note],
+  );
+  await trimReservations(q, lotId); // nothing is left to keep aside for orders
+  if ((await currentLocation(q, lotId)) !== DISPATCHED) {
+    await moveLot(q, {
+      lot_id: lotId, location: DISPATCHED, stage: 'dispatch', moved_by: o.by ?? null, ts: at,
+      stock_movement_id: movementId ?? o.endMovementId ?? null,
+      note: `Lot closed${adjustment > 0 ? ` · ${adjustment} m left over written off` : adjustment < 0 ? ` · ${-adjustment} m over written back` : ''}`,
+    });
+  }
+  await q(
+    `INSERT INTO lot_closures (lot_id, action, reason, adjustment_m, movement_id, end_movement_id, by_user, note) VALUES ($1, 'close', $2, $3, $4, $5, $6, $7)`,
+    [lotId, o.reason, adjustment, movementId, o.endMovementId ?? null, o.by ?? null, note],
+  );
+  return { lot_id: lotId, adjustment_m: adjustment, movement_id: movementId };
+}
+
+/**
+ * Reopen a closed lot: the closing adjustment is removed (its balance is what its entries leave again), the End entry
+ * that closed it becomes Running (logged as an edit) — unless `keepEndEntry` is that entry, i.e. the caller is changing
+ * it itself — and a lot with stock left goes back to its last place before it closed. Reservations trimmed when it
+ * closed are not restored. Run inside the caller's transaction.
+ */
+export async function reopenLot(q: Q, lotId: string, o: { by?: string | null; note?: unknown; keepEndEntry?: number | null } = {}): Promise<{ lot_id: string; balance: number }> {
+  if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
+  const cur = await q(`SELECT closed_at FROM lots WHERE lot_id = $1`, [lotId]);
+  if (!cur.rows[0].closed_at) throw new LedgerError(`Lot ${lotId} is not closed.`, 409);
+  await markAgentsStale(q);
+  const last = (await q(
+    `SELECT reason, adjustment_m, end_movement_id FROM lot_closures WHERE lot_id = $1 AND action = 'close' ORDER BY id DESC LIMIT 1`, [lotId],
+  )).rows[0] as { reason: CloseReason | null; adjustment_m: string; end_movement_id: number | null } | undefined;
+  await q(`DELETE FROM stock_movements WHERE lot_id = $1 AND kind = 'closing'`, [lotId]);
+  const endId = last?.end_movement_id ?? null;
+  if (endId && endId !== o.keepEndEntry) {
+    const up = await q(`UPDATE stock_movements SET entry_status = 'running' WHERE id = $1 AND entry_status = 'end' RETURNING id`, [endId]);
+    if (up.rowCount) {
+      await q(`INSERT INTO ledger_edits (target, target_id, field, old_value, new_value, edited_by) VALUES ('movement', $1, 'entry_status', 'end', 'running', $2)`, [String(endId), o.by ?? null]);
+    }
+  }
+  const balance = Math.round((await lotBalance(q, lotId)) * 100) / 100;
+  await q(
+    `UPDATE lots SET closed_at = NULL, closed_by = NULL, close_reason = NULL, close_note = NULL, status = $2 WHERE lot_id = $1`,
+    [lotId, balance > 0 ? 'active' : 'dispatched'],
+  );
+  if (balance > 0) {
+    const place = await currentPlace(q, lotId, true);
+    if (place) await moveLot(q, { lot_id: lotId, location: place.location, place, stage: 'moved', note: `Lot reopened · ${balance} m in stock`, moved_by: o.by ?? null });
+  }
+  await q(
+    `INSERT INTO lot_closures (lot_id, action, reason, adjustment_m, end_movement_id, by_user, note) VALUES ($1, 'reopen', $2, $3, $4, $5, $6)`,
+    [lotId, last?.reason ?? null, Number(last?.adjustment_m ?? 0), endId, o.by ?? null, text(o.note, 500)],
+  );
+  return { lot_id: lotId, balance };
 }
 
 // ---------- job cards ----------
@@ -346,6 +448,7 @@ export async function createJobCard(
   const w = await q('SELECT name FROM workers WHERE id = $1', [workerId]);
   if (!w.rowCount) throw new LedgerError(`Worker ${workerId} does not exist.`);
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`);
+  await assertLotOpen(q, lotId);
 
   const jc = await q(
     `INSERT INTO job_cards (lot_id, process, worker_id, meters_in, status) VALUES ($1, $2, $3, $4, 'in-process') RETURNING *`,

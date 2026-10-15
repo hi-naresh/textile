@@ -12,6 +12,12 @@ export interface Lot {
   location_ts: string | null;
   loc_code?: string | null; // location code from the Incoming register
   reg_lot_no?: string | null; // lot no. as written in the register (lot_id may carry "-SR<n>")
+  closed_at?: string | null; // closed lot (migration 016); null = open
+  // Closed lots view (owner): how, by whom and what was written off (+ left over, − sent beyond the balance)
+  close_reason?: 'end_entry' | 'manual' | 'register' | null;
+  close_note?: string | null;
+  closed_by_name?: string | null;
+  adjustment_m?: number | null;
 }
 
 /** Stock on hand at a glance (GET /api/stock). low_lots: 0 < balance < the firm's low-stock level, 20 lowest. */

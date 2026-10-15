@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap } from '@/lib/apiAuth';
+import { can } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody } from '@/lib/ledger';
 import { EditProblems, applyLedgerEdits, editHistory, parseChanges } from '@/lib/ledger-edit';
@@ -7,17 +8,18 @@ import { EditProblems, applyLedgerEdits, editHistory, parseChanges } from '@/lib
 // PATCH /api/stock/edit (owner, ledger.edit) — the stock ledger's edit mode.
 // Body: { changes: [{ target: 'movement', id: <stock_movements.id>, field, value } | { target: 'lot', id: <lot_id>, field, value }] } (≤ 500)
 //   movement fields: sr_no, pieces, source_doc_id, mill_name + weaver_name + register_pct + loc_code (IN),
-//                    party + bill_pct (L) + billed_meters (NQTY) + lot_status_code (LOT S) (OUT), quality + design (edit the row's lot)
-//   Opening adjustments (kind 'adjustment', from the Incoming register import) are read-only → 422.
+//                    party + bill_pct (L) + billed_meters (NQTY) + lot_status_code (LOT S) + entry_status (OUT), quality + design (edit the row's lot)
+//   entry_status (packed / running / end): → end closes the lot; end → packed / running on the entry that closed it reopens it.
+//   Opening adjustments (kind 'adjustment', from the Incoming register import) and closing adjustments (kind 'closing') are read-only → 422.
 //   lot fields:      quality, design, grade, status (active | completed | dispatched | hold)
 //   Empty value (or null) clears sr_no / pieces / source_doc_id / mill_name / weaver_name / party. Quality, design, grade, status are required.
-// All-or-nothing, one transaction. → { saved, rows: LedgerRow[] (edited movements), lots: [{ lot_id, quality, design, grade, status }] }
+// All-or-nothing, one transaction. → { saved, rows: LedgerRow[] (edited movements), lots: [{ lot_id, quality, design, grade, status }], reload (a lot closed / reopened) }
 // Invalid values → 422 { error, problems: [{ target, id, field, message }] }. Malformed body / unknown field → 400.
 export async function PATCH(req: NextRequest) {
   try {
     const a = await requireCap(req, 'ledger.edit');
     const changes = parseChanges(await readObject(req));
-    const out = await withTransaction((q) => applyLedgerEdits(q, changes, a.by));
+    const out = await withTransaction((q) => applyLedgerEdits(q, changes, a.by, { endAllowed: can(a.role, 'stock.end') }));
     return NextResponse.json(out);
   } catch (error) {
     if (error instanceof EditProblems) return NextResponse.json({ error: error.message, problems: error.problems }, { status: 422 });

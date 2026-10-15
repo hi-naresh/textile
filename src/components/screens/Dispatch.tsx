@@ -15,6 +15,7 @@ import s from './Dispatch.module.css';
 import { LotPicker } from '../LotPicker';
 import { useLotSearch, useLotsById } from '@/lib/useLots';
 import { WA_STATUS_LABEL, WA_STATUS_TONE } from '@/lib/whatsapp/status';
+import { ENTRY_STATUSES, ENTRY_STATUS_HINT, ENTRY_STATUS_LABEL, type EntryStatus } from '@/lib/registers';
 
 type InvoiceRow = Invoice & { days_overdue: number; exported_at: string | null };
 type View = 'dispatches' | 'invoices';
@@ -222,12 +223,13 @@ function InvoiceRates({ ctx, dispatch, busy, onCreate }: { ctx: Ctx; dispatch: D
 }
 
 // ---------------- New dispatch ----------------
-interface Line { lot_id: string; meters: string }
-const EMPTY_LINE: Line = { lot_id: '', meters: '' };
+interface Line { lot_id: string; meters: string; status: EntryStatus }
+const EMPTY_LINE: Line = { lot_id: '', meters: '', status: 'running' };
 
 function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
   const { d, role } = ctx;
   const owner = can(role, 'finance.view');
+  const canEnd = can(role, 'stock.end'); // owner; supervisors unless the owner switched it off
   const actor = actorId(role);
   const q = who(role, actor);
   const [party, setParty] = useState('');
@@ -275,10 +277,10 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
   }, [party, estimate, q]);
 
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
-  const addLot = (lot_id: string, meters: number) => setLines((ls) => [...ls.filter((l) => l.lot_id || l.meters), { lot_id, meters: String(meters) }]);
+  const addLot = (lot_id: string, meters: number) => setLines((ls) => [...ls.filter((l) => l.lot_id || l.meters), { ...EMPTY_LINE, lot_id, meters: String(meters) }]);
   const useReserved = () => setLines(reserved.map((a) => {
     const bal = lotOf(a.lot_id)?.balance ?? 0;
-    return { lot_id: a.lot_id, meters: String(Math.round(Math.min(a.meters - a.dispatched_m, bal) * 100) / 100) };
+    return { ...EMPTY_LINE, lot_id: a.lot_id, meters: String(Math.round(Math.min(a.meters - a.dispatched_m, bal) * 100) / 100) };
   }));
 
   const submit = async (e: React.FormEvent) => {
@@ -293,7 +295,7 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
     setBusy(true);
     try {
       const r = await apiSend<{ dispatch: DispatchRow; invoice?: Invoice; note?: string | null; whatsapp?: { queued: boolean; message: string } | null }>('/api/dispatches', 'POST', {
-        party: party.trim(), order_id: order?.id ?? null, lines: ls.map((l) => ({ lot_id: l.lot_id, meters: parseFloat(l.meters) })),
+        party: party.trim(), order_id: order?.id ?? null, lines: ls.map((l) => ({ lot_id: l.lot_id, meters: parseFloat(l.meters), entry_status: l.status })),
         ...f, packages: f.packages === '' ? null : Number(f.packages), create_invoice: owner && invoice, rates: owner && invoice ? rateMap : undefined, role, actor,
       });
       d.showToast(`Dispatched ${fmt(r.dispatch.meters, 1)} m · challan ${r.dispatch.challan_no}${r.invoice ? ` · invoice ${r.invoice.invoice_no}` : ''}${r.whatsapp?.queued ? ' · WhatsApp to the party on its way' : ''}`);
@@ -352,12 +354,16 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
               <div key={i} className={s.line}>
                 <div className="stack-2 min0"><LotPicker ariaLabel={`Lot ${i + 1}`} value={l.lot_id} onChange={(v) => setLine(i, { lot_id: v })} placeholder="Lot no." refreshKey={d.stockRev} /></div>
                 <input aria-label={`Meters ${i + 1}`} className={over ? s.over : ''} inputMode="decimal" value={l.meters} placeholder="Meters" onChange={(e) => setLine(i, { meters: e.target.value })} />
+                <select aria-label={`Status ${i + 1}`} className={s.status} value={l.status} title={ENTRY_STATUS_HINT[l.status]} onChange={(e) => setLine(i, { status: e.target.value as EntryStatus })}>
+                  {ENTRY_STATUSES.filter((x) => canEnd || x !== 'end').map((x) => <option key={x} value={x}>{ENTRY_STATUS_LABEL[x]}</option>)}
+                </select>
                 <button type="button" className="btn icon-only" aria-label="Remove line" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ ...EMPTY_LINE }]))}><Icon name="x" size={16} /></button>
                 {lot && (
                   <span className={`small ${s.sub} ${over ? s.warnText : 'muted'}`}>
                     {lot.quality} · {lot.design} · {fmt(lot.balance, 1)} m in stock{lot.location ? ` · ${lot.location}` : ''}
                     {over && <> · <span className={s.warnText}>+{fmt(excess, 1)} m fold excess</span></>}
                     {!over && lot.balance > 0 && <> · <button type="button" className="linkbtn" onClick={() => setLine(i, { meters: String(lot.balance) })}>all</button></>}
+                    {canEnd && l.status !== 'end' && mtr > 0 && mtr >= lot.balance - 0.005 && <> · <button type="button" className="linkbtn" onClick={() => setLine(i, { status: 'end' })}>last of this lot? Mark End</button></>}
                   </span>
                 )}
               </div>

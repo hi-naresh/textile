@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     const buckets = await query(
       `WITH b AS (SELECT generate_series(${r.from}, ${r.to}, interval '${r.step}') AS t)
        SELECT to_char(b.t, 'YYYY-MM-DD"T"HH24:MI') AS key,
-              COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters END), 0) AS in_m,
+              COALESCE(SUM(CASE WHEN sm.direction = 'IN' AND sm.kind = 'normal' THEN sm.meters END), 0) AS in_m,
               COALESCE(SUM(CASE WHEN sm.direction = 'OUT' AND sm.kind = 'normal' THEN sm.meters END), 0) AS out_m
        FROM b
        LEFT JOIN stock_movements sm ON date_trunc('${r.unit}', sm.ts) = b.t
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
     );
     const qualities = await query(
       `SELECT l.quality,
-              COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters END), 0) AS in_m,
+              COALESCE(SUM(CASE WHEN sm.direction = 'IN' AND sm.kind = 'normal' THEN sm.meters END), 0) AS in_m,
               COALESCE(SUM(CASE WHEN sm.direction = 'OUT' AND sm.kind = 'normal' THEN sm.meters END), 0) AS out_m,
               COUNT(DISTINCT sm.lot_id) AS lots,
               COUNT(DISTINCT sm.party) FILTER (WHERE sm.direction = 'OUT') AS parties

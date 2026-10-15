@@ -140,6 +140,7 @@ export function Reports({ ctx }: { ctx: Ctx }) {
                 <Stat label={`Opening (${shown.from})`} value={m(shown.stock.opening)} />
                 <Stat label={`Received · ${shown.stock.inChallans} challans`} value={`+${fmt(shown.stock.in)} m`} />
                 <Stat label={`Dispatched · ${shown.stock.outChallans} challans`} value={`−${fmt(shown.stock.out)} m`} />
+                {owner && Math.abs(shown.stock.adjusted ?? 0) >= 0.01 && <Stat label="Adjusted (register import, closed lots)" value={`${shown.stock.adjusted > 0 ? '+' : '−'}${fmt(Math.abs(shown.stock.adjusted))} m`} />}
                 <Stat label={`Closing (${shown.to})`} value={m(shown.stock.closing)} total />
               </div>
               {shown.timeSaved.captures > 0 && <span className="muted small">Photo capture saved about {fmt(shown.timeSaved.savedMin)} min on {shown.timeSaved.captures} read{shown.timeSaved.captures === 1 ? '' : 's'}.</span>}

@@ -46,3 +46,6 @@ next-env.d.ts
 
 # Keep the example env file in git
 !.env.example
+
+# lot status backfill dry run (scripts/backfill-lot-status.ts): business data, keep out of git
+lot-status-backfill.csv

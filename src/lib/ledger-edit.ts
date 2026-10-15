@@ -1,18 +1,20 @@
 // Stock ledger edit mode (owner): PATCH /api/stock/edit applies a batch of cell edits in ONE transaction.
 // Every change is validated first; if any is invalid nothing is saved (422 with one problem per bad cell).
 // Each changed field writes one ledger_edits row (who, when, old → new). No-op changes are skipped.
+// Status of an outgoing entry (Packed / Running / End): changing it to End closes the lot (closeLot); taking End off
+// the entry that closed its lot reopens the lot (reopenLot). Both happen in the same transaction as the edit.
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { piecesValue, srValue } from './ledger';
+import { closeLot, piecesValue, reopenLot, srValue } from './ledger';
 import { canonicalLotAttr, canonicalName, challanCode, nameValue } from './normalize';
-import { billedMetersValue, billPctValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
+import { billedMetersValue, billPctValue, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 import { markAgentsStale } from './agents/stale';
 import { ledgerRowsByIds, type LedgerRow } from './ledger-query';
 
 export const MOVEMENT_FIELDS = ['sr_no', 'pieces', 'source_doc_id', 'mill_name', 'weaver_name', 'party', 'quality', 'design',
-  'register_pct', 'loc_code', 'bill_pct', 'billed_meters', 'lot_status_code'] as const;
+  'register_pct', 'loc_code', 'bill_pct', 'billed_meters', 'lot_status_code', 'entry_status'] as const;
 const IN_ONLY = ['mill_name', 'weaver_name', 'register_pct', 'loc_code'];
-const OUT_ONLY = ['party', 'bill_pct', 'billed_meters', 'lot_status_code'];
+const OUT_ONLY = ['party', 'bill_pct', 'billed_meters', 'lot_status_code', 'entry_status'];
 export const LOT_FIELDS = ['quality', 'design', 'grade', 'status'] as const;
 export const LOT_STATUSES = ['active', 'completed', 'dispatched', 'hold'] as const;
 export const MAX_CHANGES = 500;
@@ -40,6 +42,7 @@ const FIELD_LABEL: Record<string, string> = {
   sr_no: 'SR no.', pieces: 'Pieces (taka)', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver',
   party: 'Party', quality: 'Quality', design: 'Design', grade: 'Grade', status: 'Status',
   register_pct: '%', loc_code: 'Location code', bill_pct: 'L', billed_meters: 'NQTY (billed meters)', lot_status_code: 'LOT S',
+  entry_status: 'Status',
 };
 
 /** Structural check of the request body. Anything malformed (unknown field, bad id) → 400. */
@@ -69,8 +72,9 @@ export function parseChanges(body: Record<string, unknown>): EditChange[] {
 interface MovementRow {
   id: number; lot_id: string; direction: 'IN' | 'OUT'; kind: string; sr_no: number | null; pieces: number | null; source_doc_id: string | null; mill_name: string | null; weaver_name: string | null; party: string | null;
   register_pct: number | null; loc_code: string | null; bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null;
+  entry_status: string | null;
 }
-interface LotRow { lot_id: string; quality: string; design: string; grade: string | null; status: string | null }
+interface LotRow { lot_id: string; quality: string; design: string; grade: string | null; status: string | null; closed_at: Date | null }
 export interface EditedLot { lot_id: string; quality: string; design: string; grade: string | null; status: string | null }
 
 const str = (v: unknown) => (v == null ? null : String(v));
@@ -94,8 +98,11 @@ function requiredName(v: Value, label: string): string {
   return s;
 }
 
-/** Apply a batch of edits. Call inside a transaction. */
-export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string | null): Promise<{ saved: number; rows: LedgerRow[]; lots: EditedLot[] }> {
+/**
+ * Apply a batch of edits. Call inside a transaction. `endAllowed`: the editor may mark entries End (stock.end).
+ * `reload`: a lot closed or reopened (closing rows came or went) — the caller should reload its lists.
+ */
+export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string | null, opts: { endAllowed?: boolean } = {}): Promise<{ saved: number; rows: LedgerRow[]; lots: EditedLot[]; reload: boolean }> {
   const problems: EditProblem[] = [];
   const problem = (c: { target: 'movement' | 'lot'; id: number | string; field: string }, message: string) => {
     if (!problems.some((p) => p.target === c.target && p.id === c.id && p.field === c.field)) problems.push({ target: c.target, id: c.id, field: c.field, message });
@@ -104,7 +111,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
   // 1. Lock the rows (in a fixed order, so two saves can't deadlock).
   const mvIds = [...new Set(changes.filter((c) => c.target === 'movement').map((c) => c.id as number))].sort((a, b) => a - b);
   const mvRes = mvIds.length
-    ? await q(`SELECT id, lot_id, direction, kind, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code
+    ? await q(`SELECT id, lot_id, direction, kind, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code, entry_status
                  FROM stock_movements WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`, [mvIds])
     : { rows: [] };
   const n = (v: unknown) => (v == null ? null : Number(v));
@@ -121,12 +128,13 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     const m = movements.get(c.id);
     if (!m) { problem(c, `Movement #${c.id} no longer exists. Reload the ledger.`); continue; }
     if (m.kind === 'adjustment') { problem(c, 'Opening adjustments (from the Incoming register) can’t be edited.'); continue; }
+    if (m.kind === 'closing') { problem(c, 'Closing adjustments are worked out when a lot closes and can’t be edited.'); continue; }
     if (c.field === 'quality' || c.field === 'design') lotChanges.push({ lot: m.lot_id, field: c.field, value: c.value, origin: { target: 'movement', id: c.id, field: c.field } });
     else mvChanges.push({ m, field: c.field, value: c.value, origin: { target: 'movement', id: c.id, field: c.field, message: '' } });
   }
 
   const lotIds = [...new Set(lotChanges.map((c) => c.lot))].sort();
-  const lotRes = lotIds.length ? await q(`SELECT lot_id, quality, design, grade, status FROM lots WHERE lot_id = ANY($1::text[]) ORDER BY lot_id FOR UPDATE`, [lotIds]) : { rows: [] };
+  const lotRes = lotIds.length ? await q(`SELECT lot_id, quality, design, grade, status, closed_at FROM lots WHERE lot_id = ANY($1::text[]) ORDER BY lot_id FOR UPDATE`, [lotIds]) : { rows: [] };
   const lots = new Map<string, LotRow>(lotRes.rows.map((r) => [String(r.lot_id), r as LotRow]));
 
   // 2. Validate + normalise each value. Keyed by row+field: the same cell changed twice must agree.
@@ -146,6 +154,11 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
       else if (field === 'bill_pct') v = billPctValue(c.value);
       else if (field === 'billed_meters') v = billedMetersValue(c.value);
       else if (field === 'lot_status_code') v = lotStatusCodeValue(c.value);
+      else if (field === 'entry_status') {
+        v = entryStatusValue(c.value);
+        if (!v) throw new LedgerError('Choose Packed, Running or End.');
+        if (v === 'end' && m.entry_status !== 'end' && !opts.endAllowed) throw new LedgerError('You can’t mark an entry End.');
+      }
       else if (field === 'mill_name' || field === 'weaver_name') {
         v = await canonicalName(q, field, nameValue(c.value, FIELD_LABEL[field]), editedMvIds);
       } else {
@@ -170,6 +183,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     try {
       if (c.field === 'quality' || c.field === 'design') v = (await canonicalLotAttr(q, c.field, requiredName(c.value, FIELD_LABEL[c.field]), lotIds))!;
       else if (c.field === 'grade') v = gradeValue(c.value);
+      else if (lot.closed_at) throw new LedgerError(`Lot ${lot.lot_id} is closed. Reopen it to change its status.`);
       else v = statusValue(c.value);
     } catch (e) {
       if (e instanceof LedgerError) { problem(c.origin, e.message); continue; }
@@ -198,6 +212,27 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
       if (hit !== undefined) problem(x.origin, `SR ${sr} is already used by an ${dir} entry (lot ${hit}).`);
       else used.set(sr, x.m.lot_id); // a later change in this batch with the same SR collides with this one
     }
+  }
+
+  // 3b. Status → End closes the lot: the lot must be open, and only one entry per lot can end it in one save.
+  //     End → Packed / Running reopens the lot when this entry is the one that closed it.
+  const statusChanges = [...mvFinal.values()].filter((x) => x.field === 'entry_status' && !same(x.m.entry_status, x.value));
+  const ending = statusChanges.filter((x) => x.value === 'end');
+  const unending = statusChanges.filter((x) => x.m.entry_status === 'end');
+  const lotState = new Map<string, { closed: boolean; endId: number | null }>();
+  for (const lot of [...new Set(statusChanges.map((x) => x.m.lot_id))].sort()) {
+    const r = await q(
+      `SELECT l.closed_at, (SELECT end_movement_id FROM lot_closures c WHERE c.lot_id = l.lot_id AND c.action = 'close' ORDER BY c.id DESC LIMIT 1) AS end_id
+       FROM lots l WHERE l.lot_id = $1 FOR UPDATE`, [lot]);
+    lotState.set(lot, { closed: !!r.rows[0]?.closed_at, endId: r.rows[0]?.end_id == null ? null : Number(r.rows[0].end_id) });
+  }
+  const endingLots = new Set<string>();
+  for (const x of ending) {
+    const st = lotState.get(x.m.lot_id)!;
+    const reopening = unending.some((u) => u.m.lot_id === x.m.lot_id && st.endId === u.m.id);
+    if (st.closed && !reopening) problem(x.origin, `Lot ${x.m.lot_id} is already closed. Reopen it first.`);
+    else if (endingLots.has(x.m.lot_id)) problem(x.origin, `Only one entry can be the End of lot ${x.m.lot_id}.`);
+    endingLots.add(x.m.lot_id);
   }
 
   if (problems.length) throw new EditProblems(problems);
@@ -245,12 +280,20 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     );
   }
 
+  // 5. Lots that close or reopen because of a status change (reopen first: an End can move to another entry).
+  let reload = false;
+  for (const x of unending) {
+    const st = lotState.get(x.m.lot_id)!;
+    if (st.closed && st.endId === x.m.id) { await reopenLot(q, x.m.lot_id, { by, keepEndEntry: x.m.id }); reload = true; }
+  }
+  for (const x of ending) { await closeLot(q, x.m.lot_id, { reason: 'end_entry', by, endMovementId: x.m.id }); reload = true; }
+
   const rows = await ledgerRowsByIds(q, [...mvSet.keys()]);
   const changedLots = [...lotSet.keys()];
   const lotOut = changedLots.length
     ? (await q(`SELECT lot_id, quality, design, grade, status FROM lots WHERE lot_id = ANY($1::text[]) ORDER BY lot_id`, [changedLots])).rows as EditedLot[]
     : [];
-  return { saved: log.length, rows, lots: lotOut };
+  return { saved: log.length, rows, lots: lotOut, reload };
 }
 
 /** Last edits of one movement or lot (newest first), with the editor's name. */

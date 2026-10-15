@@ -46,18 +46,24 @@ export const TEMPLATES: Template[] = [
     id: 'lot_status',
     describe: 'Stock balance, location, quality and open job cards of one lot',
     params: ['lot'],
-    run: async (p) => {
+    run: async (p, s) => {
       if (!p.lot) return { answer: 'Which lot? For example: "status of lot 257A".', rows: [] };
       const r = await query(
         `SELECT l.lot_id, l.quality, l.design,
                 COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) FROM stock_movements WHERE lot_id = l.lot_id), 0) AS balance_m,
                 (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS location,
-                (SELECT COUNT(*) FROM job_cards WHERE lot_id = l.lot_id AND status <> 'closed') AS open_cards
+                (SELECT COUNT(*) FROM job_cards WHERE lot_id = l.lot_id AND status <> 'closed') AS open_cards,
+                to_char(l.closed_at, 'DD Mon YYYY') AS closed_on, l.close_reason
          FROM lots l WHERE l.lot_id = $1`,
         [p.lot],
       );
       const x = r.rows[0];
-      if (!x) return { answer: `No lot ${p.lot} found.`, rows: [] };
+      // Closed lots are the owner's records (stock.closed): anyone else is told there is no such lot.
+      if (!x || (x.closed_on && !can(s.role, 'stock.closed'))) return { answer: `No lot ${p.lot} found.`, rows: [] };
+      if (x.closed_on) {
+        const how = x.close_reason === 'manual' ? 'closed by hand' : x.close_reason === 'register' ? 'closed from the sales register' : 'closed by its End entry';
+        return { answer: `Lot ${x.lot_id} (${x.quality}) is closed: ${how} on ${x.closed_on}. Its balance is 0. See Stock ledger → Lots & balance → Closed.`, rows: [] };
+      }
       return {
         answer: `Lot ${x.lot_id} (${x.quality}${x.design && !/unknown/i.test(x.design) ? `, ${x.design}` : ''}): ${fmt(x.balance_m)} m in stock, at ${x.location ?? 'no location yet'}${Number(x.open_cards) ? `, ${x.open_cards} job card${Number(x.open_cards) === 1 ? '' : 's'} open` : ''}.`,
         rows: r.rows,
@@ -106,7 +112,7 @@ export const TEMPLATES: Template[] = [
       const d = daysOr(p.days, null);
       const r = await query(
         `SELECT party, SUM(meters) AS meters, COUNT(*) AS challans FROM stock_movements
-         WHERE direction = 'OUT' AND ($1::int IS NULL OR ts >= CURRENT_DATE - ($1::int - 1))
+         WHERE direction = 'OUT' AND kind = 'normal' AND ($1::int IS NULL OR ts >= CURRENT_DATE - ($1::int - 1))
            AND ($2::text IS NULL OR regexp_replace(lower(party), '[^a-z0-9]', '', 'g') = regexp_replace(lower($2), '[^a-z0-9]', '', 'g'))
          GROUP BY party ORDER BY meters DESC LIMIT 20`,
         [d, p.party ?? null],
@@ -125,7 +131,7 @@ export const TEMPLATES: Template[] = [
       const r = await query(
         `SELECT COALESCE(mill_name, '—') AS mill, SUM(grey_meters) AS grey_m, SUM(finished_meters) AS finished_m, SUM(meters) AS stock_m, COUNT(*) AS challans
          FROM stock_movements
-         WHERE direction = 'IN' AND ($1::int IS NULL OR ts >= CURRENT_DATE - ($1::int - 1))
+         WHERE direction = 'IN' AND kind = 'normal' AND ($1::int IS NULL OR ts >= CURRENT_DATE - ($1::int - 1))
            AND ($2::text IS NULL OR regexp_replace(lower(mill_name), '[^a-z0-9]', '', 'g') = regexp_replace(lower($2), '[^a-z0-9]', '', 'g'))
          GROUP BY 1 ORDER BY stock_m DESC LIMIT 20`,
         [d, p.mill ?? null],

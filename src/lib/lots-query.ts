@@ -3,6 +3,8 @@
 //   lotsPage()   → the Stock screen's "Lots & balance" view (keyset-paged on lot no., newest first)
 //   lotSearch()  → type-ahead for every lot picker (lot no. prefix first, then quality / design / location)
 //   lotsByIds()  → a few known lots (dispatch lines, reserved lots, the lot being moved)
+// Closed lots (migration 016) are left out of everything except the owner's Closed lots view (`closed: true`)
+// and lotsByIds (callers drop them for people without stock.closed).
 import type { NextRequest } from 'next/server';
 import type { Q } from './db';
 import { COOKIE } from './auth/config';
@@ -14,7 +16,11 @@ export const LOT_DOC = `lower(l.lot_id::text || ' ' || l.quality::text || ' ' ||
 const LOT_KEY = `lower(l.lot_id::text)`;
 
 export const LOT_COLS = `l.lot_id, l.quality, l.design, l.grade, l.status, l.bal_m AS balance,
-  l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no`;
+  l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no, l.closed_at`;
+/** Closed lots view: how / when / who and what was written off (the latest close in lot_closures). */
+const CLOSED_COLS = `, l.close_reason, l.close_note, COALESCE(u.name, l.closed_by) AS closed_by_name, c.adjustment_m`;
+const CLOSED_JOIN = ` LEFT JOIN users u ON u.id = l.closed_by
+  LEFT JOIN LATERAL (SELECT adjustment_m FROM lot_closures WHERE lot_id = l.lot_id AND action = 'close' ORDER BY id DESC LIMIT 1) c ON TRUE`;
 
 /** Beyond this, counts show as "10,000+" (an exact count over millions of rows is the slow part). */
 export const COUNT_CAP = 10_000;
@@ -23,7 +29,12 @@ export type LotRow = {
   lot_id: string; quality: string; design: string; grade: string; status: string; balance: number;
   location: string | null; location_stage: string | null; location_ts: string | null;
   loc_code: string | null; reg_lot_no: string | null; // from the Incoming register (migration 013)
+  closed_at: string | null; // closed lot (migration 016); null = open
+  // Closed lots view only:
+  close_reason?: 'end_entry' | 'manual' | 'register' | null; close_note?: string | null; closed_by_name?: string | null;
+  adjustment_m?: number | null; // + left over written off, − sent beyond the balance written back
 };
+const iso = (v: unknown) => (v == null ? null : v instanceof Date ? v.toISOString() : String(v));
 
 export function toLot(r: Record<string, unknown>): LotRow {
   return {
@@ -32,6 +43,11 @@ export function toLot(r: Record<string, unknown>): LotRow {
     location_stage: (r.location_stage as string) ?? null,
     location_ts: r.location_ts == null ? null : r.location_ts instanceof Date ? r.location_ts.toISOString() : String(r.location_ts),
     loc_code: (r.loc_code as string) ?? null, reg_lot_no: (r.reg_lot_no as string) ?? null,
+    closed_at: iso(r.closed_at),
+    ...('close_reason' in r ? {
+      close_reason: (r.close_reason as LotRow['close_reason']) ?? null, close_note: (r.close_note as string) ?? null,
+      closed_by_name: (r.closed_by_name as string) ?? null, adjustment_m: r.adjustment_m == null ? 0 : Number(r.adjustment_m),
+    } : {}),
   };
 }
 
@@ -42,7 +58,7 @@ const clip = (v: string | null | undefined, max = 100) => {
   return s ? s.slice(0, max) : '';
 };
 
-export interface LotFilters { q: string; status: string; inStock: boolean; quality: string }
+export interface LotFilters { q: string; status: string; inStock: boolean; quality: string; closed?: boolean } // closed: the owner's Closed lots view
 export const LOT_STATUSES = ['active', 'completed', 'dispatched', 'hold'];
 
 export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
@@ -52,6 +68,7 @@ export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
     status: LOT_STATUSES.includes(status) ? status : '',
     inStock: sp.get('in_stock') === '1',
     quality: clip(sp.get('quality')),
+    closed: sp.get('closed') === '1',
   };
 }
 
@@ -60,7 +77,7 @@ const lotAlts = (q: Q, f: LotFilters) => marketSearchPatterns(q, f.q.toLowerCase
 
 function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> = new Map()): string[] {
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
-  const parts: string[] = [];
+  const parts: string[] = [f.closed ? 'l.closed_at IS NOT NULL' : 'l.closed_at IS NULL'];
   if (f.inStock) parts.push('l.bal_m > 0');
   if (f.status) parts.push(`l.status = ${p(f.status)}`);
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
@@ -93,9 +110,11 @@ export async function lotsPage(q: Q, f: LotFilters, opts: { limit: number; curso
   const where = parts.length ? `WHERE ${parts.join(' AND ')}` : '';
   // With search words, find the matches through the trigram index first, then sort them. (Left to itself the planner
   // may walk every lot in number order looking for matches — 100+ ms at 200k lots when the matches are old lots.)
+  const cols = f.closed ? `${LOT_COLS}${CLOSED_COLS}` : LOT_COLS;
+  const from = f.closed ? `lots l${CLOSED_JOIN}` : 'lots l';
   const r = hasIndexableWord(f.q)
-    ? await q(`WITH m AS MATERIALIZED (SELECT ${LOT_COLS} FROM lots l ${where}) SELECT * FROM m ORDER BY lot_id DESC LIMIT $${params.length}`, params)
-    : await q(`SELECT ${LOT_COLS} FROM lots l ${where} ORDER BY l.lot_id DESC LIMIT $${params.length}`, params);
+    ? await q(`WITH m AS MATERIALIZED (SELECT ${cols} FROM ${from} ${where}) SELECT * FROM m ORDER BY lot_id DESC LIMIT $${params.length}`, params)
+    : await q(`SELECT ${cols} FROM ${from} ${where} ORDER BY l.lot_id DESC LIMIT $${params.length}`, params);
   const more = r.rows.length > opts.limit;
   const rows = r.rows.slice(0, opts.limit).map(toLot);
   let total: number | null = null;
@@ -130,7 +149,7 @@ export async function lotSearch(q: Q, f: LotFilters, limit: number): Promise<Lot
   const out = starts.rows.map(toLot);
   if (out.length >= limit) return out;
   const p2 = [...base];
-  const w2 = [...common, ...lotWhere({ q: f.q, status: '', inStock: false, quality: '' }, p2, await lotAlts(q, f))];
+  const w2 = [...common, ...lotWhere({ q: f.q, status: '', inStock: false, quality: '', closed: f.closed }, p2, await lotAlts(q, f))];
   p2.push(`${likeEscape(text)}%`);
   w2.push(`NOT (${LOT_KEY} COLLATE "C" LIKE $${p2.length})`);
   const has = await q(`SELECT ${LOT_COLS} FROM lots l WHERE ${w2.join(' AND ')} ORDER BY l.lot_id DESC LIMIT ${limit - out.length}`, p2);
@@ -141,7 +160,8 @@ export async function lotSearch(q: Q, f: LotFilters, limit: number): Promise<Lot
 export async function lotsAll(q: Q, f: LotFilters, cap = 200_000): Promise<LotRow[]> {
   const params: unknown[] = [];
   const parts = lotWhere(f, params, await lotAlts(q, f));
-  const r = await q(`SELECT ${LOT_COLS} FROM lots l ${parts.length ? `WHERE ${parts.join(' AND ')}` : ''} ORDER BY l.lot_id LIMIT ${cap}`, params);
+  const cols = f.closed ? `${LOT_COLS}${CLOSED_COLS}` : LOT_COLS;
+  const r = await q(`SELECT ${cols} FROM lots l${f.closed ? CLOSED_JOIN : ''} ${parts.length ? `WHERE ${parts.join(' AND ')}` : ''} ORDER BY l.lot_id LIMIT ${cap}`, params);
   return r.rows.map(toLot);
 }
 

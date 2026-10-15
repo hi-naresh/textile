@@ -3,10 +3,12 @@
 // Stock ledger rows from the server, filtered and paged (GET /api/stock/ledger).
 // Filters change → first page reloads (older requests are cancelled). loadMore() appends the next page.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { EntryStatus } from './registers';
 
 export interface LedgerFilterState {
   q: string;
   direction: '' | 'IN' | 'OUT';
+  status: '' | EntryStatus; // outgoing entry status
   quality: string;
   design: string;
   lot: string;
@@ -14,18 +16,19 @@ export interface LedgerFilterState {
   from: string; // YYYY-MM-DD
   to: string;
 }
-export const EMPTY_FILTERS: LedgerFilterState = { q: '', direction: '', quality: '', design: '', lot: '', party: '', from: '', to: '' };
+export const EMPTY_FILTERS: LedgerFilterState = { q: '', direction: '', status: '', quality: '', design: '', lot: '', party: '', from: '', to: '' };
 
 export interface LedgerRow {
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
   mill_name: string | null; weaver_name: string | null; party: string | null; source_doc_id: string | null; capture_event_id: number | null;
   sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
   edited?: boolean; // changed in the ledger's edit mode
-  // Register fields (see src/lib/ledger-query.ts). kind 'adjustment' = opening adjustment, not a sale.
-  kind?: 'normal' | 'adjustment';
+  // Register fields (see src/lib/ledger-query.ts). kind 'adjustment' = opening adjustment, 'closing' = closing adjustment; neither is a sale.
+  kind?: 'normal' | 'adjustment' | 'closing';
   register_pct?: number | null; takes?: (number | null)[] | null; loc_code?: string | null;
   bill_pct?: number | null; billed_meters?: number | null; lot_status_code?: string | null; linked_sr?: string | null;
   reg_lot_no?: string | null;
+  entry_status?: EntryStatus | null; // OUT: packed / running / end; null on IN and older rows
 }
 export interface LedgerFacets { qualities: string[]; designs: string[]; byQuality: Record<string, string[]> }
 

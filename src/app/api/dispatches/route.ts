@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST { party, order_id?, lines: [{ lot_id, meters }], challan_no?, transporter?, lr_no?, vehicle_no?, packages?,
+// POST { party, order_id?, lines: [{ lot_id, meters, entry_status? (packed / running / end — end needs stock.end) }], challan_no?, transporter?, lr_no?, vehicle_no?, packages?,
 //        create_invoice? (owner), rates? (owner, ₹/m by lot_id or quality when no saved rate), invoice_date? }
 //   → { dispatch, lines, invoice?, note?, whatsapp: { queued, message } | null } — one transaction: dispatch + OUT movements (+ invoice);
 //   then the WhatsApp dispatch message is queued when the owner switched it on and sent in the background
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     if (b.create_invoice && !owner) throw new LedgerError('Only the owner can create invoices.', 403);
     const actor = a.by;
     const out = await withTransaction(async (q) => {
-      const { id } = await createDispatch(q, b, actor);
+      const { id } = await createDispatch(q, b, actor, { endAllowed: can(a.role, 'stock.end') });
       const inv = b.create_invoice ? await createInvoiceForDispatch(q, id, { rates: b.rates, invoice_date: b.invoice_date, actor }) : null;
       const full = await getDispatch(q, id, owner);
       return { ...full, ...(inv ? { invoice: inv.invoice, note: inv.note } : {}) };

@@ -140,10 +140,10 @@ export async function search(q: Q, caller: SearchCaller, raw: string, limit = 5)
       const inner = tg.lot && k.length >= 3 && /\d/.test(k);
       const r = await q(`
         (SELECT l.lot_id, l.quality, l.design, l.status, l.bal_m AS balance FROM lots l
-          WHERE lower(l.lot_id::text) COLLATE "C" LIKE $1 ORDER BY lower(l.lot_id::text) COLLATE "C" LIMIT $2)
+          WHERE lower(l.lot_id::text) COLLATE "C" LIKE $1 AND l.closed_at IS NULL ORDER BY lower(l.lot_id::text) COLLATE "C" LIMIT $2)
         ${inner ? `UNION ALL
         (SELECT l.lot_id, l.quality, l.design, l.status, l.bal_m AS balance FROM lots l
-          WHERE ${LOT_DOC} LIKE $3 AND lower(l.lot_id::text) LIKE $3 AND lower(l.lot_id::text) COLLATE "C" NOT LIKE $1 LIMIT $2)` : ''}`,
+          WHERE ${LOT_DOC} LIKE $3 AND lower(l.lot_id::text) LIKE $3 AND lower(l.lot_id::text) COLLATE "C" NOT LIKE $1 AND l.closed_at IS NULL LIMIT $2)` : ''}`,
       inner ? [`${esc(lower)}%`, n, contains] : [`${esc(lower)}%`, n]);
       return (r.rows as { lot_id: string; quality: string | null; design: string | null; status: string | null; balance: string }[]).map((x) => ({
         type: 'lot' as const, id: x.lot_id, title: x.lot_id,
@@ -172,9 +172,11 @@ export async function search(q: Q, caller: SearchCaller, raw: string, limit = 5)
         const tg = await trigram(q);
         // Challan no.: through the ledger's trigram index (search_doc holds the challan, lower case) + a recheck on
         // the column; without that index only "starts with" (a plain scan that stops at the first matches).
-        const docWhere = tg.doc && k.length >= 3 ? `(search_doc LIKE $1 AND lower(source_doc_id) LIKE $1)` : `source_doc_id LIKE $1`;
+        // Entries of closed lots are the owner's records (stock.closed); nobody else finds them.
+        const openOnly = can(role, 'stock.closed') ? '' : ' AND NOT EXISTS (SELECT 1 FROM lots cl WHERE cl.lot_id = stock_movements.lot_id AND cl.closed_at IS NOT NULL)';
+        const docWhere = `${tg.doc && k.length >= 3 ? `(search_doc LIKE $1 AND lower(source_doc_id) LIKE $1)` : `source_doc_id LIKE $1`}${openOnly}`;
         const params: unknown[] = [tg.doc && k.length >= 3 ? contains : prefixUp];
-        const srSql = num != null ? ` UNION ALL (SELECT id, lot_id, direction, meters, party, source_doc_id, sr_no, ts, 1 AS by_sr FROM stock_movements WHERE sr_no = $${params.length + 1} LIMIT 4)` : '';
+        const srSql = num != null ? ` UNION ALL (SELECT id, lot_id, direction, meters, party, source_doc_id, sr_no, ts, 1 AS by_sr FROM stock_movements WHERE sr_no = $${params.length + 1}${openOnly} LIMIT 4)` : '';
         if (num != null) params.push(num);
         params.push(n);
         const r = await q(`
@@ -356,7 +358,7 @@ export async function lotDetails(q: Q, lotId: string, sections: string[] | null 
   const [lot, moves, jobs] = await Promise.all([
     q(`SELECT l.lot_id, l.quality, l.design, l.grade, l.status,
          l.bal_m AS balance, l.cur_location AS location
-       FROM lots l WHERE l.lot_id = $1`, [lotId]),
+       FROM lots l WHERE l.lot_id = $1 AND l.closed_at IS NULL`, [lotId]), // closed lots: owner's Closed lots view only
     q(`SELECT id, direction, meters, party, source_doc_id, sr_no, ts FROM stock_movements WHERE lot_id = $1 ORDER BY ts DESC, id DESC LIMIT 8`, [lotId]),
     q(`SELECT j.id, j.process, w.name AS worker_name, j.meters_in, j.meters_out, j.status FROM job_cards j LEFT JOIN workers w ON w.id = j.worker_id
        WHERE j.lot_id = $1 AND ($2::text[] IS NULL OR lower(regexp_replace(j.process, '\s*section\s*$', '', 'i')) = ANY($2) OR lower(regexp_replace(COALESCE(w.section, ''), '\s*section\s*$', '', 'i')) = ANY($2))

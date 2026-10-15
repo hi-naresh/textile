@@ -6,6 +6,7 @@ import { LedgerError } from '../ledger-error';
 import { recordOutgoing } from '../ledger';
 import { lotStock, reservedForOthers } from '../stock';
 import { challanCode, dateValue, lotCode, lotStatusValue, metersValue } from '../normalize';
+import { entryStatusValue } from '../registers';
 import { partyByName } from '../parties';
 import { textOrNull, validActor } from './common';
 
@@ -76,8 +77,11 @@ export interface DispatchInput {
   date?: unknown; dispatched_at?: unknown;
 }
 
-/** Validates and writes a dispatch + its OUT movements. Run inside a transaction. */
-export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | null): Promise<{ id: number; challan_no: string }> {
+/**
+ * Validates and writes a dispatch + its OUT movements. Run inside a transaction.
+ * Each line may carry entry_status (packed / running / end); `endAllowed` = the caller has stock.end.
+ */
+export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | null, opts: { endAllowed?: boolean } = {}): Promise<{ id: number; challan_no: string }> {
   if (!Array.isArray(b.lines) || !b.lines.length) throw new LedgerError('Add at least one lot with meters.');
   if (b.lines.length > 200) throw new LedgerError('Too many lines in one dispatch (200 max).');
   const lines = b.lines.map((raw, i) => {
@@ -87,7 +91,9 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
     const meters = metersValue(l.meters, `Line ${i + 1} meters`);
     if (meters == null) throw new LedgerError(`Line ${i + 1}: meters are required.`);
     const status = l.status ? lotStatusValue(l.status) : null;
-    return { lot_id: lot, meters, status };
+    const entry_status = entryStatusValue(l.entry_status);
+    if (entry_status === 'end' && !opts.endAllowed) throw new LedgerError(`Line ${i + 1}: you can’t mark an entry End. Choose Packed or Running.`, 403);
+    return { lot_id: lot, meters, status, entry_status };
   });
 
   let order: { id: number; party_id: number; party_name: string; status: string } | null = null;
@@ -158,7 +164,8 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
       moved_by: actor,
       date: dispatchDate,
       status: l.status,
-    });
+      entry_status: l.entry_status,
+    }, { endAllowed: opts.endAllowed });
   }
   // The hook may have linked the movements to one order: carry it onto the dispatch.
   if (!order) {

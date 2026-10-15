@@ -43,7 +43,9 @@ export function reportWorkbook(r: Report, firmName: string): ExcelJS.Workbook {
 
   sheet(wb, 'Stock', [{ header: 'Item', key: 'k', width: 22 }, { header: 'Meters', key: 'm', width: 14, numFmt: M }, { header: 'Challans', key: 'c', width: 10 }], [
     { k: 'Opening stock', m: r.stock.opening }, { k: 'Received (in)', m: r.stock.in, c: r.stock.inChallans },
-    { k: 'Dispatched (out)', m: r.stock.out, c: r.stock.outChallans }, { k: 'Closing stock', m: r.stock.closing },
+    { k: 'Dispatched (out)', m: r.stock.out, c: r.stock.outChallans },
+    ...(Math.abs(r.stock.adjusted ?? 0) >= 0.01 ? [{ k: 'Adjusted (register import, closed lots)', m: r.stock.adjusted }] : []),
+    { k: 'Closing stock', m: r.stock.closing },
   ]);
 
   const disp = [

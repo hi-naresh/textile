@@ -57,7 +57,7 @@ export async function inventorySnapshot(q: Q): Promise<InventorySnapshot> {
               COUNT(*) FILTER (WHERE sm.ts >= CURRENT_DATE - 59) AS n60,
               to_char(MAX(sm.ts), 'YYYY-MM-DD') AS last_out
        FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id
-       WHERE sm.direction = 'OUT'
+       WHERE sm.direction = 'OUT' AND sm.kind = 'normal'
        GROUP BY l.quality`);
   // Open orders: meters still to go = ordered − dispatched against the order.
   const orders = await q(`SELECT o.quality, COUNT(*) AS n, SUM(GREATEST(o.meters - COALESCE(d.m, 0), 0)) AS remaining,

@@ -7,13 +7,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Lot } from './types';
 
-export interface LotFilterState { q: string; stock: '' | 'in'; status: string }
+export interface LotFilterState { q: string; stock: '' | 'in' | 'closed'; status: string } // closed: owner's Closed lots
 export const EMPTY_LOT_FILTERS: LotFilterState = { q: '', stock: '', status: '' };
 
 export function lotParams(f: LotFilterState): URLSearchParams {
   const p = new URLSearchParams();
   if (f.q.trim()) p.set('q', f.q.trim());
   if (f.stock === 'in') p.set('in_stock', '1');
+  if (f.stock === 'closed') p.set('closed', '1');
   if (f.status) p.set('status', f.status);
   return p;
 }
