@@ -215,7 +215,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   // "12,345" or, past the count cap, "10,000+"
   const countText = (total: number | null, capped: boolean) => (total == null ? '' : `${n(total)}${capped ? '+' : ''}`);
   const left = (total: number | null, capped: boolean, shown: number) => (capped ? 'more' : `${n(Math.max(0, (total ?? 0) - shown))} left`);
-  const cols = rate ? 11 : 10;
+  const cols = rate ? 12 : 11;
 
   return (
     <div className={`page fade ${editing ? 'se-editing' : ''}`}>
@@ -235,7 +235,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       </div>
       {editing && (
         <p className="se-note small t2">
-          Edit mode: change cells like a sheet, then Save. Meters, direction, lot no. and date can’t be edited here; location has its own Move.
+          Edit mode: change cells like a sheet, then Save. Set a sale’s status (Packed / Running / End) in the Status column; End closes the lot. Meters, direction, lot no. and date can’t be edited here; location has its own Move.
           {view === 'moves' ? ' Quality and design belong to the lot, so changing them on one row changes every row of that lot.' : ''}
         </p>
       )}
@@ -251,7 +251,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
           <section className={`card flush ${lg.loading && lg.rows.length ? 'lf-stale' : ''}`}>
             <div className="ledger-scroll">
             <table className={`tbl rtbl ledger-tbl ${editing ? 'se-tbl' : ''}`} onKeyDown={editing ? gridKeyDown : undefined}>
-              <thead><tr><th className="r">SR</th><th>Time</th><th>Dir</th><th>Lot · Quality</th><th className="r">Meters</th><th className="r">Taka</th><th className="r d">Grey → Finished</th><th>From (mill · weaver) / To (party)</th><th>Location</th><th>Challan · entry</th>{rate ? <th className="r d">Value ₹</th> : null}</tr></thead>
+              <thead><tr><th className="r">SR</th><th>Time</th><th>Dir</th><th>Status</th><th>Lot · Quality</th><th className="r">Meters</th><th className="r">Taka</th><th className="r d">Grey → Finished</th><th>From (mill · weaver) / To (party)</th><th>Location</th><th>Challan · entry</th>{rate ? <th className="r d">Value ₹</th> : null}</tr></thead>
               <tbody>
                 {lg.rows.map((l, i) => (
                   <MoveRow key={l.id} l={l} i={i} rate={rate} editing={editing} canEdit={canEdit} onEdit={onEdit}
@@ -350,7 +350,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
               <p>{Math.abs(lotAction.lot.balance) < 0.01 ? 'Its balance is already 0.' : lotAction.lot.balance > 0
                 ? <><span className="num strong">{fmt(lotAction.lot.balance, 1)} m</span> left in it will be written off, so its balance is 0.</>
                 : <><span className="num strong">{fmt(-lotAction.lot.balance, 1)} m</span> sent beyond its balance will be written back, so its balance is 0.</>}</p>
-              <p>It leaves current stock and supervisors won’t see it. You can reopen it from Lots &amp; balance → Closed.</p>
+              <p>Its last sale is marked End. The lot leaves current stock and supervisors won’t see it. You can reopen it from Lots &amp; balance → Closed.</p>
             </>
           ) : (
             <p>The closing adjustment{lotAction.lot.adjustment_m ? <> of <span className="num strong">{fmt(Math.abs(lotAction.lot.adjustment_m), 1)} m</span></> : null} is removed, the End entry that closed it becomes Running, and the lot is back in stock.</p>
@@ -380,7 +380,8 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
           {canEdit && l.edited ? <EditedMarker target="movement" id={l.id} /> : null}
         </td>
         <td data-label="Time" className="num t2">{dayTime(l.ts)}</td>
-        <td data-label="Dir">{adj ? <span title={ADJUSTMENT_HINT}><Pill tone="neutral">ADJ</Pill></span> : closing ? <span title={CLOSING_HINT}><Pill tone="neutral">CLOSE</Pill></span> : <div className="stack-2"><Pill tone={l.direction === 'IN' ? 'info' : 'warn'}>{l.direction}</Pill><EntryStatusPill status={l.entry_status} /></div>}</td>
+        <td data-label="Dir">{adj ? <span title={ADJUSTMENT_HINT}><Pill tone="neutral">ADJ</Pill></span> : closing ? <span title={CLOSING_HINT}><Pill tone="neutral">CLOSE</Pill></span> : <Pill tone={l.direction === 'IN' ? 'info' : 'warn'}>{l.direction}</Pill>}</td>
+        <td data-label="Status">{l.direction === 'OUT' && !adj && !closing ? <EntryStatusPill status={l.entry_status} unset /> : <span className="muted">—</span>}</td>
         <td data-label="Lot"><div className="num strong">{l.lot_id}</div><div className="muted small">{l.quality || '—'} · {l.design}</div>{l.reg_lot_no && l.reg_lot_no !== l.lot_id ? <div className="muted tiny">Register lot no. {l.reg_lot_no}</div> : null}</td>
         <td data-label="Meters" className="r num">{adj || (closing && l.direction === 'OUT') ? '−' : closing ? '+' : ''}{fmt(l.meters, 1)}</td>
         <td data-label="Taka" className="r num">{l.pieces ?? <span className="muted">—</span>}</td>
@@ -413,9 +414,15 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
       <td data-label="SR" className="r">{cell('sr_no', 'SR no.', { num: true })}</td>
       <td data-label="Time" className="num t2 se-ro">{dayTime(l.ts)}</td>
       {l.direction === 'OUT' ? (
-        <td data-label="Dir"><div className="se-stack"><Pill tone="warn">OUT</Pill>{cell('entry_status', 'Status', { options: l.entry_status ? ENTRY_STATUSES : ['', ...ENTRY_STATUSES], optionLabels: { '': '—', ...ENTRY_STATUS_LABEL } })}</div></td>
+        <>
+          <td data-label="Dir" className="se-ro"><Pill tone="warn">OUT</Pill></td>
+          <td data-label="Status">{cell('entry_status', 'Status', { options: l.entry_status ? ENTRY_STATUSES : ['', ...ENTRY_STATUSES], optionLabels: { '': 'Not set', ...ENTRY_STATUS_LABEL } })}</td>
+        </>
       ) : (
-        <td data-label="Dir" className="se-ro"><Pill tone="info">IN</Pill></td>
+        <>
+          <td data-label="Dir" className="se-ro"><Pill tone="info">IN</Pill></td>
+          <td data-label="Status" className="se-ro"><span className="muted">—</span></td>
+        </>
       )}
       <td data-label="Lot">
         <div className="se-stack">

@@ -39,7 +39,7 @@ let overridesBefore: unknown = null;
 const get = (cookie: string, path: string) => new NextRequest(`http://localhost${path}`, { headers: { cookie } });
 const post = (cookie: string, path: string, body: unknown) => new NextRequest(`http://localhost${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = (cookie: string, body: unknown) => new NextRequest('http://localhost/api/settings', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const LOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+const LOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 const balance = async (l: string) => Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [l])).rows[0].bal_m);
 
 async function addLot(l: string, meters: number) {
@@ -343,4 +343,24 @@ test('#7 a new sales-register import sets the status from LOT S and closes the l
   assert.equal((await lotRow(lot(19))).close_reason, 'register');
   assert.equal(await balance(lot(19)), 0);
   await assert.rejects(withTransaction((q) => commitOutgoingRow(q, row(4, 'R', 10), id, newLedgerMemo())), /is closed/);
+});
+
+// ---------- closing by hand marks the last sale End ----------
+test('closing a lot by hand marks its last sale End; reopening turns it back to Running', async () => {
+  const first = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(20), meters: 300, party, date: '2026-10-10' }));
+  // A sale saved before statuses existed: no status.
+  const last = Number((await query(`INSERT INTO stock_movements (lot_id, direction, meters, party, ts) VALUES ($1, 'OUT', 800, $2, '2026-10-12 12:00') RETURNING id`, [lot(20), party])).rows[0].id);
+  const r = await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(20), action: 'close' }));
+  assert.equal((await r.json()).adjustment_m, -100); // 1100 m went out of 1000: 100 m written back
+  assert.equal(await statusOf(last), 'end');
+  assert.equal(await statusOf(Number(first.id)), 'running'); // only the last sale
+  const log = (await query("SELECT old_value, new_value, edited_by FROM ledger_edits WHERE target = 'movement' AND target_id = $1", [String(last)])).rows;
+  assert.deepEqual(log, [{ old_value: null, new_value: 'end', edited_by: id }]);
+  assert.equal((await query("SELECT end_movement_id FROM lot_closures WHERE lot_id = $1 AND action = 'close'", [lot(20)])).rows[0].end_movement_id, last);
+  const closedOn = new Date((await lotRow(lot(20))).closed_at).toLocaleDateString('en-CA');
+  assert.equal(closedOn, new Date().toLocaleDateString('en-CA')); // closed today, not on the sale's date
+
+  await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(20), action: 'reopen' }));
+  assert.equal(await statusOf(last), 'running');
+  assert.equal(await balance(lot(20)), -100);
 });
