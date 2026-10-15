@@ -144,12 +144,15 @@ export const TEMPLATES: Template[] = [
     id: 'challan_lookup',
     describe: 'Find a challan by its number',
     params: ['challan'],
-    run: async (p) => {
+    run: async (p, s) => {
       if (!p.challan) return { answer: 'Which challan number?', rows: [] };
+      // Entries of closed lots are the owner's records (stock.closed).
       const r = await query(
         `SELECT direction, lot_id, meters, grey_meters, finished_meters, mill_name, party, source_doc_id AS challan, ts::date AS date
-         FROM stock_movements WHERE upper(source_doc_id) = upper($1) ORDER BY ts DESC LIMIT 10`,
-        [p.challan],
+         FROM stock_movements sm WHERE upper(source_doc_id) = upper($1)
+           AND ($2::boolean OR NOT EXISTS (SELECT 1 FROM lots cl WHERE cl.lot_id = sm.lot_id AND cl.closed_at IS NOT NULL))
+         ORDER BY ts DESC LIMIT 10`,
+        [p.challan, can(s.role, 'stock.closed')],
       );
       if (!r.rowCount) return { answer: `No challan ${p.challan} found.`, rows: [] };
       const x = r.rows[0];

@@ -20,7 +20,7 @@ import { GET as getLedger } from '../../src/app/api/stock/ledger/route';
 import { POST as lotClose } from '../../src/app/api/lots/close/route';
 import { EditProblems } from '../../src/lib/ledger-edit';
 import { applyBackfill, planBackfill } from '../../src/lib/lot-status-backfill';
-import { commitOutgoingRow } from '../../src/lib/register-import';
+import { checkOutgoing, commitOutgoingRow } from '../../src/lib/register-import';
 import { newLedgerMemo } from '../../src/lib/ledger';
 import { search } from '../../src/lib/search';
 import { templateById } from '../../src/lib/chat/templates';
@@ -39,7 +39,7 @@ let overridesBefore: unknown = null;
 const get = (cookie: string, path: string) => new NextRequest(`http://localhost${path}`, { headers: { cookie } });
 const post = (cookie: string, path: string, body: unknown) => new NextRequest(`http://localhost${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = (cookie: string, body: unknown) => new NextRequest('http://localhost/api/settings', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const LOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+const LOTS = Array.from({ length: 25 }, (_, i) => i + 1);
 const balance = async (l: string) => Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [l])).rows[0].bal_m);
 
 async function addLot(l: string, meters: number) {
@@ -158,6 +158,7 @@ test('#4 End beyond the balance: closing IN writes the excess back; exact End ne
 });
 
 test('#4 back-dated End closes the lot on that date', async () => {
+  await query("UPDATE stock_movements SET ts = '2026-08-01 12:00' WHERE lot_id = $1 AND direction = 'IN'", [lot(8)]);
   await withTransaction((q) => recordOutgoing(q, { lot_id: lot(8), meters: 300, party, entry_status: 'end', date: '2026-09-01' }, { endAllowed: true }));
   assert.deepEqual((await closings(lot(8))).map((x) => x.d), ['2026-09-01']);
   const l = await lotRow(lot(8));
@@ -361,6 +362,71 @@ test('closing a lot by hand marks its last sale End; reopening turns it back to 
   assert.equal(closedOn, new Date().toLocaleDateString('en-CA')); // closed today, not on the sale's date
 
   await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(20), action: 'reopen' }));
-  assert.equal(await statusOf(last), 'running');
+  assert.equal(await statusOf(last), null); // back to what it had before the close marked it End
   assert.equal(await balance(lot(20)), -100);
+});
+
+test('a lot closed by hand before closing marked a sale End takes End on its sale without closing again', async () => {
+  // Lot 20 is open again (previous test reopened it, balance −100). Close it the old way: no End entry recorded.
+  await query(`INSERT INTO stock_movements (lot_id, direction, meters, kind) VALUES ($1, 'IN', 100, 'closing')`, [lot(20)]);
+  await query(`UPDATE lots SET closed_at = now(), close_reason = 'manual', status = 'completed' WHERE lot_id = $1`, [lot(20)]);
+  await query(`INSERT INTO lot_closures (lot_id, action, reason, adjustment_m) VALUES ($1, 'close', 'manual', -100)`, [lot(20)]);
+  const sale = Number((await query(`SELECT id FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal' ORDER BY ts DESC, id DESC LIMIT 1`, [lot(20)])).rows[0].id);
+  const before = (await closings(lot(20))).length;
+  const r = await withTransaction((q) => applyLedgerEdits(q, [edit(sale, 'end')], id, { endAllowed: true }));
+  assert.equal(r.reload, false);
+  assert.equal(await statusOf(sale), 'end');
+  assert.equal((await closings(lot(20))).length, before); // no second write-off
+  assert.equal((await query("SELECT end_movement_id FROM lot_closures WHERE lot_id = $1 AND action = 'close' ORDER BY id DESC LIMIT 1", [lot(20)])).rows[0].end_movement_id, sale);
+  // Another sale of the same lot can't also be its End now.
+  const other = Number((await query(`SELECT id FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal' AND id <> $2 LIMIT 1`, [lot(20), sale])).rows[0].id);
+  await assert.rejects(withTransaction((q) => applyLedgerEdits(q, [edit(other, 'end')], id, { endAllowed: true })), /closed by another End entry/);
+  // Reopen puts back the status it had before it was marked End (none).
+  await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(20), action: 'reopen' }));
+  assert.equal(await statusOf(sale), null);
+});
+
+// ---------- review fixes ----------
+test('End on an older entry while later entries exist closes the lot now, not back-dated', async () => {
+  await withTransaction((q) => recordOutgoing(q, { lot_id: lot(21), meters: 100, party, entry_status: 'end', date: '2026-09-01' }, { endAllowed: true }));
+  const today = new Date().toLocaleDateString('en-CA');
+  assert.deepEqual((await closings(lot(21))).map((x) => x.d), [today]); // the lot's IN is dated today, after the End
+  assert.equal(new Date((await lotRow(lot(21))).closed_at).toLocaleDateString('en-CA'), today);
+});
+
+test('reopen restores what the close changed: the sale\'s status, a lot on hold, no place', async () => {
+  await query("UPDATE lots SET status = 'hold' WHERE lot_id = $1", [lot(22)]);
+  const sale = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(22), meters: 100, party, entry_status: 'packed' }));
+  await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(22), action: 'close' }));
+  assert.equal(await statusOf(Number(sale.id)), 'end');
+  assert.equal((await lotRow(lot(22))).cur_location, 'Dispatched');
+  await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(22), action: 'reopen' }));
+  assert.equal(await statusOf(Number(sale.id)), 'packed');
+  const l = await lotRow(lot(22));
+  assert.equal(l.status, 'hold');
+  assert.equal(l.cur_location, null); // it never had a place: not left at "Dispatched" with stock in it
+});
+
+test('register import check: closed lots are skipped; an E row followed by more sales keeps the lot open', async () => {
+  await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(23), action: 'close' }));
+  const raw = [
+    { row: 2, v: { date: '2026-10-01', bno: `${id}-X1`, lot: lot(23), lots: 'R', qty: 10 } },
+    { row: 3, v: { date: '2026-10-01', bno: `${id}-X2`, lot: lot(24), lots: 'E', qty: 100 } },
+    { row: 4, v: { date: '2026-10-02', bno: `${id}-X3`, lot: lot(24), lots: 'R', qty: 50 } },
+  ];
+  const chk = await checkOutgoing(query, raw);
+  assert.ok(chk.warnings.some((w) => w.row === 2 && w.skip && /is closed/.test(w.message)));
+  assert.deepEqual(chk.rows.map((r) => [r.row, !!r.keep_open]), [[3, true], [4, false]]);
+  for (const r of chk.rows) await withTransaction((q) => commitOutgoingRow(q, r as unknown as Record<string, unknown>, id, newLedgerMemo()));
+  const st = (await query("SELECT entry_status FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' ORDER BY id", [lot(24)])).rows.map((x) => x.entry_status);
+  assert.deepEqual(st, ['running', 'running']);
+  assert.equal((await lotRow(lot(24))).closed_at, null);
+});
+
+test('chat challan lookup: entries of closed lots only for the owner', async () => {
+  await withTransaction((q) => recordOutgoing(q, { lot_id: lot(25), meters: 10, party, source_doc: `${id}-CH1`.toUpperCase() }));
+  await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(25), action: 'close' }));
+  const t = templateById('challan_lookup')!;
+  assert.match((await t.run({ challan: `${id}-CH1`.toUpperCase() }, { role: 'supervisor', sections: [] })).answer, /No challan/);
+  assert.match((await t.run({ challan: `${id}-CH1`.toUpperCase() }, { role: 'owner', sections: [] })).answer, /dispatched 10 m/);
 });

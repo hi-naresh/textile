@@ -142,6 +142,7 @@ export interface RegOutRow {
   fmt: 'reg_out'; row: number; ref: string;
   date: string; bill_no: string; quality: string | null; bill_pct: number | null; lot_raw: string | null; lot_id: string;
   lot_status_code: string | null; meters: number; billed_meters: number | null; linked_sr: string | null;
+  keep_open?: boolean; // E / A row with more sales of its lot later in the file: saved as Running, the lot stays open
 }
 export interface RegProblem { row: number; field: string; message: string }
 export interface RegWarning extends RegProblem { skip: boolean }
@@ -331,7 +332,7 @@ export async function checkIncoming(q: Q, raw: RawRow<InKey>[], hasStockCol: boo
 }
 
 // ---------- (b) Outgoing register ----------
-interface LotInfo { lot_id: string; quality: string; reg_lot_no: string | null; bal: number; srs: number[] }
+interface LotInfo { lot_id: string; quality: string; reg_lot_no: string | null; bal: number; srs: number[]; closed: boolean }
 
 export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegCheck<RegOutRow>> {
   const { errors, warnings, tryField } = collector();
@@ -376,7 +377,7 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
   // Lots by incoming SR, and by lot no. (lot_id or the register's LOT NO).
   const srs = [...new Set(parsed.map((r) => r.srNum).filter((n): n is number => n != null))];
   const lotNos = [...new Set(parsed.filter((r) => r.lot_raw && !r.combined).map((r) => lotKey(r.lot_raw!)))];
-  const LOT_SQL = `SELECT l.lot_id, l.quality, l.reg_lot_no, l.bal_m,
+  const LOT_SQL = `SELECT l.lot_id, l.quality, l.reg_lot_no, l.bal_m, (l.closed_at IS NOT NULL) AS closed,
        COALESCE((SELECT array_agg(sm.sr_no) FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.sr_no IS NOT NULL), '{}') AS srs
      FROM lots l`;
   const [bySrRes, byLotRes] = await Promise.all([
@@ -384,7 +385,7 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
                     WHERE sm.direction = 'IN' AND sm.sr_no = ANY($1::int[])`, [srs]) : { rows: [] },
     lotNos.length ? q(`${LOT_SQL} WHERE upper(l.lot_id) = ANY($1::text[]) OR upper(l.reg_lot_no) = ANY($1::text[])`, [lotNos]) : { rows: [] },
   ]);
-  const toInfo = (x: Record<string, unknown>): LotInfo => ({ lot_id: String(x.lot_id), quality: String(x.quality), reg_lot_no: (x.reg_lot_no as string) ?? null, bal: Number(x.bal_m), srs: ((x.srs as unknown[]) ?? []).map(Number) });
+  const toInfo = (x: Record<string, unknown>): LotInfo => ({ lot_id: String(x.lot_id), quality: String(x.quality), reg_lot_no: (x.reg_lot_no as string) ?? null, bal: Number(x.bal_m), srs: ((x.srs as unknown[]) ?? []).map(Number), closed: !!x.closed });
   const bySr = new Map<number, LotInfo>(bySrRes.rows.map((x) => [Number(x.key_sr), toInfo(x)]));
   const byLot = new Map<string, LotInfo[]>();
   for (const x of byLotRes.rows) {
@@ -436,6 +437,7 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
       lot = ok[0];
       how = 'lot';
     }
+    if (lot.closed) { skip(r.row, 'LOT', `Lot ${lot.reg_lot_no ?? lot.lot_id} is closed in the app (finished). Reopen it first if this sale belongs to it.`); return; }
     const b = bal.get(lot.lot_id) ?? lot.bal;
     if (b + 0.001 < r.meters) {
       warnings.push({ row: r.row, field: 'QTY', skip: false, message: `Dispatches ${r.meters} m with ${round2(b)} m in stock (fold excess; balance will be ${round2(b - r.meters)} m). Kept as written.` });
@@ -446,6 +448,16 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
     if (how === 'sr') bySrCount++; else byLotCount++;
     const { srNum: _s, combined: _c, content: _t, ...rest } = r; // eslint-disable-line @typescript-eslint/no-unused-vars
     rows.push({ ...rest, lot_id: lot.lot_id, ref });
+  });
+  // LOT S E / A closes the lot on import. When more sales of the same lot come later in the file, closing there would
+  // refuse them: save that row as Running instead and say so (the last sale can still be marked End later).
+  const lastRow = new Map<string, number>();
+  rows.forEach((x, i) => lastRow.set(x.lot_id, i));
+  rows.forEach((x, i) => {
+    if (statusFromLotS(x.lot_status_code) === 'end' && lastRow.get(x.lot_id) !== i) {
+      x.keep_open = true;
+      warnings.push({ row: x.row, field: 'LOT S', skip: false, message: `LOT S ${x.lot_status_code} (End), but more sales of lot ${x.lot_id} come later in this file: saved as Running and the lot stays open.` });
+    }
   });
   if (rows.length) notes.push(`${bySrCount} sale row(s) found their lot by SR.NO${byLotCount ? `, ${byLotCount} by lot number` : ''}.`);
   notes.push('This register has no party column: imported sales have no party.');
@@ -522,7 +534,8 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
   const billed = billedMetersValue(r.billed_meters);
   const code = lotStatusCodeValue(r.lot_status_code);
   const linked = linkedSrValue(r.linked_sr);
-  const status = statusFromLotS(code) ?? 'running';
+  const coded = statusFromLotS(code) ?? 'running';
+  const status = coded === 'end' && r.keep_open === true ? 'running' : coded; // see checkOutgoing
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist. Check the file again.`);
   await assertLotOpen(q, lotId);
   const b = Number((await q(`SELECT bal_m FROM lots WHERE lot_id = $1`, [lotId])).rows[0].bal_m);

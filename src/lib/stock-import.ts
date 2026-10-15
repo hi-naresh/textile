@@ -609,18 +609,20 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
   // Lots: new lots need quality + design; OUT needs an existing lot with enough stock at that row (top to bottom).
   const lotIds = [...new Set(parsed.map((r) => r.lot_id).filter(Boolean))];
   const bal = new Map<string, number>();
+  const closedLots = new Set<string>(); // finished lots take no new entries (migration 016)
   if (lotIds.length) {
     const lr = await q(
-      `SELECT l.lot_id, COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END), 0) AS balance
+      `SELECT l.lot_id, (l.closed_at IS NOT NULL) AS closed, COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END), 0) AS balance
        FROM lots l LEFT JOIN stock_movements sm ON sm.lot_id = l.lot_id WHERE l.lot_id = ANY($1::text[]) GROUP BY l.lot_id`,
       [lotIds],
     );
-    for (const x of lr.rows) bal.set(x.lot_id, Number(x.balance));
+    for (const x of lr.rows) { bal.set(x.lot_id, Number(x.balance)); if (x.closed) closedLots.add(x.lot_id); }
   }
   let newLots = 0;
   const round = (n: number) => Math.round(n * 100) / 100;
   for (const r of parsed) {
     if (!r.lot_id) continue;
+    if (closedLots.has(r.lot_id)) { add(r.row, 'lot_id', `Lot ${r.lot_id} is closed (finished). Reopen it first, or use another lot no.`); continue; }
     if (r.direction === 'IN') {
       if (!bal.has(r.lot_id)) {
         newLots++;
