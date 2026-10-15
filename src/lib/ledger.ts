@@ -357,7 +357,8 @@ export interface LotClosed { lot_id: string; adjustment_m: number; movement_id: 
  * Close a lot: whatever its entries leave (or overshoot) is written off with a closing adjustment so the balance is
  * exactly 0, then the lot is marked closed (status completed) and leaves for "Dispatched".
  * `endMovementId`: the End entry that closes it — the adjustment and closed_at take that entry's time (back-dated
- * entries close on their own date). Without one (manual close) it is now. Run inside the caller's transaction.
+ * entries close on their own date). Without one (manual close) it is now, and the lot's last sale (if any) is marked
+ * End so the ledger shows why it closed; reopening turns it back to Running. Run inside the caller's transaction.
  */
 export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by?: string | null; endMovementId?: number | null; note?: unknown }): Promise<LotClosed> {
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
@@ -367,6 +368,20 @@ export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by
   const at = o.endMovementId
     ? ((await q(`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI:SS.US') AS ts FROM stock_movements WHERE id = $1 AND lot_id = $2`, [o.endMovementId, lotId])).rows[0]?.ts as string | undefined) ?? null
     : null;
+  let endId = o.endMovementId ?? null;
+  if (!endId) {
+    const last = (await q(
+      `SELECT id, entry_status FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal' ORDER BY ts DESC, id DESC LIMIT 1`, [lotId],
+    )).rows[0] as { id: number; entry_status: string | null } | undefined;
+    if (last) {
+      endId = Number(last.id);
+      if (last.entry_status !== 'end') {
+        await q(`UPDATE stock_movements SET entry_status = 'end' WHERE id = $1`, [endId]);
+        await q(`INSERT INTO ledger_edits (target, target_id, field, old_value, new_value, edited_by) VALUES ('movement', $1, 'entry_status', $2, 'end', $3)`,
+          [String(endId), last.entry_status, o.by ?? null]);
+      }
+    }
+  }
   const adjustment = Math.round((await lotBalance(q, lotId)) * 100) / 100;
   let movementId: number | null = null;
   if (Math.abs(adjustment) >= 0.01) {
@@ -385,13 +400,13 @@ export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by
   if ((await currentLocation(q, lotId)) !== DISPATCHED) {
     await moveLot(q, {
       lot_id: lotId, location: DISPATCHED, stage: 'dispatch', moved_by: o.by ?? null, ts: at,
-      stock_movement_id: movementId ?? o.endMovementId ?? null,
+      stock_movement_id: movementId ?? endId,
       note: `Lot closed${adjustment > 0 ? ` · ${adjustment} m left over written off` : adjustment < 0 ? ` · ${-adjustment} m over written back` : ''}`,
     });
   }
   await q(
     `INSERT INTO lot_closures (lot_id, action, reason, adjustment_m, movement_id, end_movement_id, by_user, note) VALUES ($1, 'close', $2, $3, $4, $5, $6, $7)`,
-    [lotId, o.reason, adjustment, movementId, o.endMovementId ?? null, o.by ?? null, note],
+    [lotId, o.reason, adjustment, movementId, endId, o.by ?? null, note],
   );
   return { lot_id: lotId, adjustment_m: adjustment, movement_id: movementId };
 }

@@ -8,8 +8,9 @@ import { ENTRY_STATUSES, ENTRY_STATUS_HINT, ENTRY_STATUS_LABEL, type EntryStatus
 
 const TONE: Record<EntryStatus, Tone> = { packed: 'info', running: 'good', end: 'neutral' };
 
-export function EntryStatusPill({ status }: { status: EntryStatus | null | undefined }) {
-  if (!status) return null;
+/** `unset`: an outgoing entry with no status yet (saved before statuses existed) shows "Not set" instead of nothing. */
+export function EntryStatusPill({ status, unset = false }: { status: EntryStatus | null | undefined; unset?: boolean }) {
+  if (!status) return unset ? <Pill tone="neutral" className="pill-unset" title="No status yet. Set Packed, Running or End in Edit mode.">Not set</Pill> : null;
   return <Pill tone={TONE[status]} title={ENTRY_STATUS_HINT[status]}>{ENTRY_STATUS_LABEL[status]}</Pill>;
 }
 
