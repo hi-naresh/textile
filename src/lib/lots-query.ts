@@ -7,6 +7,7 @@
 // and lotsByIds (callers drop them for people without stock.closed).
 import type { NextRequest } from 'next/server';
 import type { Q } from './db';
+import type { EntryStatus } from './registers';
 import { COOKIE } from './auth/config';
 import { marketSearchPatterns } from './markets';
 
@@ -16,7 +17,10 @@ export const LOT_DOC = `lower(l.lot_id::text || ' ' || l.quality::text || ' ' ||
 const LOT_KEY = `lower(l.lot_id::text)`;
 
 export const LOT_COLS = `l.lot_id, l.quality, l.design, l.grade, l.status, l.bal_m AS balance,
-  l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no, l.closed_at`;
+  l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no, l.closed_at,
+  CASE WHEN l.closed_at IS NOT NULL THEN 'end'
+       WHEN EXISTS (SELECT 1 FROM stock_movements sale WHERE sale.lot_id = l.lot_id AND sale.direction = 'OUT' AND sale.kind = 'normal') THEN 'running'
+       ELSE 'packed' END AS stock_status`;
 /** Closed lots view: how / when / who and what was written off (the latest close in lot_closures). */
 const CLOSED_COLS = `, l.close_reason, l.close_note, COALESCE(u.name, l.closed_by) AS closed_by_name, c.adjustment_m`;
 const CLOSED_JOIN = ` LEFT JOIN users u ON u.id = l.closed_by
@@ -27,6 +31,7 @@ export const COUNT_CAP = 10_000;
 
 export type LotRow = {
   lot_id: string; quality: string; design: string; grade: string; status: string; balance: number;
+  stock_status: EntryStatus; // Derived from sales and manual closure; adjustments are not sales
   location: string | null; location_stage: string | null; location_ts: string | null;
   loc_code: string | null; reg_lot_no: string | null; // from the Incoming register (migration 013)
   closed_at: string | null; // closed lot (migration 016); null = open
@@ -44,6 +49,7 @@ export function toLot(r: Record<string, unknown>): LotRow {
     location_ts: r.location_ts == null ? null : r.location_ts instanceof Date ? r.location_ts.toISOString() : String(r.location_ts),
     loc_code: (r.loc_code as string) ?? null, reg_lot_no: (r.reg_lot_no as string) ?? null,
     closed_at: iso(r.closed_at),
+    stock_status: r.stock_status as EntryStatus,
     ...('close_reason' in r ? {
       close_reason: (r.close_reason as LotRow['close_reason']) ?? null, close_note: (r.close_note as string) ?? null,
       closed_by_name: (r.closed_by_name as string) ?? null, adjustment_m: r.adjustment_m == null ? 0 : Number(r.adjustment_m),

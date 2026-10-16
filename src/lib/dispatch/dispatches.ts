@@ -79,7 +79,7 @@ export interface DispatchInput {
 
 /**
  * Validates and writes a dispatch + its OUT movements. Run inside a transaction.
- * Each line may carry entry_status (packed / running / end); `endAllowed` = the caller has stock.end.
+ * Each line may carry entry_status (running / end); `endAllowed` = the caller has stock.end.
  */
 export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | null, opts: { endAllowed?: boolean } = {}): Promise<{ id: number; challan_no: string }> {
   if (!Array.isArray(b.lines) || !b.lines.length) throw new LedgerError('Add at least one lot with meters.');
@@ -92,7 +92,7 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
     if (meters == null) throw new LedgerError(`Line ${i + 1}: meters are required.`);
     const status = l.status ? lotStatusValue(l.status) : null;
     const entry_status = entryStatusValue(l.entry_status);
-    if (entry_status === 'end' && !opts.endAllowed) throw new LedgerError(`Line ${i + 1}: you can’t mark an entry End. Choose Packed or Running.`, 403);
+    if (entry_status === 'end' && !opts.endAllowed) throw new LedgerError(`Line ${i + 1}: you can’t mark an entry End. Choose Running.`, 403);
     return { lot_id: lot, meters, status, entry_status };
   });
 

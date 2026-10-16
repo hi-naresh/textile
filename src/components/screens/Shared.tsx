@@ -14,7 +14,7 @@ import { LotPicker } from '../LotPicker';
 import { useLotSearch, type PickLot } from '@/lib/useLots';
 import type { CaptureEvent, JobCard, Lot, LotLocationEntry } from '@/lib/types';
 import { ENTRY_STATUS_HINT, LOT_S_GUESS } from '@/lib/registers';
-import { EntryStatusPicker } from '../EntryStatus';
+import { EntryStatusPicker, EntryStatusPill } from '../EntryStatus';
 
 // ---------------- Job cards ----------------
 export function JobCards({ ctx }: { ctx: Ctx }) {
@@ -437,6 +437,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
 
       {isIn ? (
         <>
+          <div className="fld"><span>Status</span><EntryStatusPill status="packed" /><span className="muted small hint">Incoming stock starts Packed. The first sales entry makes the lot Running; mark End manually on an outgoing entry when finished.</span></div>
           <div className="two-col">
             <label className="fld">Grey meters<input className="num" inputMode="decimal" value={f.grey_meters} onChange={set('grey_meters')} placeholder="0.0" /></label>
             <label className="fld">Finished meters<input className="num" inputMode="decimal" value={f.finished_meters} onChange={set('finished_meters')} placeholder="0.0" /></label>

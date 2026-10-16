@@ -8,6 +8,7 @@ import { can, setAccessOff } from '../../src/lib/access';
 import { createJobCard, recordIncoming, recordOutgoing } from '../../src/lib/ledger';
 import { applyLedgerEdits } from '../../src/lib/ledger-edit';
 import { runSpec } from '../../src/lib/chat/semantic';
+import { lotsByIds } from '../../src/lib/lots-query';
 import { ledgerPage } from '../../src/lib/ledger-query';
 import { LedgerError } from '../../src/lib/ledger-error';
 import { createDispatch } from '../../src/lib/dispatch/dispatches';
@@ -39,7 +40,7 @@ let overridesBefore: unknown = null;
 const get = (cookie: string, path: string) => new NextRequest(`http://localhost${path}`, { headers: { cookie } });
 const post = (cookie: string, path: string, body: unknown) => new NextRequest(`http://localhost${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = (cookie: string, body: unknown) => new NextRequest('http://localhost/api/settings', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const LOTS = Array.from({ length: 25 }, (_, i) => i + 1);
+const LOTS = Array.from({ length: 27 }, (_, i) => i + 1);
 const balance = async (l: string) => Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [l])).rows[0].bal_m);
 
 async function addLot(l: string, meters: number) {
@@ -76,11 +77,11 @@ after(async () => {
   await pool.end();
 });
 
-test('#3 outgoing entries default to Running; Packed counts as out of stock', async () => {
+test('#3 outgoing entries default to Running; Packed is refused for sales', async () => {
   const run = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(1), meters: 100, party }));
   assert.equal(run.entry_status, 'running');
-  const packed = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(1), meters: 50, party, entry_status: 'Packed' }));
-  assert.equal(packed.entry_status, 'packed');
+  await assert.rejects(withTransaction((q) => recordOutgoing(q, { lot_id: lot(1), meters: 50, party, entry_status: 'Packed' })), /Packed is for incoming/);
+  await withTransaction((q) => recordOutgoing(q, { lot_id: lot(1), meters: 50, party }));
   assert.equal(await balance(lot(1)), 850);
 });
 
@@ -91,23 +92,27 @@ test('#3 End needs the stock.end permission; bad statuses are refused', async ()
   assert.equal(end.entry_status, 'end');
 });
 
-test('#3 incoming rows can never carry a status (database check)', async () => {
+test('#3 incoming status is derived; outgoing statuses cannot be stored on receipts', async () => {
   await assert.rejects(query("INSERT INTO stock_movements (lot_id, direction, meters, entry_status) VALUES ($1, 'IN', 1, 'running')", [lot(3)]));
 });
 
-test('#3 ledger filter by status returns only outgoing rows with that status', async () => {
-  await withTransaction((q) => recordOutgoing(q, { lot_id: lot(3), meters: 20, party, entry_status: 'packed' }));
+test('#3 Packed filter returns incoming receipts; Running filter returns sales', async () => {
+  await withTransaction((q) => recordOutgoing(q, { lot_id: lot(3), meters: 20, party }));
   const page = await ledgerPage(query, { q: null, direction: null, status: 'packed', quality: null, design: null, lot: lot(3), party: null, from: null, to: null }, { limit: 50, cursor: null });
   assert.ok(page.rows.length >= 1);
-  assert.ok(page.rows.every((r) => r.direction === 'OUT' && r.entry_status === 'packed' && r.lot_id === lot(3)));
+  assert.ok(page.rows.every((r) => r.direction === 'IN' && r.entry_status === 'packed' && r.lot_id === lot(3)));
+  const running = await ledgerPage(query, { q: null, direction: null, status: 'running', quality: null, design: null, lot: lot(3), party: null, from: null, to: null }, { limit: 50, cursor: null });
+  assert.equal(running.rows.length, 1);
+  assert.equal(running.rows[0].direction, 'OUT');
+  assert.equal(running.rows[0].entry_status, 'running');
 });
 
 test('#3 dispatch lines carry a status; End is refused without permission', async () => {
   await query("INSERT INTO parties (name) VALUES ($1) ON CONFLICT DO NOTHING", [party]);
   await assert.rejects(withTransaction((q) => createDispatch(q, { party, lines: [{ lot_id: lot(4), meters: 5, entry_status: 'end' }], challan_no: `${id}-D1` }, id)), (e: unknown) => e instanceof LedgerError && e.status === 403);
-  const d = await withTransaction((q) => createDispatch(q, { party, lines: [{ lot_id: lot(4), meters: 5, entry_status: 'packed' }], challan_no: `${id}-D2` }, id));
+  const d = await withTransaction((q) => createDispatch(q, { party, lines: [{ lot_id: lot(4), meters: 5, entry_status: 'running' }], challan_no: `${id}-D2` }, id));
   const r = await query('SELECT entry_status FROM stock_movements WHERE dispatch_id = $1', [d.id]);
-  assert.deepEqual(r.rows.map((x) => x.entry_status), ['packed']);
+  assert.deepEqual(r.rows.map((x) => x.entry_status), ['running']);
 });
 
 test('#3 owner switches "supervisors can mark End" in settings; supervisors cannot', async () => {
@@ -234,7 +239,9 @@ test('#5 search and chat: closed lots are hidden, the owner is told the lot is c
 const edit = (id: number, value: string) => ({ target: 'movement' as const, id, field: 'entry_status' as const, value });
 
 test('#6 changing an entry to End closes the lot; taking End off reopens it', async () => {
-  const a = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(10), meters: 100, party, entry_status: 'packed' }));
+  const a = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(10), meters: 100, party }));
+  // Legacy Packed sale: existing data remains readable and can be corrected to Running.
+  await query("UPDATE stock_movements SET entry_status = 'packed' WHERE id = $1", [a.id]);
   const b = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(10), meters: 200, party }));
   const r1 = await withTransaction((q) => applyLedgerEdits(q, [edit(Number(a.id), 'running'), edit(Number(b.id), 'end')], id, { endAllowed: true }));
   assert.equal(r1.reload, true);
@@ -263,7 +270,7 @@ test('#6 status edits that cannot work are refused, nothing saved', async () => 
   await assert.rejects(withTransaction((q) => applyLedgerEdits(q, [edit(Number(inRow), 'running')], id, { endAllowed: true })), /only for outgoing/);
   const closedEnd = (await query("SELECT id FROM stock_movements WHERE lot_id = $1 AND kind = 'normal' AND direction = 'OUT' AND entry_status = 'running' LIMIT 1", [lot(1)])).rows[0].id;
   await withTransaction((q) => applyLedgerEdits(q, [edit(Number(closedEnd), 'end')], id, { endAllowed: true }));
-  const other = (await query("SELECT id FROM stock_movements WHERE lot_id = $1 AND entry_status = 'packed' LIMIT 1", [lot(1)])).rows[0].id;
+  const other = (await query("SELECT id FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND entry_status = 'running' LIMIT 1", [lot(1)])).rows[0].id;
   await assert.rejects(withTransaction((q) => applyLedgerEdits(q, [edit(Number(other), 'end')], id, { endAllowed: true })), /already closed/);
   assert.equal(await balance(lot(13)), 970);
 });
@@ -396,12 +403,12 @@ test('End on an older entry while later entries exist closes the lot now, not ba
 
 test('reopen restores what the close changed: the sale\'s status, a lot on hold, no place', async () => {
   await query("UPDATE lots SET status = 'hold' WHERE lot_id = $1", [lot(22)]);
-  const sale = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(22), meters: 100, party, entry_status: 'packed' }));
+  const sale = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(22), meters: 100, party }));
   await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(22), action: 'close' }));
   assert.equal(await statusOf(Number(sale.id)), 'end');
   assert.equal((await lotRow(lot(22))).cur_location, 'Dispatched');
   await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(22), action: 'reopen' }));
-  assert.equal(await statusOf(Number(sale.id)), 'packed');
+  assert.equal(await statusOf(Number(sale.id)), 'running');
   const l = await lotRow(lot(22));
   assert.equal(l.status, 'hold');
   assert.equal(l.cur_location, null); // it never had a place: not left at "Dispatched" with stock in it
@@ -429,4 +436,46 @@ test('chat challan lookup: entries of closed lots only for the owner', async () 
   const t = templateById('challan_lookup')!;
   assert.match((await t.run({ challan: `${id}-CH1`.toUpperCase() }, { role: 'supervisor', sections: [] })).answer, /No challan/);
   assert.match((await t.run({ challan: `${id}-CH1`.toUpperCase() }, { role: 'owner', sections: [] })).answer, /dispatched 10 m/);
+});
+
+
+test('receipt → first sale → manual End: zero and negative balances stay Running until End', async () => {
+  const stockStatus = async () => (await lotsByIds(query, [lot(26)]))[0].stock_status;
+  assert.equal(await stockStatus(), 'packed');
+  await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 1000, party }));
+  assert.equal(await balance(lot(26)), 0);
+  assert.equal(await stockStatus(), 'running');
+  assert.equal((await lotRow(lot(26))).closed_at, null);
+  const sale = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 50, party }));
+  assert.equal(await balance(lot(26)), -50);
+  assert.equal(await stockStatus(), 'running');
+  const open = await (await getLots(get(ownerCookie, `/api/lots?q=${lot(26)}`))).json();
+  assert.equal(open.rows.length, 1);
+  await withTransaction((q) => applyLedgerEdits(q, [edit(Number(sale.id), 'end')], id, { endAllowed: true }));
+  assert.equal(await stockStatus(), 'end');
+  assert.equal(await balance(lot(26)), 0);
+  for (const cookie of [ownerCookie, supCookie]) {
+    const hidden = await (await getLots(get(cookie, `/api/lots?q=${lot(26)}`))).json();
+    assert.deepEqual(hidden.rows, []);
+  }
+  await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(26), action: 'reopen' }));
+  assert.equal(await stockStatus(), 'running');
+  assert.equal(await balance(lot(26)), -50);
+  await addLot(lot(26), 100);
+  assert.equal(await stockStatus(), 'running'); // a later receipt does not erase sales history
+});
+
+test('opening adjustments do not start a lot; old sales display as Running without rewriting history', async () => {
+  await query("INSERT INTO stock_movements (lot_id, direction, meters, kind) VALUES ($1, 'OUT', 10, 'adjustment')", [lot(27)]);
+  assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'packed');
+  await query("INSERT INTO stock_movements (lot_id, direction, meters, entry_status) VALUES ($1, 'OUT', 10, NULL), ($1, 'OUT', 10, 'packed')", [lot(27)]);
+  assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'running');
+  const f = { q: null, direction: null, status: null, quality: null, design: null, lot: lot(27), party: null, from: null, to: null };
+  const page = await ledgerPage(query, f, { limit: 50, cursor: null });
+  assert.equal(page.rows.find((r) => r.direction === 'IN')?.entry_status, 'packed');
+  assert.equal(page.rows.find((r) => r.kind === 'adjustment')?.entry_status, null);
+  assert.deepEqual(page.rows.filter((r) => r.direction === 'OUT' && r.kind === 'normal').map((r) => r.entry_status), ['running', 'running']);
+  const sales = await ledgerPage(query, { ...f, status: 'running' }, { limit: 50, cursor: null });
+  assert.equal(sales.rows.length, 2);
+  await assert.rejects(withTransaction((q) => applyLedgerEdits(q, [edit(sales.rows[0].id, 'packed')], id)), /Packed is for incoming/);
 });

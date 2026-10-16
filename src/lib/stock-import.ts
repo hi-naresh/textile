@@ -251,7 +251,7 @@ export function challanSheet(wb: ExcelJS.Workbook, rows: LedgerRow[]) {
       entry: r.capture_event_id ? 'Photo' : r.imported ? 'Excel' : 'Manual',
       kind: r.kind === 'adjustment' ? 'Opening adjustment (register)' : r.kind === 'closing' ? CLOSING_LABEL : r.direction === 'OUT' ? 'Sale / dispatch' : 'Received',
       linked_sr: r.linked_sr ?? '', pct: r.register_pct, loc_code: r.loc_code ?? '', l: r.bill_pct, nqty: r.billed_meters, lots: r.lot_status_code ?? '',
-      status: r.entry_status ? ENTRY_STATUS_LABEL[r.entry_status] : r.direction === 'OUT' && r.kind === 'normal' ? 'Not set' : '',
+      status: r.entry_status ? ENTRY_STATUS_LABEL[r.entry_status] : '',
       takes: r.takes?.length ? r.takes.map((t) => t ?? '').join(' | ') : '',
     });
   });

@@ -52,7 +52,7 @@ function Rules({ ctx }: { ctx: Ctx }) {
       <div className="wa-row">
         <div className="stack-2 grow min0">
           <span className="strong">Supervisors can mark entries End</span>
-          <span className="muted small">End is the last sale from a lot. Turn this off and only you can mark End; supervisors still choose Packed or Running.</span>
+          <span className="muted small">End is the last sale from a lot. Turn this off and only you can mark End; supervisors still choose Running.</span>
         </div>
         <Toggle on={supervisorsCanEnd} label="Supervisors can mark entries End" onChange={(on) => { void api.updateFirm({ supervisor_can_end: on }); }} />
       </div>

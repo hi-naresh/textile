@@ -28,7 +28,7 @@ export interface LedgerRow {
   register_pct?: number | null; takes?: (number | null)[] | null; loc_code?: string | null;
   bill_pct?: number | null; billed_meters?: number | null; lot_status_code?: string | null; linked_sr?: string | null;
   reg_lot_no?: string | null;
-  entry_status?: EntryStatus | null; // OUT: packed / running / end; null on IN and older rows
+  entry_status?: EntryStatus | null; // IN: packed; OUT: running / end; null on adjustments
   lot_closed?: boolean; // the row's lot is closed
 }
 export interface LedgerFacets { qualities: string[]; designs: string[]; byQuality: Record<string, string[]> }

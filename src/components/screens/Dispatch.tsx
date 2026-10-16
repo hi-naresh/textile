@@ -15,7 +15,7 @@ import s from './Dispatch.module.css';
 import { LotPicker } from '../LotPicker';
 import { useLotSearch, useLotsById } from '@/lib/useLots';
 import { WA_STATUS_LABEL, WA_STATUS_TONE } from '@/lib/whatsapp/status';
-import { ENTRY_STATUSES, ENTRY_STATUS_HINT, ENTRY_STATUS_LABEL, type EntryStatus } from '@/lib/registers';
+import { OUTGOING_STATUSES, ENTRY_STATUS_HINT, ENTRY_STATUS_LABEL, type EntryStatus } from '@/lib/registers';
 
 type InvoiceRow = Invoice & { days_overdue: number; exported_at: string | null };
 type View = 'dispatches' | 'invoices';
@@ -355,7 +355,7 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
                 <div className="stack-2 min0"><LotPicker ariaLabel={`Lot ${i + 1}`} value={l.lot_id} onChange={(v) => setLine(i, { lot_id: v })} placeholder="Lot no." refreshKey={d.stockRev} /></div>
                 <input aria-label={`Meters ${i + 1}`} className={over ? s.over : ''} inputMode="decimal" value={l.meters} placeholder="Meters" onChange={(e) => setLine(i, { meters: e.target.value })} />
                 <select aria-label={`Status ${i + 1}`} className={s.status} value={l.status} title={ENTRY_STATUS_HINT[l.status]} onChange={(e) => setLine(i, { status: e.target.value as EntryStatus })}>
-                  {ENTRY_STATUSES.filter((x) => canEnd || x !== 'end').map((x) => <option key={x} value={x}>{ENTRY_STATUS_LABEL[x]}</option>)}
+                  {OUTGOING_STATUSES.filter((x) => canEnd || x !== 'end').map((x) => <option key={x} value={x}>{ENTRY_STATUS_LABEL[x]}</option>)}
                 </select>
                 <button type="button" className="btn icon-only" aria-label="Remove line" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ ...EMPTY_LINE }]))}><Icon name="x" size={16} /></button>
                 {lot && (

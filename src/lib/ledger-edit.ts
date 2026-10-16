@@ -1,7 +1,7 @@
 // Stock ledger edit mode (owner): PATCH /api/stock/edit applies a batch of cell edits in ONE transaction.
 // Every change is validated first; if any is invalid nothing is saved (422 with one problem per bad cell).
 // Each changed field writes one ledger_edits row (who, when, old → new). No-op changes are skipped.
-// Status of an outgoing entry (Packed / Running / End): changing it to End closes the lot (closeLot); taking End off
+// Status of an outgoing entry (Running / End): changing it to End closes the lot (closeLot); taking End off
 // the entry that closed its lot reopens the lot (reopenLot). Both happen in the same transaction as the edit.
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
@@ -156,7 +156,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
       else if (field === 'lot_status_code') v = lotStatusCodeValue(c.value);
       else if (field === 'entry_status') {
         v = entryStatusValue(c.value);
-        if (!v) throw new LedgerError('Choose Packed, Running or End.');
+        if (!v) throw new LedgerError('Choose Running or End.');
         if (v === 'end' && m.entry_status !== 'end' && !opts.endAllowed) throw new LedgerError('You can’t mark an entry End.');
       }
       else if (field === 'mill_name' || field === 'weaver_name') {

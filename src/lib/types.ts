@@ -6,6 +6,7 @@ export interface Lot {
   design: string;
   grade: string;
   status: string;
+  stock_status?: import('./registers').EntryStatus;
   balance: number;
   location: string | null; // current physical location (latest lot_locations row)
   location_stage: LocationStage | null;
