@@ -281,7 +281,7 @@ export interface OutgoingInput {
   lot_status_code?: unknown; // sales register "LOT S" code (optional, data only)
   date?: unknown; // back-date entry (YYYY-MM-DD or DD-MM-YYYY)
   status?: unknown; // lot status ('active' | 'completed' | 'dispatched' | 'hold')
-  entry_status?: unknown; // status of this entry: 'packed' | 'running' (default) | 'end' (migration 015)
+  entry_status?: unknown; // status of this entry: 'running' (default) | 'end' (migration 015)
 }
 
 /**
@@ -305,7 +305,7 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   const statusCode = lotStatusCodeValue(input.lot_status_code);
   const explicitStatus = lotStatusValue(input.status);
   const entryStatus = entryStatusValue(input.entry_status) ?? 'running';
-  if (entryStatus === 'end' && !opts.endAllowed) throw new LedgerError('You can’t mark an entry End. Ask the owner to switch it on for you, or choose Packed or Running.', 403);
+  if (entryStatus === 'end' && !opts.endAllowed) throw new LedgerError('You can’t mark an entry End. Ask the owner to switch it on for you, or choose Running.', 403);
   if (!party) throw new LedgerError('Party (the client receiving the goods) is required for outgoing stock.');
   await assertSrFree(q, 'OUT', sr);
 

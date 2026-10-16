@@ -14,7 +14,7 @@ import type { Ctx } from '../ctx';
 import { can } from '@/lib/access';
 import { STAGE_LABEL, camStatus } from '@/lib/derive';
 import { LocationPill } from '../MarketLocationPicker';
-import { ADJUSTMENT_HINT, ADJUSTMENT_LABEL, CLOSING_HINT, CLOSING_LABEL, ENTRY_STATUSES, ENTRY_STATUS_LABEL, L_HINT, PCT_HINT, lotSHint } from '@/lib/registers';
+import { ADJUSTMENT_HINT, ADJUSTMENT_LABEL, CLOSING_HINT, CLOSING_LABEL, OUTGOING_STATUSES, ENTRY_STATUS_LABEL, L_HINT, PCT_HINT, lotSHint } from '@/lib/registers';
 import { EntryStatusPill } from '../EntryStatus';
 
 type SavedLot = { lot_id: string; quality: string; design: string; grade: string | null; status: string | null };
@@ -386,7 +386,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
         </td>
         <td data-label="Time" className="num t2">{dayTime(l.ts)}</td>
         <td data-label="Dir">{adj ? <span title={ADJUSTMENT_HINT}><Pill tone="neutral">ADJ</Pill></span> : closing ? <span title={CLOSING_HINT}><Pill tone="neutral">CLOSE</Pill></span> : <Pill tone={l.direction === 'IN' ? 'info' : 'warn'}>{l.direction}</Pill>}</td>
-        <td data-label="Status">{l.direction === 'OUT' && !adj && !closing ? <EntryStatusPill status={l.entry_status} unset /> : <span className="muted">—</span>}</td>
+        <td data-label="Status">{!adj && !closing ? <EntryStatusPill status={l.entry_status} unset /> : <span className="muted">—</span>}</td>
         <td data-label="Lot"><div className="num strong">{l.lot_id}</div><div className="muted small">{l.quality || '—'} · {l.design}</div>{l.reg_lot_no && l.reg_lot_no !== l.lot_id ? <div className="muted tiny">Register lot no. {l.reg_lot_no}</div> : null}</td>
         <td data-label="Meters" className="r num">{adj || (closing && l.direction === 'OUT') ? '−' : closing ? '+' : ''}{fmt(l.meters, 1)}</td>
         <td data-label="Taka" className="r num">{l.pieces ?? <span className="muted">—</span>}</td>
@@ -421,12 +421,12 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
       {l.direction === 'OUT' ? (
         <>
           <td data-label="Dir" className="se-ro"><Pill tone="warn">OUT</Pill></td>
-          <td data-label="Status">{cell('entry_status', 'Status', { options: l.entry_status ? ENTRY_STATUSES : ['', ...ENTRY_STATUSES], optionLabels: { '': 'Not set', ...ENTRY_STATUS_LABEL } })}</td>
+          <td data-label="Status">{cell('entry_status', 'Status', { options: l.entry_status ? OUTGOING_STATUSES : ['', ...OUTGOING_STATUSES], optionLabels: { '': 'Not set', ...ENTRY_STATUS_LABEL } })}</td>
         </>
       ) : (
         <>
           <td data-label="Dir" className="se-ro"><Pill tone="info">IN</Pill></td>
-          <td data-label="Status" className="se-ro"><span className="muted">—</span></td>
+          <td data-label="Status" className="se-ro"><EntryStatusPill status="packed" /></td>
         </>
       )}
       <td data-label="Lot">
@@ -464,7 +464,7 @@ const LotRow = React.memo(function LotRow({ l, i, editing, onEdit, draft, probs,
   return (
     <tr data-lot={l.lot_id} className={editing && draft ? 'se-row-changed' : undefined}>
       <td data-label="S.No" className="r num muted">{i + 1}</td>
-      <td data-label="Lot" className="num strong">{l.lot_id}</td>
+      <td data-label="Lot"><div className="num strong">{l.lot_id}</div><EntryStatusPill status={l.stock_status} /></td>
       {editing ? (
         <>
           <td data-label="Quality">{cell('quality', 'Quality', { list: 'se-qualities' })}</td>
@@ -500,7 +500,7 @@ function ClosedLotRow({ l, i, onHistory, onReopen }: { l: Lot; i: number; onHist
   return (
     <tr data-lot={l.lot_id}>
       <td data-label="S.No" className="r num muted">{i + 1}</td>
-      <td data-label="Lot" className="num strong">{l.lot_id}</td>
+      <td data-label="Lot"><div className="num strong">{l.lot_id}</div><EntryStatusPill status={l.stock_status} /></td>
       <td data-label="Quality · design">{l.quality}<div className="muted small">{l.design}</div></td>
       <td data-label="Closed" className="num t2">{l.closed_at ? dayTime(l.closed_at) : '—'}{l.closed_by_name ? <div className="muted tiny">by {l.closed_by_name}</div> : null}</td>
       <td data-label="How">{CLOSE_HOW[l.close_reason ?? ''] ?? '—'}{l.close_note ? <div className="muted tiny">{l.close_note}</div> : null}</td>

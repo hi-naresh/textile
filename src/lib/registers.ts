@@ -68,13 +68,15 @@ export function lotStatusCodeValue(v: unknown): string | null {
   return s;
 }
 
-// ---------- status of an outgoing entry (migration 015) ----------
+// Receipt status is Packed; sales are Running until manually marked End.
+// Incoming status is derived from direction, so old receipts also show Packed.
 export const ENTRY_STATUSES = ['packed', 'running', 'end'] as const;
 export type EntryStatus = (typeof ENTRY_STATUSES)[number];
-export const ENTRY_STATUS_LABEL: Record<EntryStatus, string> = { packed: 'Packed', running: 'Running', end: 'End' };
+export const OUTGOING_STATUSES = ['running', 'end'] as const;
+export const ENTRY_STATUS_LABEL: Record<EntryStatus, string> = { packed: 'Packed (P)', running: 'Running (R)', end: 'End (E)' };
 export const ENTRY_STATUS_HINT: Record<EntryStatus, string> = {
-  packed: 'Packed for the party, not sent yet. The lot stays open.',
-  running: 'Sent. More is still left in the lot.',
+  packed: 'Incoming stock, not yet used. The first sale makes the lot Running.',
+  running: 'Sales have started. The lot stays open until you manually mark an outgoing entry End, even at zero or a negative balance.',
   end: 'The last sale from this lot. Saving closes the lot: anything left over (or sent beyond its balance) is written off so it shows 0.',
 };
 
@@ -85,12 +87,12 @@ export const ENTRY_STATUS_HINT: Record<EntryStatus, string> = {
 export const LOT_S_STATUS: Record<string, EntryStatus> = { S: 'running', R: 'running', E: 'end', A: 'end' };
 export const statusFromLotS = (code: string | null | undefined): EntryStatus | null => (code ? LOT_S_STATUS[code.trim().toUpperCase()] ?? null : null);
 
-/** Status of an outgoing entry: packed / running / end (any case, or the label), or null when empty. */
+/** Outgoing entries only allow Running or End. Packed is automatic on incoming receipts. */
 export function entryStatusValue(v: unknown): EntryStatus | null {
   if (blank(v)) return null;
   const s = String(v).trim().toLowerCase();
-  if ((ENTRY_STATUSES as readonly string[]).includes(s)) return s as EntryStatus;
-  throw new LedgerError(`Status must be Packed, Running or End (got "${String(v).trim().slice(0, 20)}").`);
+  if ((OUTGOING_STATUSES as readonly string[]).includes(s)) return s as EntryStatus;
+  throw new LedgerError(`Outgoing status must be Running or End; Packed is for incoming stock (got "${String(v).trim().slice(0, 20)}").`);
 }
 
 /** Register serial as text (SR.NO): "102" or a combined "146+204". */

@@ -11,7 +11,7 @@ import { ENTRY_STATUSES, type EntryStatus } from './registers';
 export interface LedgerFilters {
   q: string | null;
   direction: 'IN' | 'OUT' | null;
-  status: EntryStatus | null; // outgoing entry status (migration 015); only outgoing rows have one
+  status: EntryStatus | null; // Packed receipts, Running sales, or manually marked End
   quality: string | null;
   design: string | null;
   lot: string | null;
@@ -64,7 +64,17 @@ export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map
   const params: unknown[] = [];
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
   if (f.direction) parts.push(`sm.direction = ${p(f.direction)}`);
-  if (f.status) parts.push(`sm.entry_status = ${p(f.status)}`);
+  if (f.status) {
+    parts.push(`sm.kind = 'normal'`);
+    if (f.status === 'packed') parts.push(`sm.direction = 'IN'`);
+    else {
+      parts.push(`sm.direction = 'OUT'`);
+      // Old sales saved without a status or as Packed have already started the lot.
+      parts.push(f.status === 'running'
+        ? `(sm.entry_status IS NULL OR sm.entry_status IN ('packed', 'running'))`
+        : `sm.entry_status = ${p(f.status)}`);
+    }
+  }
   if (f.hideClosed) parts.push(`l.closed_at IS NULL AND sm.kind <> 'closing'`);
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
   if (f.design) parts.push(`lower(l.design) = lower(${p(f.design)})`);
@@ -90,7 +100,9 @@ const COLS = `sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.fini
   to_char(sm.ts, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS ts_key, l.quality, l.design, (sm.ts::date = CURRENT_DATE) AS is_today,
   (SELECT ll.location FROM lot_locations ll WHERE ll.lot_id = sm.lot_id AND ll.stock_movement_id = sm.id ORDER BY ll.id DESC LIMIT 1) AS location,
   EXISTS (SELECT 1 FROM ledger_edits le WHERE le.target = 'movement' AND le.target_id = sm.id::text) AS edited,
-  sm.kind, sm.register_pct, sm.takes, sm.loc_code, sm.bill_pct, sm.billed_meters, sm.lot_status_code, sm.linked_sr, l.reg_lot_no, sm.entry_status,
+  sm.kind, sm.register_pct, sm.takes, sm.loc_code, sm.bill_pct, sm.billed_meters, sm.lot_status_code, sm.linked_sr, l.reg_lot_no,
+  CASE WHEN sm.kind <> 'normal' THEN NULL WHEN sm.direction = 'IN' THEN 'packed'
+       WHEN sm.entry_status = 'end' THEN 'end' ELSE 'running' END AS entry_status,
   (l.closed_at IS NOT NULL) AS lot_closed`;
 
 export interface LedgerRow {
@@ -104,7 +116,7 @@ export interface LedgerRow {
   register_pct: number | null; takes: (number | null)[] | null; loc_code: string | null; // IN
   bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null; linked_sr: string | null; // OUT
   reg_lot_no: string | null; // the lot's number as written in the register (lot_id may carry "-SR<n>")
-  entry_status: EntryStatus | null; // OUT: packed / running / end (migration 015); null on IN and older rows
+  entry_status: EntryStatus | null; // Derived: IN Packed, OUT Running / End; null on adjustments
   lot_closed: boolean; // the row's lot is closed (migration 016)
 }
 

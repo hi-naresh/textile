@@ -49,7 +49,7 @@ export interface StockEntry {
   bill_pct?: string;
   billed_meters?: string;
   lot_status_code?: string;
-  entry_status?: EntryStatus; // OUT: packed / running (default) / end
+  entry_status?: EntryStatus; // OUT: running (default) / end
   date?: string; // YYYY-MM-DD back-date entry
 }
 
