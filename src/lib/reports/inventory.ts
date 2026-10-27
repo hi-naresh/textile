@@ -64,7 +64,9 @@ export async function inventorySnapshot(q: Q): Promise<InventorySnapshot> {
               SUM(GREATEST(o.meters - COALESCE(d.m, 0) - COALESCE(r.m, 0), 0)) AS unreserved
        FROM orders o
        LEFT JOIN (SELECT order_id, SUM(meters) AS m FROM stock_movements WHERE direction = 'OUT' AND order_id IS NOT NULL GROUP BY order_id) d ON d.order_id = o.id
-       LEFT JOIN (SELECT order_id, SUM(meters - dispatched_m) AS m FROM allocations WHERE status = 'reserved' GROUP BY order_id) r ON r.order_id = o.id
+       LEFT JOIN (SELECT a.order_id, SUM(a.meters - a.dispatched_m) AS m
+                  FROM allocations a JOIN lots l ON l.lot_id = a.lot_id AND l.closed_at IS NULL
+                  WHERE a.status = 'reserved' GROUP BY a.order_id) r ON r.order_id = o.id
        WHERE o.status IN ('open', 'partly_dispatched')
        GROUP BY o.quality`);
   // Lots with stock: last activity = latest stock movement, job card or location change.
@@ -79,7 +81,7 @@ export async function inventorySnapshot(q: Q): Promise<InventorySnapshot> {
        FROM lots l
        JOIN (SELECT lot_id, SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) AS bal, MAX(ts) AS last_move FROM stock_movements GROUP BY lot_id) b ON b.lot_id = l.lot_id
        LEFT JOIN (SELECT lot_id, SUM(meters - dispatched_m) AS res FROM allocations WHERE status = 'reserved' GROUP BY lot_id) a ON a.lot_id = l.lot_id
-       WHERE b.bal > 0
+       WHERE l.closed_at IS NULL AND b.bal > 0
        ORDER BY l.lot_id`);
   // Grey → finished loss per mill, last 90 days, receipts that carry both figures.
   const mills = await q(`SELECT btrim(mill_name) AS mill, COUNT(*) AS n, SUM(grey_meters) AS grey, SUM(finished_meters) AS fin

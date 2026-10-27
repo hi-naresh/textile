@@ -20,6 +20,7 @@ export async function scanAllocation(q: Q): Promise<{ over: string[] }> {
     `SELECT a.lot_id, a.res, COALESCE(b.bal, 0) AS bal, a.orders
      FROM (SELECT lot_id, SUM(meters - dispatched_m) AS res, array_agg(DISTINCT order_id ORDER BY order_id) AS orders
            FROM allocations WHERE status = 'reserved' GROUP BY lot_id) a
+     JOIN lots l ON l.lot_id = a.lot_id AND l.closed_at IS NULL
      LEFT JOIN LATERAL (SELECT SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) AS bal FROM stock_movements sm WHERE sm.lot_id = a.lot_id) b ON true
      WHERE a.res > COALESCE(b.bal, 0) + 0.01`,
   );

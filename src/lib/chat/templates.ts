@@ -79,7 +79,8 @@ export const TEMPLATES: Template[] = [
         `WITH b AS (
            SELECT l.lot_id, COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END), 0) AS bal,
                   (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS loc
-           FROM lots l LEFT JOIN stock_movements sm ON sm.lot_id = l.lot_id GROUP BY l.lot_id)
+           FROM lots l LEFT JOIN stock_movements sm ON sm.lot_id = l.lot_id
+           WHERE l.closed_at IS NULL GROUP BY l.lot_id)
          SELECT COALESCE(loc, '—') AS location, COUNT(*) AS lots, SUM(bal) AS meters FROM b WHERE bal > 0 GROUP BY 1 ORDER BY meters DESC`,
       );
       const total = r.rows.reduce((s, x) => s + Number(x.meters), 0);
@@ -96,7 +97,7 @@ export const TEMPLATES: Template[] = [
       const r = await query(
         `SELECT l.quality, SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END) AS meters, COUNT(DISTINCT l.lot_id) AS lots
          FROM lots l JOIN stock_movements sm ON sm.lot_id = l.lot_id
-         WHERE ($1::text IS NULL OR lower(l.quality) LIKE '%' || lower($1) || '%')
+         WHERE l.closed_at IS NULL AND ($1::text IS NULL OR lower(l.quality) LIKE '%' || lower($1) || '%')
          GROUP BY l.quality HAVING SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END) > 0 ORDER BY meters DESC LIMIT 20`,
         [p.quality ?? null],
       );

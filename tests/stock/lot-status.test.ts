@@ -25,6 +25,10 @@ import { checkOutgoing, commitOutgoingRow } from '../../src/lib/register-import'
 import { newLedgerMemo } from '../../src/lib/ledger';
 import { search } from '../../src/lib/search';
 import { templateById } from '../../src/lib/chat/templates';
+import { createOrder } from '../../src/lib/sales/orders';
+import { manualAllocate } from '../../src/lib/sales/allocate';
+import { GET as getOrderDetail } from '../../src/app/api/orders/[id]/route';
+import { freeLotsForQuality, lotStock } from '../../src/lib/stock';
 
 // Explicitly opt into a disposable local DB. Never load the project's .env here.
 const url = new URL(process.env.DATABASE_URL || 'postgresql://localhost/invalid');
@@ -36,11 +40,12 @@ const lot = (n: number) => `${id}-L${n}`.toUpperCase();
 const party = `Status Test Party ${id}`;
 let ownerCookie = '';
 let supCookie = '';
+let testOrderId: number | null = null;
 let overridesBefore: unknown = null;
 const get = (cookie: string, path: string) => new NextRequest(`http://localhost${path}`, { headers: { cookie } });
 const post = (cookie: string, path: string, body: unknown) => new NextRequest(`http://localhost${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = (cookie: string, body: unknown) => new NextRequest('http://localhost/api/settings', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const LOTS = Array.from({ length: 27 }, (_, i) => i + 1);
+const LOTS = Array.from({ length: 28 }, (_, i) => i + 1);
 const balance = async (l: string) => Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [l])).rows[0].bal_m);
 
 async function addLot(l: string, meters: number) {
@@ -60,6 +65,10 @@ before(async () => {
 after(async () => {
   await query('UPDATE app_settings SET access_overrides = $1::jsonb WHERE id = 1', [JSON.stringify(overridesBefore)]);
   setAccessOff({});
+  if (testOrderId !== null) {
+    await query('DELETE FROM allocations WHERE order_id = $1', [testOrderId]);
+    await query('DELETE FROM orders WHERE id = $1', [testOrderId]);
+  }
   const lots = LOTS.map(lot);
   await query('DELETE FROM lot_closures WHERE lot_id = ANY($1::text[])', [lots]);
   await query('DELETE FROM ledger_edits WHERE edited_by = $1', [id]);
@@ -233,6 +242,48 @@ test('#5 search and chat: closed lots are hidden, the owner is told the lot is c
   const t = templateById('lot_status')!;
   assert.match((await t.run({ lot: lot(5) }, { role: 'supervisor', sections: [] })).answer, /No lot/);
   assert.match((await t.run({ lot: lot(5) }, { role: 'owner', sections: [] })).answer, /is closed: closed by its End entry/);
+});
+
+test('#5 chat current stock excludes closed lots; supervisors cannot query their history', async () => {
+  const closedLot = lot(28);
+  const quality = `Closed stock ${id}`;
+  await query('UPDATE lots SET quality = $2 WHERE lot_id = $1', [closedLot, quality]);
+  await withTransaction((q) => createJobCard(q, { lot_id: closedLot, process: 'Folding', worker_id: id, meters_in: 100 }));
+  await query("UPDATE job_cards SET status = 'closed', meters_out = 100, ts_closed = now() WHERE lot_id = $1", [closedLot]);
+
+  const owner = { role: 'owner' as const, sections: [] };
+  const supervisor = { role: 'supervisor' as const, sections: ['folding'] };
+  await query('INSERT INTO parties (name) VALUES ($1) ON CONFLICT DO NOTHING', [party]);
+  const created = await withTransaction((q) => createOrder(q, { party, quality, meters: 100, rate_per_m: 1 }, id));
+  testOrderId = created.order.id;
+  await withTransaction((q) => manualAllocate(q, created.order.id, closedLot, 10, id));
+
+  const before = await runSpec({ metric: 'stock', filters: { quality }, period: null }, owner);
+  assert.equal(before.rows[0]?.value, 1000);
+  await query("UPDATE lots SET closed_at = now(), closed_by = $2, close_reason = 'manual', status = 'completed' WHERE lot_id = $1", [closedLot, id]);
+
+  for (const metric of ['stock', 'free_stock'] as const) {
+    const result = await runSpec({ metric, filters: { quality }, period: null }, owner);
+    assert.equal(result.rows[0]?.value, 0);
+  }
+  const summary = await templateById('stock_by_quality')!.run({ quality }, owner);
+  assert.match(summary.answer, /No stock/);
+  assert.deepEqual(await freeLotsForQuality(query, quality), []);
+  assert.equal(await lotStock(query, closedLot), null);
+
+  const ownerHistory = await runSpec({ metric: 'output', filters: { lot: closedLot }, period: null }, owner);
+  assert.equal(ownerHistory.rows[0]?.value, 100);
+  const supervisorHistory = await runSpec({ metric: 'output', filters: { lot: closedLot }, period: null }, supervisor);
+  assert.equal(supervisorHistory.rows[0]?.value, 0);
+  const supervisorOutput = await runSpec({ metric: 'output', filters: { lot: closedLot }, period: null }, supervisor);
+  assert.equal(supervisorOutput.rows[0]?.value, 0);
+
+  const detailRequest = get(ownerCookie, `/api/orders/${created.order.id}`);
+  const routeContext = { params: Promise.resolve({ id: String(created.order.id) }) };
+  const ownerOrder = await (await getOrderDetail(detailRequest, routeContext)).json();
+  assert.ok(ownerOrder.allocations.some((a: { lot_id: string }) => a.lot_id === closedLot));
+  const supervisorOrder = await (await getOrderDetail(get(supCookie, `/api/orders/${created.order.id}`), routeContext)).json();
+  assert.ok(supervisorOrder.allocations.every((a: { lot_id: string }) => a.lot_id !== closedLot));
 });
 
 // ---------- #6 edit status, close by hand, reopen ----------

@@ -28,6 +28,7 @@ export interface MetricDef {
   filters: Partial<Record<FilterKey, string>>;
   list?: string; // expression listing names (for small counts)
   sectionScoped?: string; // supervisor scope: expression holding the section
+  closedLotScoped?: string; // supervisor scope: hide records belonging to closed lots
   allTimeByDefault?: boolean; // no period asked → all time (e.g. "how many parties do we have")
   ownerOnly?: boolean; // ₹ metrics — supervisors get a polite refusal
 }
@@ -37,7 +38,8 @@ const SECD = (col: string) => `initcap(btrim(regexp_replace(${col}, '\\s*section
 const BAL = `(SELECT l.lot_id, l.quality, l.design,
    COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END), 0) AS bal,
    (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS location
- FROM lots l LEFT JOIN stock_movements sm ON sm.lot_id = l.lot_id GROUP BY l.lot_id, l.quality, l.design) b`;
+ FROM lots l LEFT JOIN stock_movements sm ON sm.lot_id = l.lot_id
+ WHERE l.closed_at IS NULL GROUP BY l.lot_id, l.quality, l.design) b`;
 const DAY = (c: string) => `to_char(${c}, 'YYYY-MM-DD')`;
 const MONTH = (c: string) => `to_char(${c}, 'YYYY-MM')`;
 
@@ -66,19 +68,19 @@ export const METRICS: Record<string, MetricDef> = {
     title: 'Work done', describe: 'meters completed on closed job cards (folded / dyed / woven / printed / cut)', unit: 'm',
     from: 'job_cards jc JOIN workers w ON w.id = jc.worker_id JOIN lots l ON l.lot_id = jc.lot_id', where: `jc.status = 'closed'`, agg: 'SUM(jc.meters_out)', time: 'jc.ts_closed',
     dims: { worker: 'w.name', section: 'jc.process', quality: 'l.quality', lot: 'jc.lot_id', day: DAY('jc.ts_closed') },
-    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'),
+    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'), closedLotScoped: 'l.closed_at IS NULL',
   },
   cards_closed: {
     title: 'job cards completed', describe: 'number of job cards completed', unit: 'count',
     from: 'job_cards jc JOIN workers w ON w.id = jc.worker_id JOIN lots l ON l.lot_id = jc.lot_id', where: `jc.status = 'closed'`, agg: 'COUNT(*)', time: 'jc.ts_closed',
     dims: { worker: 'w.name', section: 'jc.process', quality: 'l.quality', day: DAY('jc.ts_closed') },
-    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'),
+    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'), closedLotScoped: 'l.closed_at IS NULL',
   },
   on_floor: {
     title: 'On the floor', describe: 'meters currently on the floor (open job cards)', unit: 'm',
     from: 'job_cards jc JOIN workers w ON w.id = jc.worker_id JOIN lots l ON l.lot_id = jc.lot_id', where: `jc.status <> 'closed'`, agg: 'SUM(jc.meters_in)',
     dims: { worker: 'w.name', section: 'jc.process', quality: 'l.quality', lot: 'jc.lot_id' },
-    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'),
+    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'), closedLotScoped: 'l.closed_at IS NULL',
   },
   allotted: {
     title: 'Allotted', describe: 'meters allotted to workers', unit: 'm',
@@ -97,7 +99,7 @@ export const METRICS: Record<string, MetricDef> = {
     from: 'job_cards jc JOIN workers w ON w.id = jc.worker_id JOIN lots l ON l.lot_id = jc.lot_id', where: `jc.status = 'closed'`,
     ratio: { num: 'SUM(jc.shortage)', den: 'SUM(jc.meters_in)' }, time: 'jc.ts_closed',
     dims: { worker: 'w.name', section: 'jc.process', quality: 'l.quality', lot: 'jc.lot_id', day: DAY('jc.ts_closed') },
-    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'),
+    filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'), closedLotScoped: 'l.closed_at IS NULL',
   },
   idle: {
     title: 'Idle time', describe: 'idle minutes seen on CCTV', unit: 'min',
@@ -117,27 +119,27 @@ export const METRICS: Record<string, MetricDef> = {
     title: 'Received', describe: 'meters received (incoming challans)', unit: 'm',
     from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'IN' AND sm.kind = 'normal'`, agg: 'SUM(sm.meters)', time: 'sm.ts',
     dims: { mill: `COALESCE(sm.mill_name, '—')`, quality: 'l.quality', lot: 'sm.lot_id', day: DAY('sm.ts'), month: MONTH('sm.ts') },
-    filters: { mill: 'sm.mill_name', quality: 'l.quality', lot: 'sm.lot_id' },
+    filters: { mill: 'sm.mill_name', quality: 'l.quality', lot: 'sm.lot_id' }, closedLotScoped: 'l.closed_at IS NULL',
   },
   dispatched: {
     title: 'Dispatched', describe: 'meters dispatched (outgoing challans)', unit: 'm',
     from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'OUT' AND sm.kind = 'normal'`, agg: 'SUM(sm.meters)', time: 'sm.ts',
     dims: { party: 'sm.party', quality: 'l.quality', lot: 'sm.lot_id', day: DAY('sm.ts'), month: MONTH('sm.ts') },
-    filters: { party: 'sm.party', quality: 'l.quality', lot: 'sm.lot_id' },
+    filters: { party: 'sm.party', quality: 'l.quality', lot: 'sm.lot_id' }, closedLotScoped: 'l.closed_at IS NULL',
   },
   challans: {
     title: 'challans', describe: 'number of challans (incoming + outgoing)', unit: 'count',
     from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.kind = 'normal'`, agg: 'COUNT(*)', time: 'sm.ts',
     dims: { party: 'sm.party', mill: 'sm.mill_name', quality: 'l.quality', day: DAY('sm.ts') },
-    filters: { party: 'sm.party', mill: 'sm.mill_name', quality: 'l.quality', lot: 'sm.lot_id' },
+    filters: { party: 'sm.party', mill: 'sm.mill_name', quality: 'l.quality', lot: 'sm.lot_id' }, closedLotScoped: 'l.closed_at IS NULL',
   },
   parties: {
-    title: 'parties', describe: 'number of parties (clients) dispatched to', unit: 'count', from: 'stock_movements sm', where: `sm.direction = 'OUT' AND sm.party IS NOT NULL`,
-    agg: 'COUNT(DISTINCT sm.party)', time: 'sm.ts', allTimeByDefault: true, dims: {}, filters: {}, list: `string_agg(DISTINCT sm.party, ', ')`,
+    title: 'parties', describe: 'number of parties (clients) dispatched to', unit: 'count', from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'OUT' AND sm.party IS NOT NULL`,
+    agg: 'COUNT(DISTINCT sm.party)', time: 'sm.ts', allTimeByDefault: true, dims: {}, filters: {}, list: `string_agg(DISTINCT sm.party, ', ')`, closedLotScoped: 'l.closed_at IS NULL',
   },
   mills: {
-    title: 'mills', describe: 'number of mills received from', unit: 'count', from: 'stock_movements sm', where: `sm.direction = 'IN' AND sm.mill_name IS NOT NULL`,
-    agg: 'COUNT(DISTINCT sm.mill_name)', time: 'sm.ts', allTimeByDefault: true, dims: {}, filters: {}, list: `string_agg(DISTINCT sm.mill_name, ', ')`,
+    title: 'mills', describe: 'number of mills received from', unit: 'count', from: 'stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id', where: `sm.direction = 'IN' AND sm.mill_name IS NOT NULL`,
+    agg: 'COUNT(DISTINCT sm.mill_name)', time: 'sm.ts', allTimeByDefault: true, dims: {}, filters: {}, list: `string_agg(DISTINCT sm.mill_name, ', ')`, closedLotScoped: 'l.closed_at IS NULL',
   },
 };
 // Phase 2 agents add their metrics (orders, outstanding, margin …) here.
@@ -205,6 +207,7 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
   const params: unknown[] = [];
   const P = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const where: string[] = def.where ? [def.where] : [];
+  if (scope.role === 'supervisor' && def.closedLotScoped) where.push(def.closedLotScoped);
   const period = def.time ? (spec.period ?? null) : null;
   if (period && def.time) where.push(`${def.time} >= CURRENT_DATE - ${P(period.fromBack)}::int AND ${def.time} < CURRENT_DATE - ${P(period.toBack)}::int + 1`);
   for (const [k, v] of Object.entries(spec.filters ?? {}) as [FilterKey, string][]) {

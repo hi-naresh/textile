@@ -37,7 +37,7 @@ async function freeLots(q: Q, qualities: string[]): Promise<LotStock[]> {
                    FROM stock_movements sm WHERE sm.lot_id = l.lot_id) b ON true
      LEFT JOIN LATERAL (SELECT SUM(al.meters - al.dispatched_m) AS res FROM allocations al
                         WHERE al.lot_id = l.lot_id AND al.status = 'reserved') a ON true
-     WHERE lower(l.quality) = ANY($1::text[]) AND b.bal - COALESCE(a.res, 0) > 0.001
+     WHERE l.closed_at IS NULL AND lower(l.quality) = ANY($1::text[]) AND b.bal - COALESCE(a.res, 0) > 0.001
      ORDER BY b.last_move NULLS LAST, l.lot_id`,
     [qualities],
   );
