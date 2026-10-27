@@ -45,7 +45,7 @@ let overridesBefore: unknown = null;
 const get = (cookie: string, path: string) => new NextRequest(`http://localhost${path}`, { headers: { cookie } });
 const post = (cookie: string, path: string, body: unknown) => new NextRequest(`http://localhost${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = (cookie: string, body: unknown) => new NextRequest('http://localhost/api/settings', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const LOTS = Array.from({ length: 28 }, (_, i) => i + 1);
+const LOTS = Array.from({ length: 29 }, (_, i) => i + 1);
 const balance = async (l: string) => Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [l])).rows[0].bal_m);
 
 async function addLot(l: string, meters: number) {
@@ -233,6 +233,42 @@ test('#5 supervisors get no rows of closed lots or closing adjustments from the 
   assert.deepEqual(sup.rows, []);
   const supOpen = await (await getLedger(get(supCookie, `/api/stock/ledger?lot=${lot(1)}`))).json();
   assert.ok(supOpen.rows.length > 0);
+});
+
+test('#6 editing meters on a closed lot recalculates and audits its closing adjustment', async () => {
+  const end = await withTransaction((q) => recordOutgoing(q, {
+    lot_id: lot(29), meters: 600, party, entry_status: 'end', moved_by: id,
+  }, { endAllowed: true }));
+
+  const save = (meters: number) => withTransaction((q) => applyLedgerEdits(
+    q, [{ target: 'movement', id: Number(end.id), field: 'meters', value: meters }], id,
+  ));
+  const edited = await save(650);
+  assert.equal(edited.reload, true);
+  assert.deepEqual(edited.adjustments, [{ lot_id: lot(29), adjustment_m: 350 }]);
+  assert.equal(await balance(lot(29)), 0);
+  assert.deepEqual((await closings(lot(29))).map((x) => [x.direction, x.meters]), [['OUT', 350]]);
+
+  const negative = await save(1050);
+  assert.deepEqual(negative.adjustments, [{ lot_id: lot(29), adjustment_m: -50 }]);
+  assert.equal(await balance(lot(29)), 0);
+  assert.deepEqual((await closings(lot(29))).map((x) => [x.direction, x.meters]), [['IN', 50]]);
+
+  const zero = await save(1000);
+  assert.deepEqual(zero.adjustments, [{ lot_id: lot(29), adjustment_m: 0 }]);
+  assert.equal(await balance(lot(29)), 0);
+  assert.deepEqual(await closings(lot(29)), []);
+
+  const audit = await query(
+    `SELECT field, old_value, new_value, edited_by FROM ledger_edits
+     WHERE target = 'lot' AND target_id = $1 AND field = 'closing_adjustment' ORDER BY id`,
+    [lot(29)],
+  );
+  assert.deepEqual(audit.rows, [
+    { field: 'closing_adjustment', old_value: '400', new_value: '350', edited_by: id },
+    { field: 'closing_adjustment', old_value: '350', new_value: '-50', edited_by: id },
+    { field: 'closing_adjustment', old_value: '-50', new_value: '0', edited_by: id },
+  ]);
 });
 
 test('#5 search and chat: closed lots are hidden, the owner is told the lot is closed', async () => {

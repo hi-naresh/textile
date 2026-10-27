@@ -9,7 +9,7 @@ import { dayTime } from '../ui';
 import './StockEdit.css';
 
 // ---------- drafts ----------
-export type MvField = 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party'
+export type MvField = 'meters' | 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party'
   | 'register_pct' | 'loc_code' | 'bill_pct' | 'billed_meters' | 'lot_status_code';
 export type LotField = 'quality' | 'design' | 'grade' | 'status';
 export type RowDraft = Partial<Record<string, string>>;
@@ -41,7 +41,7 @@ export const str = (v: unknown) => (v == null ? '' : String(v));
 // ---------- validation (same rules as the server, so mistakes show before saving) ----------
 const NAME_RE = /[\p{L}\p{N}]/u;
 export const FIELD_LABEL: Record<string, string> = {
-  sr_no: 'SR no.', pieces: 'Taka', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver', party: 'Party',
+  meters: 'Meters', sr_no: 'SR no.', pieces: 'Taka', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver', party: 'Party',
   quality: 'Quality', design: 'Design', grade: 'Grade', status: 'Status',
   register_pct: '%', loc_code: 'Location code', bill_pct: 'L', billed_meters: 'NQTY', lot_status_code: 'LOT S',
 };
@@ -49,6 +49,9 @@ const numText = (v: string) => Number(v.replace(/,/g, '').replace(/%$/, ''));
 export function checkCell(field: string, raw: string): string | null {
   const v = raw.replace(/\s+/g, ' ').trim();
   switch (field) {
+    case 'meters':
+      if (!v) return 'Meters are required.';
+      return Number.isFinite(numText(v)) && numText(v) > 0 && numText(v) <= 1_000_000 ? null : 'Enter a positive number up to 1,000,000.';
     case 'sr_no':
       if (!v) return null;
       if (!/^\d+$/.test(v.replace(/,/g, '')) || Number(v.replace(/,/g, '')) <= 0) return 'SR must be a whole number above 0.';
@@ -134,9 +137,9 @@ export function gridKeyDown(e: React.KeyboardEvent<HTMLElement>) {
 }
 
 // ---------- one editable cell ----------
-export const EditCell = React.memo(function EditCell({ kind, id, field, orig, draft, problem, label, onEdit, num, list, options, optionLabels, hint }: {
+export const EditCell = React.memo(function EditCell({ kind, id, field, orig, draft, problem, label, onEdit, num, decimal, list, options, optionLabels, hint }: {
   kind: Kind; id: number | string; field: string; orig: string; draft: string | undefined; problem?: string;
-  label: string; onEdit: OnEdit; num?: boolean; list?: string; options?: readonly string[]; optionLabels?: Record<string, string>; hint?: string;
+  label: string; onEdit: OnEdit; num?: boolean; decimal?: boolean; list?: string; options?: readonly string[]; optionLabels?: Record<string, string>; hint?: string;
 }) {
   const value = draft ?? orig;
   const changed = draft !== undefined;
@@ -155,7 +158,7 @@ export const EditCell = React.memo(function EditCell({ kind, id, field, orig, dr
         </select>
       ) : (
         <input className={cls} data-c={field} aria-label={label} aria-invalid={!!err} aria-describedby={errId} value={value} list={list}
-          inputMode={num ? 'numeric' : undefined} autoComplete="off" spellCheck={false}
+          inputMode={decimal ? 'decimal' : num ? 'numeric' : undefined} autoComplete="off" spellCheck={false}
           onChange={(e) => onEdit(kind, id, field, e.target.value, orig)} onKeyDown={onKeyDown} />
       )}
       {err && <span id={errId} className="se-err" role="alert">{err}</span>}

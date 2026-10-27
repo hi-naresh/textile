@@ -171,7 +171,11 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       await d.refreshStock(); // summary / names / qualities stay in sync (only the small stock snapshot)
       discard();
       const n = Number(data.saved ?? 0);
-      d.showToast(n ? `Saved ${n} ${n === 1 ? 'change' : 'changes'}` : 'Nothing changed');
+      const adjustments = (data.adjustments ?? []) as { lot_id: string; adjustment_m: number }[];
+      const detail = adjustments.map((x) => Math.abs(x.adjustment_m) < 0.01
+        ? `Lot ${x.lot_id}: no closing adjustment needed`
+        : `Lot ${x.lot_id}: ${fmt(Math.abs(x.adjustment_m), 2)} m ${x.adjustment_m > 0 ? 'written off' : 'written back'}`).join('; ');
+      d.showToast([n ? `Saved ${n} ${n === 1 ? 'change' : 'changes'}` : 'Nothing changed', detail].filter(Boolean).join(' · '));
       return true;
     } catch (e) {
       d.showToast(e instanceof Error ? e.message : 'Could not save. Nothing was changed.', 'danger');
@@ -407,7 +411,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
     );
   }
   const row = `row ${i + 1} (lot ${l.lot_id})`;
-  const cell = (field: string, label: string, extra: { num?: boolean; list?: string; options?: readonly string[]; optionLabels?: Record<string, string> } = {}) => (
+  const cell = (field: string, label: string, extra: { num?: boolean; decimal?: boolean; list?: string; options?: readonly string[]; optionLabels?: Record<string, string> } = {}) => (
     <EditCell kind="m" id={l.id} field={field} orig={str(l[field as keyof LedgerRow])} draft={draft?.[field]} problem={probs?.[field]} label={`${label} for ${row}`} onEdit={onEdit} {...extra} />
   );
   const lotCell = (field: 'quality' | 'design', label: string, list: string) => (
@@ -437,7 +441,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
           <span className="muted tiny se-lot-hint">Quality · design: whole lot</span>
         </div>
       </td>
-      <td data-label="Meters" className="r num se-ro">{fmt(l.meters, 1)}</td>
+      <td data-label="Meters" className="r">{cell('meters', 'Meters', { num: true, decimal: true })}</td>
       <td data-label="Taka" className="r">{cell('pieces', 'Taka (pieces)', { num: true })}</td>
       <td data-label="Grey → Finished" className="r num t2 d se-ro">{l.direction === 'IN' && (l.grey_meters != null || l.finished_meters != null) ? `${fmt(l.grey_meters, 1)} → ${fmt(l.finished_meters, 1)}` : '—'}</td>
       <td data-label={l.direction === 'IN' ? 'Mill · weaver' : 'Party'}>

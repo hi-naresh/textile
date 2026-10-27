@@ -7,13 +7,14 @@ import { EditProblems, applyLedgerEdits, editHistory, parseChanges } from '@/lib
 
 // PATCH /api/stock/edit (owner, ledger.edit) — the stock ledger's edit mode.
 // Body: { changes: [{ target: 'movement', id: <stock_movements.id>, field, value } | { target: 'lot', id: <lot_id>, field, value }] } (≤ 500)
-//   movement fields: sr_no, pieces, source_doc_id, mill_name + weaver_name + register_pct + loc_code (IN),
+//   movement fields: meters, sr_no, pieces, source_doc_id, mill_name + weaver_name + register_pct + loc_code (IN),
 //                    party + bill_pct (L) + billed_meters (NQTY) + lot_status_code (LOT S) + entry_status (OUT), quality + design (edit the row's lot)
 //   entry_status (packed / running / end): → end closes the lot; end → packed / running on the entry that closed it reopens it.
 //   Opening adjustments (kind 'adjustment', from the Incoming register import) and closing adjustments (kind 'closing') are read-only → 422.
 //   lot fields:      quality, design, grade, status (active | completed | dispatched | hold)
 //   Empty value (or null) clears sr_no / pieces / source_doc_id / mill_name / weaver_name / party. Quality, design, grade, status are required.
-// All-or-nothing, one transaction. → { saved, rows: LedgerRow[] (edited movements), lots: [{ lot_id, quality, design, grade, status }], reload (a lot closed / reopened) }
+//   Editing meters on a closed lot recalculates its closing adjustment in this transaction.
+// All-or-nothing, one transaction. → { saved, rows: LedgerRow[] (edited movements), lots, adjustments: [{ lot_id, adjustment_m }], reload }
 // Invalid values → 422 { error, problems: [{ target, id, field, message }] }. Malformed body / unknown field → 400.
 export async function PATCH(req: NextRequest) {
   try {
