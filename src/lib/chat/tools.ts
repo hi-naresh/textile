@@ -9,7 +9,7 @@ const templateCaps: Record<string, Capability> = {
   open_job_cards: 'jobs.view', shortage_report: 'jobs.view', worker_efficiency: 'efficiency.view',
   pending_reviews: 'capture.confirm', time_saved: 'reports.view',
 };
-const supervisorTemplates = new Set(['open_job_cards', 'shortage_report', 'worker_efficiency', 'pending_reviews']);
+const supervisorTemplates = new Set(['open_job_cards', 'shortage_report', 'worker_efficiency', 'pending_reviews', 'stock_summary']);
 export function allowedTemplates(scope: Scope) {
   return TEMPLATES.filter((t) => (scope.role === 'owner' || supervisorTemplates.has(t.id)) && can(scope.role, templateCaps[t.id] ?? 'stock.quantity'));
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { EntryStatusPicker, EntryStatusPill } from '../../src/components/EntryStatus';
+import { EntryStatusPicker, EntryStatusPill, StockStatusPill } from '../../src/components/EntryStatus';
 import { entryStatusValue } from '../../src/lib/registers';
 
 test('outgoing picker offers Running and manual End, never Packed', () => {
@@ -26,6 +26,12 @@ test('incoming status identifies Packed with the register code P', () => {
   const html = renderToStaticMarkup(createElement(EntryStatusPill, { status: 'packed' }));
   assert.match(html, /Packed \(P\)/);
   assert.match(html, /first sale/);
+});
+
+test('lot stock status distinguishes work state from entry status', () => {
+  const html = renderToStaticMarkup(createElement(StockStatusPill, { status: 'hold' }));
+  assert.match(html, /On hold/);
+  assert.doesNotMatch(html, /Packed \(P\)/);
 });
 
 test('server accepts outgoing Running and End but refuses Packed', () => {

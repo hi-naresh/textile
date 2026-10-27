@@ -3,7 +3,7 @@ import { requireCap } from '@/lib/apiAuth';
 import { can } from '@/lib/access';
 import { query } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
-import { lotFiltersFrom, lotsPage, startEarly } from '@/lib/lots-query';
+import { lotFiltersFrom, lotsPage } from '@/lib/lots-query';
 
 // GET /api/lots?q=&status=active|completed|dispatched|hold&in_stock=1&limit=100&cursor=<last lot_id>
 // "Lots & balance" on the Stock screen: lot no. newest first, keyset-paged, filtered on the server.
@@ -16,11 +16,10 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(500, Math.max(1, Number.parseInt(sp.get('limit') ?? '100', 10) || 100));
     const cursor = (sp.get('cursor') ?? '').slice(0, 50) || null;
     const f = lotFiltersFrom(sp);
-    const run = () => lotsPage((text, params) => query(text, params), f, { limit, cursor });
-    const early = startEarly(req, run);
     const a = await requireCap(req, 'stock.quantity');
     if (f.closed && !can(a.role, 'stock.closed')) throw new LedgerError('Closed lots are only for the owner.', 403);
-    return NextResponse.json(await (early ?? run()), { headers: { 'Cache-Control': 'no-store' } });
+    f.scopeUserId = a.role === 'supervisor' ? a.userId : null;
+    return NextResponse.json(await lotsPage((text, params) => query(text, params), f, { limit, cursor }), { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

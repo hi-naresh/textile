@@ -5,7 +5,7 @@ import { NextRequest } from 'next/server';
 import pool, { query, withTransaction } from '../../src/lib/db';
 import { createSession } from '../../src/lib/auth/session';
 import { can, setAccessOff } from '../../src/lib/access';
-import { createJobCard, recordIncoming, recordOutgoing } from '../../src/lib/ledger';
+import { closeJobCard, createJobCard, recordIncoming, recordOutgoing } from '../../src/lib/ledger';
 import { applyLedgerEdits } from '../../src/lib/ledger-edit';
 import { runSpec } from '../../src/lib/chat/semantic';
 import { lotsByIds } from '../../src/lib/lots-query';
@@ -15,6 +15,7 @@ import { createDispatch } from '../../src/lib/dispatch/dispatches';
 import { getFirmConfig } from '../../src/lib/settings';
 import { PUT as putSettings } from '../../src/app/api/settings/route';
 import { GET as getLots } from '../../src/app/api/lots/route';
+import { GET as getStock } from '../../src/app/api/stock/route';
 import { GET as searchLots } from '../../src/app/api/lots/search/route';
 import { GET as lotLocation } from '../../src/app/api/lots/location/route';
 import { GET as getLedger } from '../../src/app/api/stock/ledger/route';
@@ -545,16 +546,24 @@ test('chat challan lookup: entries of closed lots only for the owner', async () 
 });
 
 
-test('receipt → first sale → manual End: zero and negative balances stay Running until End', async () => {
+test('lot stock status follows open job cards, hold, and closure rather than sales history', async () => {
   const stockStatus = async () => (await lotsByIds(query, [lot(26)]))[0].stock_status;
   assert.equal(await stockStatus(), 'packed');
   await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 1000, party }));
   assert.equal(await balance(lot(26)), 0);
-  assert.equal(await stockStatus(), 'running');
+  assert.equal(await stockStatus(), 'packed');
   assert.equal((await lotRow(lot(26))).closed_at, null);
   const sale = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 50, party }));
   assert.equal(await balance(lot(26)), -50);
+  assert.equal(await stockStatus(), 'packed');
+  const card = await withTransaction((q) => createJobCard(q, { lot_id: lot(26), process: 'Folding', worker_id: id, meters_in: 100 }));
   assert.equal(await stockStatus(), 'running');
+  await query("UPDATE lots SET status = 'hold' WHERE lot_id = $1", [lot(26)]);
+  assert.equal(await stockStatus(), 'hold');
+  await withTransaction((q) => closeJobCard(q, { id: card.id, meters_out: 95 }));
+  assert.equal(await stockStatus(), 'hold');
+  await query("UPDATE lots SET status = 'active' WHERE lot_id = $1", [lot(26)]);
+  assert.equal(await stockStatus(), 'packed');
   const open = await (await getLots(get(ownerCookie, `/api/lots?q=${lot(26)}`))).json();
   assert.equal(open.rows.length, 1);
   await withTransaction((q) => applyLedgerEdits(q, [edit(Number(sale.id), 'end')], id, { endAllowed: true }));
@@ -565,17 +574,17 @@ test('receipt → first sale → manual End: zero and negative balances stay Run
     assert.deepEqual(hidden.rows, []);
   }
   await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(26), action: 'reopen' }));
-  assert.equal(await stockStatus(), 'running');
+  assert.equal(await stockStatus(), 'packed');
   assert.equal(await balance(lot(26)), -50);
   await addLot(lot(26), 100);
-  assert.equal(await stockStatus(), 'running'); // a later receipt does not erase sales history
+  assert.equal(await stockStatus(), 'packed'); // a later receipt does not imply active floor work
 });
 
-test('opening adjustments do not start a lot; old sales display as Running without rewriting history', async () => {
+test('opening adjustments do not start a lot; old sales show Running as entries without changing the stock bucket', async () => {
   await query("INSERT INTO stock_movements (lot_id, direction, meters, kind) VALUES ($1, 'OUT', 10, 'adjustment')", [lot(27)]);
   assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'packed');
   await query("INSERT INTO stock_movements (lot_id, direction, meters, entry_status) VALUES ($1, 'OUT', 10, NULL), ($1, 'OUT', 10, 'packed')", [lot(27)]);
-  assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'running');
+  assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'packed');
   const f = { q: null, direction: null, status: null, quality: null, design: null, lot: lot(27), party: null, from: null, to: null };
   const page = await ledgerPage(query, f, { limit: 50, cursor: null });
   assert.equal(page.rows.find((r) => r.direction === 'IN')?.entry_status, 'packed');
@@ -584,4 +593,44 @@ test('opening adjustments do not start a lot; old sales display as Running witho
   const sales = await ledgerPage(query, { ...f, status: 'running' }, { limit: 50, cursor: null });
   assert.equal(sales.rows.length, 2);
   await assert.rejects(withTransaction((q) => applyLedgerEdits(q, [edit(sales.rows[0].id, 'packed')], id)), /Packed is for incoming/);
+});
+
+test('stock status totals add up and supervisors only see their section lots', async () => {
+  const section = (await query(`SELECT id, name FROM sections WHERE active ORDER BY sort_order, name LIMIT 1`)).rows[0];
+  assert.ok(section, 'test database should have an active section');
+  await query(
+    `INSERT INTO supervisor_sections (user_id, section_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [`${id}-s`, section.id],
+  );
+  const normalizedSection = String(section.name).replace(/\s*section\s*$/i, '').trim().toLowerCase();
+  const snapshot = async () => (await (await getStock(get(supCookie, '/api/stock'))).json()).stockSummary;
+  const before = await snapshot();
+  const summaryTemplate = templateById('stock_summary')!;
+  const chatBefore = await summaryTemplate.run({}, { role: 'supervisor', sections: [normalizedSection] });
+  await withTransaction((q) => createJobCard(q, { lot_id: lot(29), process: section.name, worker_id: id, meters_in: 500 }));
+
+  const scoped = await snapshot();
+  assert.equal(scoped.on_hand_m, before.on_hand_m + 1000);
+  assert.equal(scoped.running_m, before.running_m + 1000);
+  assert.equal(scoped.packed_m + scoped.running_m + scoped.on_hold_m, scoped.on_hand_m);
+  const chatAfter = await summaryTemplate.run({}, { role: 'supervisor', sections: [normalizedSection] });
+  const runningBefore = Number(chatBefore.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
+  const runningAfter = Number(chatAfter.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
+  assert.equal(runningAfter - runningBefore, 1000);
+
+  const running = await (await getLots(get(supCookie, `/api/lots?q=${lot(29)}&stock_status=running`))).json();
+  assert.equal(running.rows.length, 1);
+  const unrelated = await (await getLots(get(supCookie, `/api/lots?q=${lot(28)}`))).json();
+  assert.deepEqual(unrelated.rows, []);
+  const unrelatedLedger = await (await getLedger(get(supCookie, `/api/stock/ledger?lot=${lot(28)}`))).json();
+  assert.deepEqual(unrelatedLedger.rows, []);
+  const scopedLedger = await (await getLedger(get(supCookie, `/api/stock/ledger?lot=${lot(29)}`))).json();
+  assert.ok(scopedLedger.rows.length > 0);
+
+  const cardId = Number((await query(`SELECT id FROM job_cards WHERE lot_id = $1 ORDER BY id DESC LIMIT 1`, [lot(29)])).rows[0].id);
+  await withTransaction((q) => closeJobCard(q, { id: cardId, meters_out: 490 }));
+  const afterClose = await snapshot();
+  assert.equal(afterClose.packed_m, before.packed_m + 1000);
+  assert.equal(afterClose.running_m, before.running_m);
+  assert.equal(afterClose.packed_m + afterClose.running_m + afterClose.on_hold_m, afterClose.on_hand_m);
 });

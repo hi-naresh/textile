@@ -7,7 +7,7 @@
 // and lotsByIds (callers drop them for people without stock.closed).
 import type { NextRequest } from 'next/server';
 import type { Q } from './db';
-import type { EntryStatus } from './registers';
+import type { StockStatus } from './types';
 import { COOKIE } from './auth/config';
 import { marketSearchPatterns } from './markets';
 
@@ -16,11 +16,16 @@ export const LOT_DOC = `lower(l.lot_id::text || ' ' || l.quality::text || ' ' ||
 /** With COLLATE "C": must match idx_lots_lot_c (prefix LIKE + ordering from the index). */
 const LOT_KEY = `lower(l.lot_id::text)`;
 
+export const STOCK_STATUS_SQL = `(CASE
+  WHEN l.closed_at IS NOT NULL THEN 'end'
+  WHEN l.status = 'hold' THEN 'hold'
+  WHEN EXISTS (SELECT 1 FROM job_cards jc WHERE jc.lot_id = l.lot_id AND jc.status <> 'closed') THEN 'running'
+  ELSE 'packed'
+END)`;
+
 export const LOT_COLS = `l.lot_id, l.quality, l.design, l.grade, l.status, l.bal_m AS balance,
   l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no, l.closed_at,
-  CASE WHEN l.closed_at IS NOT NULL THEN 'end'
-       WHEN EXISTS (SELECT 1 FROM stock_movements sale WHERE sale.lot_id = l.lot_id AND sale.direction = 'OUT' AND sale.kind = 'normal') THEN 'running'
-       ELSE 'packed' END AS stock_status`;
+  ${STOCK_STATUS_SQL} AS stock_status`;
 /** Closed lots view: how / when / who and what was written off (the latest close in lot_closures). */
 const CLOSED_COLS = `, l.close_reason, l.close_note, COALESCE(u.name, l.closed_by) AS closed_by_name, c.adjustment_m`;
 const CLOSED_JOIN = ` LEFT JOIN users u ON u.id = l.closed_by
@@ -31,7 +36,7 @@ export const COUNT_CAP = 10_000;
 
 export type LotRow = {
   lot_id: string; quality: string; design: string; grade: string; status: string; balance: number;
-  stock_status: EntryStatus; // Derived from sales and manual closure; adjustments are not sales
+  stock_status: StockStatus; // Derived from hold status, open job cards and closure
   location: string | null; location_stage: string | null; location_ts: string | null;
   loc_code: string | null; reg_lot_no: string | null; // from the Incoming register (migration 013)
   closed_at: string | null; // closed lot (migration 016); null = open
@@ -49,7 +54,7 @@ export function toLot(r: Record<string, unknown>): LotRow {
     location_ts: r.location_ts == null ? null : r.location_ts instanceof Date ? r.location_ts.toISOString() : String(r.location_ts),
     loc_code: (r.loc_code as string) ?? null, reg_lot_no: (r.reg_lot_no as string) ?? null,
     closed_at: iso(r.closed_at),
-    stock_status: r.stock_status as EntryStatus,
+    stock_status: r.stock_status as StockStatus,
     ...('close_reason' in r ? {
       close_reason: (r.close_reason as LotRow['close_reason']) ?? null, close_note: (r.close_note as string) ?? null,
       closed_by_name: (r.closed_by_name as string) ?? null, adjustment_m: r.adjustment_m == null ? 0 : Number(r.adjustment_m),
@@ -64,8 +69,12 @@ const clip = (v: string | null | undefined, max = 100) => {
   return s ? s.slice(0, max) : '';
 };
 
-export interface LotFilters { q: string; status: string; inStock: boolean; quality: string; closed?: boolean } // closed: the owner's Closed lots view
+export interface LotFilters {
+  q: string; status: string; inStock: boolean; quality: string; closed?: boolean;
+  stockStatus?: StockStatus | ''; scopeUserId?: string | null;
+} // closed: the owner's Closed lots view
 export const LOT_STATUSES = ['active', 'completed', 'dispatched', 'hold'];
+const STOCK_STATUSES: StockStatus[] = ['packed', 'running', 'hold', 'end'];
 
 export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
   const status = (sp.get('status') ?? '').trim().toLowerCase();
@@ -75,6 +84,8 @@ export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
     inStock: sp.get('in_stock') === '1',
     quality: clip(sp.get('quality')),
     closed: sp.get('closed') === '1',
+    stockStatus: STOCK_STATUSES.includes(sp.get('stock_status') as StockStatus) ? sp.get('stock_status') as StockStatus : '',
+    scopeUserId: null,
   };
 }
 
@@ -86,6 +97,18 @@ function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> 
   const parts: string[] = [f.closed ? 'l.closed_at IS NOT NULL' : 'l.closed_at IS NULL'];
   if (f.inStock) parts.push('l.bal_m > 0');
   if (f.status) parts.push(`l.status = ${p(f.status)}`);
+  if (f.stockStatus) parts.push(`${STOCK_STATUS_SQL} = ${p(f.stockStatus)}`);
+  if (f.scopeUserId) {
+    const user = p(f.scopeUserId);
+    parts.push(`EXISTS (
+      SELECT 1 FROM job_cards scoped_jc
+      JOIN supervisor_sections ss ON ss.user_id = ${user}
+      JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
+      WHERE scoped_jc.lot_id = l.lot_id
+        AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
+          = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
+    )`);
+  }
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
   for (const word of f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6)) {
     const w = `${LOT_DOC} LIKE ${p(`%${likeEscape(word)}%`)}`;

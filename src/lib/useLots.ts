@@ -5,10 +5,10 @@
 //   useLotSearch()  → lot pickers' type-ahead (GET /api/lots/search), debounced + cancellable + briefly cached
 //   useLotsById()   → details of a few known lots (dispatch lines, reserved lots)
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Lot } from './types';
+import type { Lot, StockStatus } from './types';
 
-export interface LotFilterState { q: string; stock: '' | 'in' | 'closed'; status: string } // closed: owner's Closed lots
-export const EMPTY_LOT_FILTERS: LotFilterState = { q: '', stock: '', status: '' };
+export interface LotFilterState { q: string; stock: '' | 'in' | 'closed'; status: string; stockStatus: '' | StockStatus } // closed: owner's Closed lots
+export const EMPTY_LOT_FILTERS: LotFilterState = { q: '', stock: '', status: '', stockStatus: '' };
 
 export function lotParams(f: LotFilterState): URLSearchParams {
   const p = new URLSearchParams();
@@ -16,6 +16,7 @@ export function lotParams(f: LotFilterState): URLSearchParams {
   if (f.stock === 'in') p.set('in_stock', '1');
   if (f.stock === 'closed') p.set('closed', '1');
   if (f.status) p.set('status', f.status);
+  if (f.stockStatus) p.set('stock_status', f.stockStatus);
   return p;
 }
 

@@ -5,13 +5,21 @@
 import React from 'react';
 import { Pill, Segmented, type Tone } from './ui';
 import { OUTGOING_STATUSES, ENTRY_STATUS_HINT, ENTRY_STATUS_LABEL, type EntryStatus } from '@/lib/registers';
+import type { StockStatus } from '@/lib/types';
 
 const TONE: Record<EntryStatus, Tone> = { packed: 'info', running: 'good', end: 'neutral' };
+const STOCK_LABEL: Record<StockStatus, string> = { packed: 'Packed', running: 'Running', hold: 'On hold', end: 'Ended' };
+const STOCK_TONE: Record<StockStatus, Tone> = { packed: 'info', running: 'good', hold: 'warn', end: 'neutral' };
 
 /** `unset`: an outgoing entry with no status yet (saved before statuses existed) shows "Not set" instead of nothing. */
 export function EntryStatusPill({ status, unset = false }: { status: EntryStatus | null | undefined; unset?: boolean }) {
   if (!status) return unset ? <Pill tone="neutral" className="pill-unset" title="No status yet. Set Running or End in Edit mode.">Not set</Pill> : null;
   return <Pill tone={TONE[status]} title={ENTRY_STATUS_HINT[status]}>{ENTRY_STATUS_LABEL[status]}</Pill>;
+}
+
+export function StockStatusPill({ status }: { status: StockStatus | null | undefined }) {
+  if (!status) return null;
+  return <Pill tone={STOCK_TONE[status]}>{STOCK_LABEL[status]}</Pill>;
 }
 
 export function EntryStatusPicker({ value, onChange, canEnd, label = 'Status' }: {

@@ -3,6 +3,7 @@
 import { query } from '../db';
 import { readRules } from '../settings';
 import { can } from '../access';
+import { STOCK_STATUS_SQL } from '../lots-query';
 
 const canManage = (s: Scope) => can(s.role, 'jobs.manage');
 
@@ -72,21 +73,43 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: 'stock_summary',
-    describe: 'Total stock in meters across all lots, split by location',
+    describe: 'Stock on hand total in meters split into Packed, Running (open job card), and On hold, with location details',
     params: [],
-    run: async () => {
+    run: async (_p, s) => {
       const r = await query(
         `WITH b AS (
-           SELECT l.lot_id, COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END), 0) AS bal,
+           SELECT l.lot_id, l.bal_m AS bal, ${STOCK_STATUS_SQL} AS stock_status,
                   (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS loc
-           FROM lots l LEFT JOIN stock_movements sm ON sm.lot_id = l.lot_id
-           WHERE l.closed_at IS NULL GROUP BY l.lot_id)
-         SELECT COALESCE(loc, '—') AS location, COUNT(*) AS lots, SUM(bal) AS meters FROM b WHERE bal > 0 GROUP BY 1 ORDER BY meters DESC`,
+             FROM lots l
+            WHERE l.closed_at IS NULL AND l.bal_m > 0
+              AND ($1::text[] IS NULL OR EXISTS (
+                SELECT 1 FROM job_cards scoped_jc
+                WHERE scoped_jc.lot_id = l.lot_id
+                  AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i'))) = ANY($1::text[])
+              ))
+         )
+         SELECT CASE WHEN GROUPING(stock_status) = 0 THEN 'status' ELSE 'location' END AS group_type,
+                CASE WHEN GROUPING(stock_status) = 0 THEN stock_status ELSE COALESCE(loc, '—') END AS group_name,
+                COUNT(*) AS lots, SUM(bal) AS meters
+           FROM b GROUP BY GROUPING SETS ((stock_status), (loc))`,
+        [s.role === 'supervisor' ? s.sections : null],
       );
-      const total = r.rows.reduce((s, x) => s + Number(x.meters), 0);
-      const lots = r.rows.reduce((s, x) => s + Number(x.lots), 0);
+      const byStatus = r.rows.filter((x) => x.group_type === 'status');
+      const byLocation = r.rows.filter((x) => x.group_type === 'location');
+      const total = byStatus.reduce((sum, x) => sum + Number(x.meters), 0);
+      const lots = byStatus.reduce((sum, x) => sum + Number(x.lots), 0);
       if (!lots) return { answer: 'No stock on hand right now.', rows: [] };
-      return { answer: `${fmt(total)} m in stock across ${lots} lots: ${r.rows.map((x) => `${x.location} ${fmt(x.meters)} m`).join(', ')}.`, rows: r.rows };
+      const group = (name: string) => byStatus.find((x) => x.group_name === name);
+      const bucket = (name: string, label: string) => {
+        const x = group(name);
+        return `${label}: ${fmt(x?.meters ?? 0)} m (${Number(x?.lots ?? 0)} lots)`;
+      };
+      const locations = byLocation.map((x) => `${x.group_name} ${fmt(x.meters)} m`).join(', ');
+      const scope = s.role === 'supervisor' ? ' in your sections' : '';
+      return {
+        answer: `${fmt(total)} m in stock across ${lots} lots${scope}. ${bucket('packed', 'Packed')}; ${bucket('running', 'Running')}; ${bucket('hold', 'On hold')}${locations ? `. By location: ${locations}` : ''}.`,
+        rows: byStatus,
+      };
     },
   },
   {

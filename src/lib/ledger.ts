@@ -503,6 +503,7 @@ export async function createJobCard(
     [workerId, card.id, metersIn, text(input.shift, 20) ?? 'Morning'],
   );
   await moveLot(q, { lot_id: lotId, location: SYSTEM_LOCATIONS.floor, stage: 'job_card', note: `JC-${card.id} · ${process} · ${w.rows[0].name}`, job_card_id: card.id, moved_by: input.moved_by ?? null });
+  await q(`SELECT nextval('stock_rev')`);
   return card;
 }
 
@@ -548,6 +549,7 @@ export async function closeJobCard(q: Q, input: { id?: unknown; meters_out?: unk
     const back = (await currentLocation(q, card.lot_id)) === SYSTEM_LOCATIONS.floor ? await currentPlace(q, card.lot_id, true) : null;
     if (back) await moveLot(q, { lot_id: card.lot_id, location: back.location, place: back, stage: 'returned', note: `JC-${id} closed · ${metersOut} m out`, job_card_id: id, moved_by: input.moved_by ?? null });
   }
+  await q(`SELECT nextval('stock_rev')`);
 
   const metersIn = parseFloat(card.meters_in);
   const shortage = metersIn - metersOut;

@@ -4,7 +4,6 @@ import { can } from '@/lib/access';
 import { query } from '@/lib/db';
 import { errorResponseBody } from '@/lib/ledger';
 import { decodeCursor, filtersFrom, ledgerFacets, ledgerPage } from '@/lib/ledger-query';
-import { startEarly } from '@/lib/lots-query';
 
 // GET /api/stock/ledger?q=&direction=IN|OUT&quality=&design=&lot=&party=&from=YYYY-MM-DD&to=&today=1&limit=100&cursor=&facets=1
 // Newest first, keyset-paged on (ts, id).
@@ -19,15 +18,14 @@ export async function GET(req: NextRequest) {
     if (cursorText && !cursor) return NextResponse.json({ error: 'The page link is not valid. Reload the ledger.' }, { status: 400 });
     const limit = Math.min(500, Math.max(1, Number.parseInt(sp.get('limit') ?? '100', 10) || 100));
     const run = (text: string, params?: unknown[]) => query(text, params);
-    const load = (hideClosed = false) => Promise.all([
-      ledgerPage(run, { ...filtersFrom(sp), hideClosed }, { limit, cursor }),
-      sp.get('facets') === '1' ? ledgerFacets(run) : Promise.resolve(undefined),
-    ]);
-    const early = startEarly(req, () => load()); // overlaps the session check (the owner's view)
     const a = await requireUser(req);
     if (!can(a.role, 'stock.quantity')) return NextResponse.json({ rows: [], next: null, total: 0, total_capped: false });
     const owner = can(a.role, 'stock.closed');
-    const [page, facets] = await (owner ? early ?? load() : load(true));
+    const scopeUserId = a.role === 'supervisor' ? a.userId : null;
+    const [page, facets] = await Promise.all([
+      ledgerPage(run, { ...filtersFrom(sp), hideClosed: !owner, scopeUserId }, { limit, cursor }),
+      sp.get('facets') === '1' ? ledgerFacets(run, scopeUserId) : Promise.resolve(undefined),
+    ]);
     return NextResponse.json({ ...page, ...(facets ? { facets } : {}) }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
