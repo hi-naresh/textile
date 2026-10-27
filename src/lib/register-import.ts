@@ -366,7 +366,8 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
     const srNum = srText && /^\d{1,9}$/.test(srText) ? Number(srText) : null;
     if (!lotRaw && !srText) { errors.push({ row, field: 'LOT', message: 'Give the LOT or the SR.NO, so the sale can find its lot.' }); continue; }
     if (L != null && nqty != null && Math.abs(round2(qty * L / 100) - round2(nqty)) > 0.05) warnings.push({ row, field: 'NQTY', skip: false, message: `NQTY ${nqty} is not QTY × L ÷ 100 (${round2(qty * L / 100)}). Kept as given.` });
-    if (code && !['R', 'E', 'S', 'A'].includes(code)) warnings.push({ row, field: 'LOT S', skip: false, message: `LOT S "${code}" is a new code (seen so far: R, E, S, A). Kept as given.` });
+    if (code === 'A' && statusFromLotS(code) == null) warnings.push({ row, field: 'LOT S', skip: false, message: 'LOT S "A" is not confirmed as End. Saved as data only; the entry stays without a status and the lot is not closed.' });
+    else if (code && !['R', 'E', 'S'].includes(code)) warnings.push({ row, field: 'LOT S', skip: false, message: `LOT S "${code}" is a new code (mapped codes: R, E, S). Kept as data only without a status.` });
     if (date > today) warnings.push({ row, field: 'DATE', skip: false, message: `Date ${fmtDate(date)} is in the future — check it. Saved as written.` });
     // Identity of a sale row: date, bill, lot, meters, SR.NO (+ how many identical rows came before it). L / NQTY / LOT S /
     // ITEM are left out, so fixing one of them in the file (or a copy saved without formula results) is not a new sale.
@@ -518,8 +519,8 @@ export async function commitIncomingRow(q: Q, r: Record<string, unknown>, movedB
 
 /**
  * Save one Outgoing-register row as an OUT on its lot (no party). Inside the chunk's transaction.
- * Its status comes from LOT S (statusFromLotS; no code → Running). E / A = End: the lot closes (reason 'register'),
- * so a later row for the same lot is refused like any entry on a closed lot.
+ * Its status comes from confirmed LOT S mappings (S / R → Running; E → End). Unmapped or blank codes stay empty.
+ * E closes the lot (reason 'register'), so a later row for the same lot is refused like any entry on a closed lot.
  */
 export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedBy: string | null, memo: LedgerMemo) {
   await staleOnce(q, memo);
@@ -534,7 +535,7 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
   const billed = billedMetersValue(r.billed_meters);
   const code = lotStatusCodeValue(r.lot_status_code);
   const linked = linkedSrValue(r.linked_sr);
-  const coded = statusFromLotS(code) ?? 'running';
+  const coded = statusFromLotS(code);
   const status = coded === 'end' && r.keep_open === true ? 'running' : coded; // see checkOutgoing
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist. Check the file again.`);
   await assertLotOpen(q, lotId);
@@ -546,7 +547,7 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
   );
   await trimReservations(q, lotId);
   const remaining = round2(b - meters);
-  if (remaining <= 0 || code === 'E' || code === 'A') {
+  if (remaining <= 0 || status === 'end') {
     await q(`UPDATE lots SET status = 'dispatched' WHERE lot_id = $1`, [lotId]);
   }
   const here = remaining <= 0 ? null : await currentPlace(q, lotId);

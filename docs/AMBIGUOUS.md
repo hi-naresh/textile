@@ -6,7 +6,7 @@ Questions from importing the firm's two Excel registers into the app: the **Inco
 - **App now**: what the app does today (our guess, which we can change easily).
 - **Question**: what we need the owner to tell us.
 
-The app stores the unclear columns exactly as written. They are not used to work out stock. The only exception is STOCK in the Incoming register, which sets each lot's starting balance.
+The app stores unclear columns exactly as written. Most are not used to work out stock; LOT S uses only confirmed codes to set a sale's status, and STOCK in the Incoming register sets each lot's starting balance.
 
 ---
 
@@ -31,10 +31,11 @@ The app stores the unclear columns exactly as written. They are not used to work
 
 **App now** (issue #7, Oct 2026)
 - The code is saved with each sale and shown on the ledger row; on hover, a tooltip shows the guess.
-- It sets the sale's status: S and R → Running, E and A → End. An End closes the lot on that date: what is left is written off so the balance is 0, and the lot leaves current stock (the owner sees it under Lots & balance → Closed).
-- Sales imported before this change get their status from a one-time backfill (`npm run db:backfill-lot-status`): a dry run lists every lot it would close for the owner to check first.
+- It sets the sale's status from confirmed mappings: S and R → Running, E → End. An End closes the lot on that date: what is left is written off so the balance is 0, and the lot leaves current stock (the owner sees it under Lots & balance → Closed).
+- A is not confirmed as End. It is saved as data only, with no status, and does not close the lot; it is listed for owner review.
+- Sales imported before this change get their status from a one-time backfill (`npm run db:backfill-lot-status`): the dry run lists every lot it would close for the owner to check first and prints a fingerprint. Apply only after review, using `--apply --confirm-reviewed <fingerprint> --by <owner id>`; if the plan changes, it must be reviewed again.
 - Any code other than R / E / S / A is kept, with a note, and gives no status.
-- A = End is still our guess: if A means something else, change `LOT_S_STATUS` in `src/lib/registers.ts`.
+- Confirm whether A means End before adding it to `LOT_S_STATUS` in `src/lib/registers.ts`.
 
 **Question**
 - Is the guess right?

@@ -12,7 +12,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const { role } = await requireCap(req, 'orders.view');
     const { id } = await params;
     const order = await getOrder(query, id, role);
-    const allocations = await orderAllocations(query, order.id);
+    const allocations = await orderAllocations(query, order.id, role);
     return NextResponse.json({ order, allocations }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);

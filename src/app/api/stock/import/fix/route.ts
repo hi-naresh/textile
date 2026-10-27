@@ -3,6 +3,8 @@ import { readObject, requireCap } from '@/lib/apiAuth';
 import { errorResponseBody } from '@/lib/ledger';
 import { fixSheet, newBook } from '@/lib/stock-import';
 import { toBuffer } from '@/lib/excel';
+import { enforceApiRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
+import { query } from '@/lib/db';
 
 // "Rows to fix" (owner, ledger.edit). POST { name, headers: string[], rows: [{ row, values: unknown[], reason }] }
 // → .xlsx with the uploaded file's own columns + "Excel row" + "Why skipped", for the rows the import left out.
@@ -12,7 +14,8 @@ const MAX_ROWS = 5000;
 
 export async function POST(req: NextRequest) {
   try {
-    await requireCap(req, 'ledger.edit');
+    const actor = await requireCap(req, 'ledger.edit');
+    await enforceApiRateLimit(query, actor.userId, 'stock-import-fix');
     const body = await readObject(req);
     const headers = Array.isArray(body.headers) ? body.headers.slice(0, 60).map((h: unknown) => String(h ?? '').slice(0, 60)) : null;
     const rows = Array.isArray(body.rows) ? body.rows : null;
@@ -30,6 +33,8 @@ export async function POST(req: NextRequest) {
       headers: { 'Content-Type': XLSX, 'Content-Disposition': `attachment; filename="rows-to-fix-${name}.xlsx"`, 'Cache-Control': 'no-store' },
     });
   } catch (error) {
+    const limited = rateLimitResponse(error);
+    if (limited) return limited;
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });
   }

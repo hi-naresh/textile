@@ -19,8 +19,6 @@ const greeting = () => {
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 };
 
-/** GET /api/stock → stockSummary (provided by the stock API; null until it is available). */
-interface StockSummary { on_hand_m: number; active_lots: number; low_lots: { lot_id: string; quality: string; balance: number }[] }
 /** GET /api/overview */
 interface OverviewFigures {
   orders: { open: number; open_m: number; late: number; due_today: number; due_week: number };
@@ -33,7 +31,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${fmt(n)} ${n === 
 export function Overview({ ctx }: { ctx: Ctx }) {
   const { d, days, go, role } = ctx;
   const compact = ctx.density === 'compact';
-  const stock = (d as unknown as { stockSummary?: StockSummary | null }).stockSummary ?? null;
+  const stock = d.stockSummary ?? null;
   const fig = useApi<OverviewFigures>(can(role, 'orders.view') ? '/api/overview' : null, d.lastSync).data ?? null;
   const sections = sectionRows(days, d.jobCards);
   const running = sections.filter((s) => s.open > 0).length;
@@ -66,7 +64,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
       <div className="grid-kpi ov-figs">
         <Figure label="Stock on hand" to="stock" go={go}
           value={stock ? fmtMeters(stock.on_hand_m) : '—'}
-          sub={stock ? `${plural(stock.active_lots, 'lot')} in stock${stock.low_lots.length ? ` · ${fmt(stock.low_lots.length)} running low` : ''}` : 'Open the stock ledger'}
+          sub={stock ? `Packed ${fmtMeters(stock.packed_m)} · Running ${fmtMeters(stock.running_m)} · On hold ${fmtMeters(stock.on_hold_m)}` : 'Open the stock ledger'}
           />
         <Figure label="Sent out today" to="stock" go={go}
           value={d.today ? fmtMeters(d.today.out_m) : '—'}

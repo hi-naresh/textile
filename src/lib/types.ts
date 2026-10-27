@@ -6,7 +6,7 @@ export interface Lot {
   design: string;
   grade: string;
   status: string;
-  stock_status?: import('./registers').EntryStatus;
+  stock_status?: StockStatus;
   balance: number;
   location: string | null; // current physical location (latest lot_locations row)
   location_stage: LocationStage | null;
@@ -21,10 +21,18 @@ export interface Lot {
   adjustment_m?: number | null;
 }
 
-/** Stock on hand at a glance (GET /api/stock). low_lots: 0 < balance < the firm's low-stock level, 20 lowest. */
+export type StockStatus = 'packed' | 'running' | 'hold' | 'end';
+
+/** Stock on hand at a glance (GET /api/stock). */
 export interface StockSummary {
   on_hand_m: number;
   active_lots: number;
+  packed_m: number;
+  packed_lots: number;
+  running_m: number;
+  running_lots: number;
+  on_hold_m: number;
+  on_hold_lots: number;
   low_lots: { lot_id: string; quality: string; balance: number }[];
 }
 

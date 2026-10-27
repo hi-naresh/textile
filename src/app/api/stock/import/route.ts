@@ -3,6 +3,7 @@ import { query } from '@/lib/db';
 import { errorResponseBody } from '@/lib/ledger';
 import { ImportFileError, validateImport } from '@/lib/stock-import';
 import { requireCap } from '@/lib/apiAuth';
+import { enforceApiRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
 
 // Step 1 of the Excel import (owner). POST multipart { file: .xlsx } → checks only, writes nothing.
 // Three formats, told apart by the heading row: the firm's Incoming register, its Outgoing (sales) register, or the
@@ -14,7 +15,8 @@ const MAX_BYTES = 8 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
-    await requireCap(req, 'ledger.edit');
+    const actor = await requireCap(req, 'ledger.edit');
+    await enforceApiRateLimit(query, actor.userId, 'stock-import');
     const fd = await req.formData();
     const file = fd.get('file');
     if (!(file instanceof File)) return NextResponse.json({ error: 'Choose the Excel file to import.' }, { status: 400 });
@@ -23,6 +25,8 @@ export async function POST(req: NextRequest) {
     const result = await validateImport((text, params) => query(text, params), Buffer.from(await file.arrayBuffer()));
     return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
+    const limited = rateLimitResponse(error);
+    if (limited) return limited;
     if (error instanceof ImportFileError) return NextResponse.json({ error: error.message }, { status: 400 });
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

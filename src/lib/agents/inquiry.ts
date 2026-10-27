@@ -18,7 +18,7 @@ async function freeFor(q: Q, qualities: string[]): Promise<Map<string, number>> 
      FROM lots l
      LEFT JOIN LATERAL (SELECT SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END) AS bal FROM stock_movements sm WHERE sm.lot_id = l.lot_id) b ON true
      LEFT JOIN LATERAL (SELECT SUM(al.meters - al.dispatched_m) AS res FROM allocations al WHERE al.lot_id = l.lot_id AND al.status = 'reserved') a ON true
-     WHERE lower(l.quality) = ANY($1::text[]) GROUP BY 1`,
+     WHERE l.closed_at IS NULL AND lower(l.quality) = ANY($1::text[]) GROUP BY 1`,
     [qualities],
   );
   for (const x of r.rows) out.set(String(x.k), Number(x.free));

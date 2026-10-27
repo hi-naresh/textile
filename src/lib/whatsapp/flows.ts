@@ -147,7 +147,7 @@ export async function summaryParams(lang: string): Promise<string[]> {
   const w = words(lang);
   const [b, st, y, o, att] = await Promise.all([
     readBilling(run),
-    run(`SELECT COALESCE(SUM(bal_m), 0) AS m, COUNT(*)::int AS n FROM lots WHERE bal_m > 0`),
+    run(`SELECT COALESCE(SUM(bal_m), 0) AS m, COUNT(*)::int AS n FROM lots WHERE bal_m > 0 AND closed_at IS NULL`),
     run(`SELECT COALESCE(SUM(meters) FILTER (WHERE direction = 'IN'), 0) AS i, COALESCE(SUM(meters) FILTER (WHERE direction = 'OUT'), 0) AS o
          FROM stock_movements WHERE ts >= CURRENT_DATE - 1 AND ts < CURRENT_DATE AND kind = 'normal'`),
     run(`SELECT COUNT(*) FILTER (WHERE promise_date = CURRENT_DATE)::int AS due, COUNT(*) FILTER (WHERE promise_date < CURRENT_DATE)::int AS late
@@ -229,4 +229,3 @@ export async function sendTest(by: string): Promise<{ ok: boolean; message: stri
     return { ok: false, message: 'Could not send the test message.' };
   }
 }
-

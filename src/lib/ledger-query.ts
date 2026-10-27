@@ -20,6 +20,7 @@ export interface LedgerFilters {
   to: string | null;
   today?: boolean; // the database's today (same "today" as every other today-figure)
   hideClosed?: boolean; // set by the server for people without stock.closed: no rows of closed lots, no closing adjustments
+  scopeUserId?: string | null; // supervisor: only lots with job cards in their assigned sections
 }
 
 const clip = (v: string | null, max = 100) => {
@@ -76,6 +77,17 @@ export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map
     }
   }
   if (f.hideClosed) parts.push(`l.closed_at IS NULL AND sm.kind <> 'closing'`);
+  if (f.scopeUserId) {
+    const user = p(f.scopeUserId);
+    parts.push(`EXISTS (
+      SELECT 1 FROM job_cards scoped_jc
+      JOIN supervisor_sections ss ON ss.user_id = ${user}
+      JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
+      WHERE scoped_jc.lot_id = sm.lot_id
+        AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
+          = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
+    )`);
+  }
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
   if (f.design) parts.push(`lower(l.design) = lower(${p(f.design)})`);
   if (f.lot) { const w = p(like(f.lot.toLowerCase())); parts.push(`sm.search_doc LIKE ${w} AND lower(sm.lot_id) LIKE ${w}`); }
@@ -206,9 +218,55 @@ export async function ledgerAll(q: Q, f: LedgerFilters, cap = 100_000) {
   return r.rows.map(toRow);
 }
 
+/** Export matching movements in ascending ledger order without retaining the full result in memory. */
+export async function* ledgerExportRows(q: Q, f: LedgerFilters, pageSize = 5000): AsyncGenerator<LedgerRow> {
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 10_000) throw new RangeError('Export page size must be from 1 to 10,000.');
+  const w = whereFor(f, await ledgerAlts(q, f));
+  const highWater = Number((await q('SELECT COALESCE(MAX(id), 0)::int AS id FROM stock_movements')).rows[0].id);
+  if (!highWater) return;
+
+  let cursor: { ts: string; id: number } | null = null;
+  for (;;) {
+    const params = [...w.params, highWater];
+    let where = `${w.sql}${w.sql ? ' AND' : 'WHERE'} sm.id <= $${params.length}`;
+    if (cursor) {
+      params.push(cursor.ts, cursor.id);
+      where += ` AND (sm.ts, sm.id) > ($${params.length - 1}::timestamp, $${params.length})`;
+    }
+    params.push(pageSize);
+    const result = await q(
+      `SELECT ${COLS} FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id
+        ${where}
+        ORDER BY sm.ts ASC, sm.id ASC
+        LIMIT $${params.length}`,
+      params,
+    );
+    if (!result.rows.length) return;
+    for (const row of result.rows) yield toRow(row);
+    if (result.rows.length < pageSize) return;
+    const last = result.rows[result.rows.length - 1];
+    cursor = { ts: String(last.ts_key), id: Number(last.id) };
+  }
+}
+
 /** Distinct qualities / designs for the filter dropdowns, and which designs each quality has (lot_facets: one row per pair). */
-export async function ledgerFacets(q: Q) {
-  const r = await q(`SELECT quality, design FROM lot_facets ORDER BY quality, design`);
+export async function ledgerFacets(q: Q, scopeUserId: string | null = null) {
+  const r = scopeUserId
+    ? await q(
+      `SELECT DISTINCT l.quality, l.design
+         FROM lots l
+        WHERE l.closed_at IS NULL AND EXISTS (
+          SELECT 1 FROM job_cards scoped_jc
+          JOIN supervisor_sections ss ON ss.user_id = $1
+          JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
+          WHERE scoped_jc.lot_id = l.lot_id
+            AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
+              = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
+        )
+        ORDER BY l.quality, l.design`,
+      [scopeUserId],
+    )
+    : await q(`SELECT quality, design FROM lot_facets ORDER BY quality, design`);
   const byQuality: Record<string, string[]> = {};
   const designs = new Set<string>();
   for (const x of r.rows) {

@@ -14,7 +14,9 @@ export const lotSHint = (code: string | null | undefined) => {
   if (!code) return '';
   const g = LOT_S_GUESS[code.toUpperCase()];
   const st = statusFromLotS(code);
-  return g ? `LOT S “${code}”: ${g}. Sets the status of imported sales: ${st === 'end' ? 'End (closes the lot)' : 'Running'}.` : `LOT S “${code}”: meaning not known. Data only.`;
+  if (!g) return `LOT S “${code}”: meaning not known. Data only.`;
+  if (code.trim().toUpperCase() === 'A' && st == null) return `LOT S “${code}”: ${g}. Meaning not confirmed; saved for review without setting a status or closing the lot.`;
+  return `LOT S “${code}”: ${g}. Sets the status of imported sales: ${st === 'end' ? 'End (closes the lot)' : 'Running'}.`;
 };
 
 export const ADJUSTMENT_LABEL = 'Opening adjustment (register)';
@@ -80,11 +82,8 @@ export const ENTRY_STATUS_HINT: Record<EntryStatus, string> = {
   end: 'The last sale from this lot. Saving closes the lot: anything left over (or sent beyond its balance) is written off so it shows 0.',
 };
 
-/**
- * The sales register's LOT S code → status (issue #7): S (first sale) and R (later sale) → Running; E (last sale) and
- * A (whole lot in one bill; still our guess, docs/AMBIGUOUS.md §1) → End. Anything else → null (left empty).
- */
-export const LOT_S_STATUS: Record<string, EntryStatus> = { S: 'running', R: 'running', E: 'end', A: 'end' };
+/** Confirmed LOT S mapping: S / R → Running; E → End. Unconfirmed A and unknown codes stay unmapped. */
+export const LOT_S_STATUS: Record<string, EntryStatus> = { S: 'running', R: 'running', E: 'end' };
 export const statusFromLotS = (code: string | null | undefined): EntryStatus | null => (code ? LOT_S_STATUS[code.trim().toUpperCase()] ?? null : null);
 
 /** Outgoing entries only allow Running or End. Packed is automatic on incoming receipts. */

@@ -21,7 +21,9 @@ const ORDER_SQL = `
          COALESCE(a.res, 0) AS reserved_m, COALESCE(d.m, 0) AS dispatched_m
   FROM orders o
   JOIN parties p ON p.id = o.party_id
-  LEFT JOIN (SELECT order_id, SUM(meters - dispatched_m) AS res FROM allocations WHERE status = 'reserved' GROUP BY order_id) a ON a.order_id = o.id
+  LEFT JOIN (SELECT a.order_id, SUM(a.meters - a.dispatched_m) AS res
+             FROM allocations a JOIN lots l ON l.lot_id = a.lot_id AND l.closed_at IS NULL
+             WHERE a.status = 'reserved' GROUP BY a.order_id) a ON a.order_id = o.id
   LEFT JOIN (SELECT order_id, SUM(meters) AS m FROM stock_movements WHERE direction = 'OUT' AND order_id IS NOT NULL GROUP BY order_id) d ON d.order_id = o.id`;
 
 export function toOrder(r: Record<string, unknown>, role: Role): OrderRow {
@@ -83,12 +85,13 @@ export async function getOrder(q: Q, id: unknown, role: Role): Promise<OrderRow>
   return toOrder(r.rows[0], role);
 }
 
-export async function orderAllocations(q: Q, orderId: number): Promise<AllocationRow[]> {
+export async function orderAllocations(q: Q, orderId: number, role: Role): Promise<AllocationRow[]> {
   const r = await q(
     `SELECT a.id, a.order_id, a.lot_id, a.meters, a.dispatched_m, a.status, a.created_at, l.quality, l.design
-     FROM allocations a JOIN lots l ON l.lot_id = a.lot_id WHERE a.order_id = $1
+     FROM allocations a JOIN lots l ON l.lot_id = a.lot_id
+     WHERE a.order_id = $1 AND ($2::boolean OR l.closed_at IS NULL)
      ORDER BY CASE a.status WHEN 'reserved' THEN 0 WHEN 'dispatched' THEN 1 ELSE 2 END, a.id`,
-    [orderId],
+    [orderId, role === 'owner'],
   );
   return r.rows.map((x) => ({
     id: Number(x.id), order_id: Number(x.order_id), lot_id: x.lot_id, meters: Number(x.meters), dispatched_m: Number(x.dispatched_m),

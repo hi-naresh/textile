@@ -2,10 +2,12 @@
 // Usage: npm run db:migrate   (uses DATABASE_URL or the local default)
 // The app also runs this automatically at server start (src/lib/migrate.ts).
 /* eslint-disable @typescript-eslint/no-require-imports -- plain Node script */
-require('./load-env');
+if (process.env.SKIP_DOTENV !== '1') require('./load-env');
 const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const { verifySchema } = require('./check-schema');
+const LOCK_KEY = 72_150_926; // same lock as the runtime migrator
 
 // Migrations need a direct (non-pooled) connection. On Vercel + Supabase that's POSTGRES_URL_NON_POOLING.
 const onVercel = !!process.env.VERCEL;
@@ -36,6 +38,7 @@ async function main() {
   const client = new Client(dbConfig(url));
   await client.connect();
   try {
+    await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY]);
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
       name VARCHAR(200) PRIMARY KEY,
       applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -60,8 +63,10 @@ async function main() {
         return;
       }
     }
-    console.log(applied ? `Done. ${applied} migration(s) applied.` : 'Database is up to date.');
+    await verifySchema(client);
+    console.log(applied ? `Done. ${applied} migration(s) applied; schema verified.` : 'Database is up to date; schema verified.');
   } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => {});
     await client.end();
   }
 }

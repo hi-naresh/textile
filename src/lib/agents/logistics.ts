@@ -13,7 +13,7 @@ export const agent: AgentModule = {
   async scan(q) {
     const r = await q(
       `SELECT sm.id, sm.lot_id, sm.party, sm.meters, sm.ts FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id
-       WHERE sm.direction = 'OUT' AND sm.order_id IS NULL AND sm.party IS NOT NULL AND sm.ts >= NOW() - interval '30 days'
+       WHERE l.closed_at IS NULL AND sm.direction = 'OUT' AND sm.order_id IS NULL AND sm.party IS NOT NULL AND sm.ts >= NOW() - interval '30 days'
          AND EXISTS (SELECT 1 FROM orders o JOIN parties p ON p.id = o.party_id
                      WHERE p.name_key = regexp_replace(lower(sm.party), '[^a-z0-9]', '', 'g')
                        AND lower(btrim(o.quality)) = lower(btrim(l.quality)) AND o.status IN ('open', 'partly_dispatched')
@@ -39,9 +39,14 @@ export const agent: AgentModule = {
     const orderId = choice != null ? Number(choice) : Number(s.payload?.order_id);
     if (!Number.isInteger(movementId) || !Number.isInteger(orderId)) throw new LedgerError('This card is missing its dispatch or order.');
     if (choice != null && !candidates.includes(orderId)) throw new LedgerError(`Order #${orderId} wasn't one of the choices on this card.`);
-    const mv = await q(`SELECT id, party, meters, order_id, direction FROM stock_movements WHERE id = $1 FOR UPDATE`, [movementId]);
+    const mv = await q(
+      `SELECT sm.id, sm.party, sm.meters, sm.order_id, sm.direction, l.closed_at
+       FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id WHERE sm.id = $1 FOR UPDATE OF sm`,
+      [movementId],
+    );
     const m = mv.rows[0];
     if (!m || m.direction !== 'OUT') throw new LedgerError('That dispatch no longer exists.', 404);
+    if (m.closed_at) throw new LedgerError('That dispatch belongs to a closed lot.', 409);
     if (m.order_id) throw new LedgerError(`That dispatch is already counted against order #${m.order_id}.`);
     const o = await q(`SELECT o.status, p.name_key FROM orders o JOIN parties p ON p.id = o.party_id WHERE o.id = $1`, [orderId]);
     if (!o.rows[0]) throw new LedgerError(`Order #${orderId} no longer exists.`, 404);

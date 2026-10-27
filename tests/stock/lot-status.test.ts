@@ -5,7 +5,7 @@ import { NextRequest } from 'next/server';
 import pool, { query, withTransaction } from '../../src/lib/db';
 import { createSession } from '../../src/lib/auth/session';
 import { can, setAccessOff } from '../../src/lib/access';
-import { createJobCard, recordIncoming, recordOutgoing } from '../../src/lib/ledger';
+import { closeJobCard, createJobCard, recordIncoming, recordOutgoing } from '../../src/lib/ledger';
 import { applyLedgerEdits } from '../../src/lib/ledger-edit';
 import { runSpec } from '../../src/lib/chat/semantic';
 import { lotsByIds } from '../../src/lib/lots-query';
@@ -15,16 +15,21 @@ import { createDispatch } from '../../src/lib/dispatch/dispatches';
 import { getFirmConfig } from '../../src/lib/settings';
 import { PUT as putSettings } from '../../src/app/api/settings/route';
 import { GET as getLots } from '../../src/app/api/lots/route';
+import { GET as getStock } from '../../src/app/api/stock/route';
 import { GET as searchLots } from '../../src/app/api/lots/search/route';
 import { GET as lotLocation } from '../../src/app/api/lots/location/route';
 import { GET as getLedger } from '../../src/app/api/stock/ledger/route';
 import { POST as lotClose } from '../../src/app/api/lots/close/route';
 import { EditProblems } from '../../src/lib/ledger-edit';
-import { applyBackfill, planBackfill } from '../../src/lib/lot-status-backfill';
+import { applyBackfill, backfillPlanFingerprint, planBackfill } from '../../src/lib/lot-status-backfill';
 import { checkOutgoing, commitOutgoingRow } from '../../src/lib/register-import';
 import { newLedgerMemo } from '../../src/lib/ledger';
 import { search } from '../../src/lib/search';
 import { templateById } from '../../src/lib/chat/templates';
+import { createOrder } from '../../src/lib/sales/orders';
+import { manualAllocate } from '../../src/lib/sales/allocate';
+import { GET as getOrderDetail } from '../../src/app/api/orders/[id]/route';
+import { freeLotsForQuality, lotStock } from '../../src/lib/stock';
 
 // Explicitly opt into a disposable local DB. Never load the project's .env here.
 const url = new URL(process.env.DATABASE_URL || 'postgresql://localhost/invalid');
@@ -32,15 +37,16 @@ if (!['localhost', '127.0.0.1'].includes(url.hostname) || !url.pathname.endsWith
 process.env.DB_QUIET = '1';
 
 const id = `st-${randomUUID().slice(0, 8)}`;
-const lot = (n: number) => `${id}-L${n}`.toUpperCase();
+const lot = (n: number) => `${id}-L${String(n).padStart(2, '0')}`.toUpperCase();
 const party = `Status Test Party ${id}`;
 let ownerCookie = '';
 let supCookie = '';
+let testOrderId: number | null = null;
 let overridesBefore: unknown = null;
 const get = (cookie: string, path: string) => new NextRequest(`http://localhost${path}`, { headers: { cookie } });
 const post = (cookie: string, path: string, body: unknown) => new NextRequest(`http://localhost${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = (cookie: string, body: unknown) => new NextRequest('http://localhost/api/settings', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const LOTS = Array.from({ length: 27 }, (_, i) => i + 1);
+const LOTS = Array.from({ length: 30 }, (_, i) => i + 1);
 const balance = async (l: string) => Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [l])).rows[0].bal_m);
 
 async function addLot(l: string, meters: number) {
@@ -60,6 +66,10 @@ before(async () => {
 after(async () => {
   await query('UPDATE app_settings SET access_overrides = $1::jsonb WHERE id = 1', [JSON.stringify(overridesBefore)]);
   setAccessOff({});
+  if (testOrderId !== null) {
+    await query('DELETE FROM allocations WHERE order_id = $1', [testOrderId]);
+    await query('DELETE FROM orders WHERE id = $1', [testOrderId]);
+  }
   const lots = LOTS.map(lot);
   await query('DELETE FROM lot_closures WHERE lot_id = ANY($1::text[])', [lots]);
   await query('DELETE FROM ledger_edits WHERE edited_by = $1', [id]);
@@ -73,6 +83,7 @@ after(async () => {
   await query('DELETE FROM parties WHERE name = $1', [party]);
   await query('DELETE FROM auth_audit WHERE actor_id = ANY($1::text[])', [[id, `${id}-s`]]);
   await query('DELETE FROM auth_sessions WHERE user_id = ANY($1::text[])', [[id, `${id}-s`]]);
+  await query('DELETE FROM supervisor_sections WHERE user_id = $1', [`${id}-s`]);
   await query('DELETE FROM users WHERE id = ANY($1::text[])', [[id, `${id}-s`]]);
   await pool.end();
 });
@@ -218,12 +229,55 @@ test('#5 lot lists and pickers leave closed lots out; the owner lists them under
 });
 
 test('#5 supervisors get no rows of closed lots or closing adjustments from the ledger', async () => {
+  const section = (await query(`SELECT id, name FROM sections WHERE active ORDER BY sort_order, name LIMIT 1`)).rows[0];
+  assert.ok(section, 'test database should have an active section');
+  await query(
+    `INSERT INTO supervisor_sections (user_id, section_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [`${id}-s`, section.id],
+  );
+  await withTransaction((q) => createJobCard(q, { lot_id: lot(1), process: section.name, worker_id: id, meters_in: 100 }));
   const owner = await (await getLedger(get(ownerCookie, `/api/stock/ledger?lot=${lot(5)}`))).json();
   assert.ok(owner.rows.some((r: { kind: string }) => r.kind === 'closing'));
   const sup = await (await getLedger(get(supCookie, `/api/stock/ledger?lot=${lot(5)}`))).json();
   assert.deepEqual(sup.rows, []);
   const supOpen = await (await getLedger(get(supCookie, `/api/stock/ledger?lot=${lot(1)}`))).json();
   assert.ok(supOpen.rows.length > 0);
+});
+
+test('#6 editing meters on a closed lot recalculates and audits its closing adjustment', async () => {
+  const end = await withTransaction((q) => recordOutgoing(q, {
+    lot_id: lot(29), meters: 600, party, entry_status: 'end', moved_by: id,
+  }, { endAllowed: true }));
+
+  const save = (meters: number) => withTransaction((q) => applyLedgerEdits(
+    q, [{ target: 'movement', id: Number(end.id), field: 'meters', value: meters }], id,
+  ));
+  const edited = await save(650);
+  assert.equal(edited.reload, true);
+  assert.deepEqual(edited.adjustments, [{ lot_id: lot(29), adjustment_m: 350 }]);
+  assert.equal(await balance(lot(29)), 0);
+  assert.deepEqual((await closings(lot(29))).map((x) => [x.direction, x.meters]), [['OUT', 350]]);
+
+  const negative = await save(1050);
+  assert.deepEqual(negative.adjustments, [{ lot_id: lot(29), adjustment_m: -50 }]);
+  assert.equal(await balance(lot(29)), 0);
+  assert.deepEqual((await closings(lot(29))).map((x) => [x.direction, x.meters]), [['IN', 50]]);
+
+  const zero = await save(1000);
+  assert.deepEqual(zero.adjustments, [{ lot_id: lot(29), adjustment_m: 0 }]);
+  assert.equal(await balance(lot(29)), 0);
+  assert.deepEqual(await closings(lot(29)), []);
+
+  const audit = await query(
+    `SELECT field, old_value, new_value, edited_by FROM ledger_edits
+     WHERE target = 'lot' AND target_id = $1 AND field = 'closing_adjustment' ORDER BY id`,
+    [lot(29)],
+  );
+  assert.deepEqual(audit.rows, [
+    { field: 'closing_adjustment', old_value: '400', new_value: '350', edited_by: id },
+    { field: 'closing_adjustment', old_value: '350', new_value: '-50', edited_by: id },
+    { field: 'closing_adjustment', old_value: '-50', new_value: '0', edited_by: id },
+  ]);
 });
 
 test('#5 search and chat: closed lots are hidden, the owner is told the lot is closed', async () => {
@@ -233,6 +287,48 @@ test('#5 search and chat: closed lots are hidden, the owner is told the lot is c
   const t = templateById('lot_status')!;
   assert.match((await t.run({ lot: lot(5) }, { role: 'supervisor', sections: [] })).answer, /No lot/);
   assert.match((await t.run({ lot: lot(5) }, { role: 'owner', sections: [] })).answer, /is closed: closed by its End entry/);
+});
+
+test('#5 chat current stock excludes closed lots; supervisors cannot query their history', async () => {
+  const closedLot = lot(28);
+  const quality = `Closed stock ${id}`;
+  await query('UPDATE lots SET quality = $2 WHERE lot_id = $1', [closedLot, quality]);
+  await withTransaction((q) => createJobCard(q, { lot_id: closedLot, process: 'Folding', worker_id: id, meters_in: 100 }));
+  await query("UPDATE job_cards SET status = 'closed', meters_out = 100, ts_closed = now() WHERE lot_id = $1", [closedLot]);
+
+  const owner = { role: 'owner' as const, sections: [] };
+  const supervisor = { role: 'supervisor' as const, sections: ['folding'] };
+  await query('INSERT INTO parties (name) VALUES ($1) ON CONFLICT DO NOTHING', [party]);
+  const created = await withTransaction((q) => createOrder(q, { party, quality, meters: 100, rate_per_m: 1 }, id));
+  testOrderId = created.order.id;
+  await withTransaction((q) => manualAllocate(q, created.order.id, closedLot, 10, id));
+
+  const before = await runSpec({ metric: 'stock', filters: { quality }, period: null }, owner);
+  assert.equal(before.rows[0]?.value, 1000);
+  await query("UPDATE lots SET closed_at = now(), closed_by = $2, close_reason = 'manual', status = 'completed' WHERE lot_id = $1", [closedLot, id]);
+
+  for (const metric of ['stock', 'free_stock'] as const) {
+    const result = await runSpec({ metric, filters: { quality }, period: null }, owner);
+    assert.equal(result.rows[0]?.value, 0);
+  }
+  const summary = await templateById('stock_by_quality')!.run({ quality }, owner);
+  assert.match(summary.answer, /No stock/);
+  assert.deepEqual(await freeLotsForQuality(query, quality), []);
+  assert.equal(await lotStock(query, closedLot), null);
+
+  const ownerHistory = await runSpec({ metric: 'output', filters: { lot: closedLot }, period: null }, owner);
+  assert.equal(ownerHistory.rows[0]?.value, 100);
+  const supervisorHistory = await runSpec({ metric: 'output', filters: { lot: closedLot }, period: null }, supervisor);
+  assert.equal(supervisorHistory.rows[0]?.value, 0);
+  const supervisorOutput = await runSpec({ metric: 'output', filters: { lot: closedLot }, period: null }, supervisor);
+  assert.equal(supervisorOutput.rows[0]?.value, 0);
+
+  const detailRequest = get(ownerCookie, `/api/orders/${created.order.id}`);
+  const routeContext = { params: Promise.resolve({ id: String(created.order.id) }) };
+  const ownerOrder = await (await getOrderDetail(detailRequest, routeContext)).json();
+  assert.ok(ownerOrder.allocations.some((a: { lot_id: string }) => a.lot_id === closedLot));
+  const supervisorOrder = await (await getOrderDetail(get(supCookie, `/api/orders/${created.order.id}`), routeContext)).json();
+  assert.ok(supervisorOrder.allocations.every((a: { lot_id: string }) => a.lot_id !== closedLot));
 });
 
 // ---------- #6 edit status, close by hand, reopen ----------
@@ -306,7 +402,7 @@ async function oldRegisterRow(l: string, meters: number, code: string | null, da
 }
 const statusOf = async (mv: number) => (await query('SELECT entry_status FROM stock_movements WHERE id = $1', [mv])).rows[0].entry_status;
 
-test('#7 backfill: dry run lists what would close; apply sets statuses and closes on the E / A date', async () => {
+test('#7 backfill: dry run lists what would close; apply maps confirmed codes and reviews A', async () => {
   // Register lots came in before they were sold: date their incoming entry earlier than the sales below.
   await query("UPDATE stock_movements SET ts = '2026-07-01 12:00' WHERE lot_id = ANY($1::text[]) AND direction = 'IN'", [[15, 16, 17, 18].map(lot)]);
   const s1 = await oldRegisterRow(lot(15), 300, 'S', '2026-08-01', `${id}-B1`);
@@ -322,21 +418,31 @@ test('#7 backfill: dry run lists what would close; apply sets statuses and close
   assert.deepEqual([...mine.keys()].sort(), [lot(15), lot(16), lot(17)]);
   assert.deepEqual({ ...mine.get(lot(15)), why: null }, { ...mine.get(lot(15))!, action: 'close', adjustment: 100, end_movement_id: e1, end_date: '2026-08-09', why: null });
   assert.equal(mine.get(lot(16))!.adjustment, 0);
+  assert.equal(mine.get(lot(16))!.action, 'review');
+  assert.match(mine.get(lot(16))!.why ?? '', /A is unconfirmed/);
   assert.equal(mine.get(lot(17))!.action, 'review');
+  assert.ok(plan.unknown.some((u) => u.code === 'A'));
   assert.equal(await statusOf(s1), null); // dry run wrote nothing
   assert.ok(plan.unknown.some((u) => u.code === 'X'));
 
-  await withTransaction((q) => applyBackfill(q, id));
-  assert.deepEqual(await Promise.all([s1, r1, e1, a1].map(statusOf)), ['running', 'running', 'end', 'end']);
+  const reviewedFingerprint = backfillPlanFingerprint(plan);
+  await assert.rejects(
+    withTransaction((q) => applyBackfill(q, id, '0'.repeat(64))),
+    /changed after review/,
+  );
+  assert.equal(await statusOf(s1), null); // a stale / incorrect confirmation also writes nothing
+  await withTransaction((q) => applyBackfill(q, id, reviewedFingerprint));
+  assert.deepEqual(await Promise.all([s1, r1, e1, a1].map(statusOf)), ['running', 'running', 'end', null]);
   assert.deepEqual(await Promise.all([e2, r2, x1].map(statusOf)), [null, 'running', null]); // lot 17 left for review; X unknown
   const l15 = await lotRow(lot(15));
   assert.equal(l15.close_reason, 'register');
   assert.equal(new Date(l15.closed_at).toLocaleDateString('en-CA'), '2026-08-09');
   assert.deepEqual((await closings(lot(15))).map((x) => [x.direction, x.meters, x.d]), [['OUT', 100, '2026-08-09']]);
-  assert.ok((await lotRow(lot(16))).closed_at);
+  assert.equal((await lotRow(lot(16))).closed_at, null); // A remains open until its meaning is confirmed
   assert.equal((await lotRow(lot(17))).closed_at, null);
 
-  const again = await withTransaction((q) => applyBackfill(q, id));
+  const againPlan = await planBackfill(query);
+  const again = await withTransaction((q) => applyBackfill(q, id, backfillPlanFingerprint(againPlan)));
   assert.equal(again.closed.filter((c) => c.lot_id.startsWith(id.toUpperCase())).length, 0);
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM lot_closures WHERE lot_id = $1', [lot(15)])).rows[0].n, 1);
 });
@@ -347,10 +453,19 @@ test('#7 a new sales-register import sets the status from LOT S and closes the l
   await withTransaction((q) => commitOutgoingRow(q, row(2, null, 100), id, newLedgerMemo()));
   await withTransaction((q) => commitOutgoingRow(q, row(3, 'E', 500), id, newLedgerMemo()));
   const st = (await query("SELECT entry_status FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal' ORDER BY id", [lot(19)])).rows.map((x) => x.entry_status);
-  assert.deepEqual(st, ['running', 'running', 'end']);
+  assert.deepEqual(st, ['running', null, 'end']);
   assert.equal((await lotRow(lot(19))).close_reason, 'register');
   assert.equal(await balance(lot(19)), 0);
   await assert.rejects(withTransaction((q) => commitOutgoingRow(q, row(4, 'R', 10), id, newLedgerMemo())), /is closed/);
+});
+
+test('#7 a new A-coded sales-register row stays unmapped and does not close its lot', async () => {
+  const row = { ref: `${'ef'.repeat(10)}:1`, date: '2026-10-01', lot_id: lot(21), meters: 100, bill_no: `${id}-A1`, lot_status_code: 'A' };
+  await withTransaction((q) => commitOutgoingRow(q, row, id, newLedgerMemo()));
+  const movement = (await query("SELECT entry_status, lot_status_code FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal'", [lot(21)])).rows[0];
+  assert.deepEqual(movement, { entry_status: null, lot_status_code: 'A' });
+  assert.equal((await lotRow(lot(21))).closed_at, null);
+  assert.equal(await balance(lot(21)), 900);
 });
 
 // ---------- closing by hand marks the last sale End ----------
@@ -439,16 +554,24 @@ test('chat challan lookup: entries of closed lots only for the owner', async () 
 });
 
 
-test('receipt → first sale → manual End: zero and negative balances stay Running until End', async () => {
+test('lot stock status follows open job cards, hold, and closure rather than sales history', async () => {
   const stockStatus = async () => (await lotsByIds(query, [lot(26)]))[0].stock_status;
   assert.equal(await stockStatus(), 'packed');
   await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 1000, party }));
   assert.equal(await balance(lot(26)), 0);
-  assert.equal(await stockStatus(), 'running');
+  assert.equal(await stockStatus(), 'packed');
   assert.equal((await lotRow(lot(26))).closed_at, null);
   const sale = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 50, party }));
   assert.equal(await balance(lot(26)), -50);
+  assert.equal(await stockStatus(), 'packed');
+  const card = await withTransaction((q) => createJobCard(q, { lot_id: lot(26), process: 'Folding', worker_id: id, meters_in: 100 }));
   assert.equal(await stockStatus(), 'running');
+  await query("UPDATE lots SET status = 'hold' WHERE lot_id = $1", [lot(26)]);
+  assert.equal(await stockStatus(), 'hold');
+  await withTransaction((q) => closeJobCard(q, { id: card.id, meters_out: 95 }));
+  assert.equal(await stockStatus(), 'hold');
+  await query("UPDATE lots SET status = 'active' WHERE lot_id = $1", [lot(26)]);
+  assert.equal(await stockStatus(), 'packed');
   const open = await (await getLots(get(ownerCookie, `/api/lots?q=${lot(26)}`))).json();
   assert.equal(open.rows.length, 1);
   await withTransaction((q) => applyLedgerEdits(q, [edit(Number(sale.id), 'end')], id, { endAllowed: true }));
@@ -459,17 +582,17 @@ test('receipt → first sale → manual End: zero and negative balances stay Run
     assert.deepEqual(hidden.rows, []);
   }
   await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(26), action: 'reopen' }));
-  assert.equal(await stockStatus(), 'running');
+  assert.equal(await stockStatus(), 'packed');
   assert.equal(await balance(lot(26)), -50);
   await addLot(lot(26), 100);
-  assert.equal(await stockStatus(), 'running'); // a later receipt does not erase sales history
+  assert.equal(await stockStatus(), 'packed'); // a later receipt does not imply active floor work
 });
 
-test('opening adjustments do not start a lot; old sales display as Running without rewriting history', async () => {
+test('opening adjustments do not start a lot; old sales show Running as entries without changing the stock bucket', async () => {
   await query("INSERT INTO stock_movements (lot_id, direction, meters, kind) VALUES ($1, 'OUT', 10, 'adjustment')", [lot(27)]);
   assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'packed');
   await query("INSERT INTO stock_movements (lot_id, direction, meters, entry_status) VALUES ($1, 'OUT', 10, NULL), ($1, 'OUT', 10, 'packed')", [lot(27)]);
-  assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'running');
+  assert.equal((await lotsByIds(query, [lot(27)]))[0].stock_status, 'packed');
   const f = { q: null, direction: null, status: null, quality: null, design: null, lot: lot(27), party: null, from: null, to: null };
   const page = await ledgerPage(query, f, { limit: 50, cursor: null });
   assert.equal(page.rows.find((r) => r.direction === 'IN')?.entry_status, 'packed');
@@ -478,4 +601,44 @@ test('opening adjustments do not start a lot; old sales display as Running witho
   const sales = await ledgerPage(query, { ...f, status: 'running' }, { limit: 50, cursor: null });
   assert.equal(sales.rows.length, 2);
   await assert.rejects(withTransaction((q) => applyLedgerEdits(q, [edit(sales.rows[0].id, 'packed')], id)), /Packed is for incoming/);
+});
+
+test('stock status totals add up and supervisors only see their section lots', async () => {
+  const section = (await query(`SELECT id, name FROM sections WHERE active ORDER BY sort_order, name LIMIT 1`)).rows[0];
+  assert.ok(section, 'test database should have an active section');
+  await query(
+    `INSERT INTO supervisor_sections (user_id, section_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [`${id}-s`, section.id],
+  );
+  const normalizedSection = String(section.name).replace(/\s*section\s*$/i, '').trim().toLowerCase();
+  const snapshot = async () => (await (await getStock(get(supCookie, '/api/stock'))).json()).stockSummary;
+  const before = await snapshot();
+  const summaryTemplate = templateById('stock_summary')!;
+  const chatBefore = await summaryTemplate.run({}, { role: 'supervisor', sections: [normalizedSection] });
+  await withTransaction((q) => createJobCard(q, { lot_id: lot(30), process: section.name, worker_id: id, meters_in: 500 }));
+
+  const scoped = await snapshot();
+  assert.equal(scoped.on_hand_m, before.on_hand_m + 1000);
+  assert.equal(scoped.running_m, before.running_m + 1000);
+  assert.equal(scoped.packed_m + scoped.running_m + scoped.on_hold_m, scoped.on_hand_m);
+  const chatAfter = await summaryTemplate.run({}, { role: 'supervisor', sections: [normalizedSection] });
+  const runningBefore = Number(chatBefore.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
+  const runningAfter = Number(chatAfter.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
+  assert.equal(runningAfter - runningBefore, 1000);
+
+  const running = await (await getLots(get(supCookie, `/api/lots?q=${lot(30)}&stock_status=running`))).json();
+  assert.equal(running.rows.length, 1);
+  const unrelated = await (await getLots(get(supCookie, `/api/lots?q=${lot(28)}`))).json();
+  assert.deepEqual(unrelated.rows, []);
+  const unrelatedLedger = await (await getLedger(get(supCookie, `/api/stock/ledger?lot=${lot(28)}`))).json();
+  assert.deepEqual(unrelatedLedger.rows, []);
+  const scopedLedger = await (await getLedger(get(supCookie, `/api/stock/ledger?lot=${lot(30)}`))).json();
+  assert.ok(scopedLedger.rows.length > 0);
+
+  const cardId = Number((await query(`SELECT id FROM job_cards WHERE lot_id = $1 ORDER BY id DESC LIMIT 1`, [lot(30)])).rows[0].id);
+  await withTransaction((q) => closeJobCard(q, { id: cardId, meters_out: 490 }));
+  const afterClose = await snapshot();
+  assert.equal(afterClose.packed_m, before.packed_m + 1000);
+  assert.equal(afterClose.running_m, before.running_m);
+  assert.equal(afterClose.packed_m + afterClose.running_m + afterClose.on_hold_m, afterClose.on_hand_m);
 });

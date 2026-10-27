@@ -9,7 +9,8 @@ const LOTS_SQL = `
          l.bal_m AS balance, -- balance / location / last move are kept on the lot row by triggers (migration 010)
          COALESCE(a.res, 0) AS reserved,
          l.cur_location AS location,
-         l.last_move_at AS last_move
+         l.last_move_at AS last_move,
+         l.closed_at
   FROM lots l
   LEFT JOIN (SELECT lot_id, SUM(meters - dispatched_m) AS res FROM allocations WHERE status = 'reserved' GROUP BY lot_id) a ON a.lot_id = l.lot_id`;
 
@@ -23,7 +24,8 @@ const toLot = (r: Record<string, unknown>): LotStock => {
 export async function freeLotsForQuality(q: Q, quality: string, design?: string | null): Promise<LotStock[]> {
   const r = await q(
     `SELECT * FROM (${LOTS_SQL}) x
-     WHERE lower(x.quality) = lower($1) AND ($2::text IS NULL OR lower(x.design) = lower($2)) AND x.balance - x.reserved > 0
+     WHERE x.closed_at IS NULL AND lower(x.quality) = lower($1)
+       AND ($2::text IS NULL OR lower(x.design) = lower($2)) AND x.balance - x.reserved > 0
      ORDER BY x.last_move NULLS LAST, x.lot_id`,
     [quality, design ?? null],
   );
@@ -31,20 +33,26 @@ export async function freeLotsForQuality(q: Q, quality: string, design?: string 
 }
 
 export async function lotStock(q: Q, lotId: string): Promise<LotStock | null> {
+  const r = await q(`SELECT * FROM (${LOTS_SQL}) x WHERE x.lot_id = $1 AND x.closed_at IS NULL`, [lotId]);
+  return r.rows[0] ? toLot(r.rows[0]) : null;
+}
+
+async function lotStockForReservationTrim(q: Q, lotId: string): Promise<LotStock | null> {
   const r = await q(`SELECT * FROM (${LOTS_SQL}) x WHERE x.lot_id = $1`, [lotId]);
   return r.rows[0] ? toLot(r.rows[0]) : null;
 }
 
 /** Every lot with a positive balance (for inventory scans). */
 export async function allLotStock(q: Q): Promise<LotStock[]> {
-  const r = await q(`SELECT * FROM (${LOTS_SQL}) x WHERE x.balance > 0 ORDER BY x.quality, x.lot_id`);
+  const r = await q(`SELECT * FROM (${LOTS_SQL}) x WHERE x.closed_at IS NULL AND x.balance > 0 ORDER BY x.quality, x.lot_id`);
   return r.rows.map(toLot);
 }
 
 /** Free meters per quality. */
 export async function freeByQuality(q: Q): Promise<{ quality: string; balance: number; reserved: number; free: number }[]> {
   const r = await q(
-    `SELECT quality, SUM(balance) AS balance, SUM(reserved) AS reserved FROM (${LOTS_SQL}) x WHERE x.balance > 0 GROUP BY quality ORDER BY quality`,
+    `SELECT quality, SUM(balance) AS balance, SUM(reserved) AS reserved FROM (${LOTS_SQL}) x
+     WHERE x.closed_at IS NULL AND x.balance > 0 GROUP BY quality ORDER BY quality`,
   );
   return r.rows.map((x) => ({ quality: x.quality, balance: Number(x.balance), reserved: Number(x.reserved), free: Math.round((Number(x.balance) - Number(x.reserved)) * 100) / 100 }));
 }
@@ -55,7 +63,7 @@ export async function freeByQuality(q: Q): Promise<{ quality: string; balance: n
  * Returns the orders whose reservation was cut, so callers can tell someone.
  */
 export async function trimReservations(q: Q, lotId: string): Promise<{ order_id: number; cut: number }[]> {
-  const s = await lotStock(q, lotId);
+  const s = await lotStockForReservationTrim(q, lotId);
   if (!s || s.reserved <= Math.max(0, s.balance) + 0.001) return [];
   let excess = Math.round((s.reserved - Math.max(0, s.balance)) * 100) / 100;
   const rows = await q(

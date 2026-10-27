@@ -19,7 +19,8 @@ const FREE = `(SELECT l.lot_id, l.quality, l.design,
    (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS location
  FROM lots l
  LEFT JOIN (SELECT lot_id, SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END) AS bal FROM stock_movements GROUP BY lot_id) b ON b.lot_id = l.lot_id
- LEFT JOIN (SELECT lot_id, SUM(meters - dispatched_m) AS res FROM allocations WHERE status = 'reserved' GROUP BY lot_id) a ON a.lot_id = l.lot_id) fs`;
+ LEFT JOIN (SELECT lot_id, SUM(meters - dispatched_m) AS res FROM allocations WHERE status = 'reserved' GROUP BY lot_id) a ON a.lot_id = l.lot_id
+ WHERE l.closed_at IS NULL) fs`;
 
 // Per party: invoices (not cancelled) − payments, and the part already past its due date
 // (payments settle the oldest invoices first, so overdue = past-due invoices − all payments, ≥ 0).
@@ -68,7 +69,7 @@ export const EXTRA_METRICS: Record<string, MetricDef> = {
   reserved: {
     title: 'Reserved for orders', describe: 'meters of stock reserved (allocated) for open orders', unit: 'm',
     from: 'allocations a JOIN orders o ON o.id = a.order_id JOIN parties p ON p.id = o.party_id JOIN lots l ON l.lot_id = a.lot_id',
-    where: `a.status = 'reserved'`, agg: 'SUM(a.meters - a.dispatched_m)',
+    where: `a.status = 'reserved'`, agg: 'SUM(a.meters - a.dispatched_m)', closedLotScoped: 'l.closed_at IS NULL',
     dims: { party: 'p.name', quality: 'l.quality', lot: 'a.lot_id' }, filters: { party: 'p.name', quality: 'l.quality', lot: 'a.lot_id' },
   },
 
