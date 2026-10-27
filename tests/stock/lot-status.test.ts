@@ -20,7 +20,7 @@ import { GET as lotLocation } from '../../src/app/api/lots/location/route';
 import { GET as getLedger } from '../../src/app/api/stock/ledger/route';
 import { POST as lotClose } from '../../src/app/api/lots/close/route';
 import { EditProblems } from '../../src/lib/ledger-edit';
-import { applyBackfill, planBackfill } from '../../src/lib/lot-status-backfill';
+import { applyBackfill, backfillPlanFingerprint, planBackfill } from '../../src/lib/lot-status-backfill';
 import { checkOutgoing, commitOutgoingRow } from '../../src/lib/register-import';
 import { newLedgerMemo } from '../../src/lib/ledger';
 import { search } from '../../src/lib/search';
@@ -393,7 +393,7 @@ async function oldRegisterRow(l: string, meters: number, code: string | null, da
 }
 const statusOf = async (mv: number) => (await query('SELECT entry_status FROM stock_movements WHERE id = $1', [mv])).rows[0].entry_status;
 
-test('#7 backfill: dry run lists what would close; apply sets statuses and closes on the E / A date', async () => {
+test('#7 backfill: dry run lists what would close; apply maps confirmed codes and reviews A', async () => {
   // Register lots came in before they were sold: date their incoming entry earlier than the sales below.
   await query("UPDATE stock_movements SET ts = '2026-07-01 12:00' WHERE lot_id = ANY($1::text[]) AND direction = 'IN'", [[15, 16, 17, 18].map(lot)]);
   const s1 = await oldRegisterRow(lot(15), 300, 'S', '2026-08-01', `${id}-B1`);
@@ -409,21 +409,31 @@ test('#7 backfill: dry run lists what would close; apply sets statuses and close
   assert.deepEqual([...mine.keys()].sort(), [lot(15), lot(16), lot(17)]);
   assert.deepEqual({ ...mine.get(lot(15)), why: null }, { ...mine.get(lot(15))!, action: 'close', adjustment: 100, end_movement_id: e1, end_date: '2026-08-09', why: null });
   assert.equal(mine.get(lot(16))!.adjustment, 0);
+  assert.equal(mine.get(lot(16))!.action, 'review');
+  assert.match(mine.get(lot(16))!.why ?? '', /A is unconfirmed/);
   assert.equal(mine.get(lot(17))!.action, 'review');
+  assert.ok(plan.unknown.some((u) => u.code === 'A'));
   assert.equal(await statusOf(s1), null); // dry run wrote nothing
   assert.ok(plan.unknown.some((u) => u.code === 'X'));
 
-  await withTransaction((q) => applyBackfill(q, id));
-  assert.deepEqual(await Promise.all([s1, r1, e1, a1].map(statusOf)), ['running', 'running', 'end', 'end']);
+  const reviewedFingerprint = backfillPlanFingerprint(plan);
+  await assert.rejects(
+    withTransaction((q) => applyBackfill(q, id, '0'.repeat(64))),
+    /changed after review/,
+  );
+  assert.equal(await statusOf(s1), null); // a stale / incorrect confirmation also writes nothing
+  await withTransaction((q) => applyBackfill(q, id, reviewedFingerprint));
+  assert.deepEqual(await Promise.all([s1, r1, e1, a1].map(statusOf)), ['running', 'running', 'end', null]);
   assert.deepEqual(await Promise.all([e2, r2, x1].map(statusOf)), [null, 'running', null]); // lot 17 left for review; X unknown
   const l15 = await lotRow(lot(15));
   assert.equal(l15.close_reason, 'register');
   assert.equal(new Date(l15.closed_at).toLocaleDateString('en-CA'), '2026-08-09');
   assert.deepEqual((await closings(lot(15))).map((x) => [x.direction, x.meters, x.d]), [['OUT', 100, '2026-08-09']]);
-  assert.ok((await lotRow(lot(16))).closed_at);
+  assert.equal((await lotRow(lot(16))).closed_at, null); // A remains open until its meaning is confirmed
   assert.equal((await lotRow(lot(17))).closed_at, null);
 
-  const again = await withTransaction((q) => applyBackfill(q, id));
+  const againPlan = await planBackfill(query);
+  const again = await withTransaction((q) => applyBackfill(q, id, backfillPlanFingerprint(againPlan)));
   assert.equal(again.closed.filter((c) => c.lot_id.startsWith(id.toUpperCase())).length, 0);
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM lot_closures WHERE lot_id = $1', [lot(15)])).rows[0].n, 1);
 });
@@ -438,6 +448,15 @@ test('#7 a new sales-register import sets the status from LOT S and closes the l
   assert.equal((await lotRow(lot(19))).close_reason, 'register');
   assert.equal(await balance(lot(19)), 0);
   await assert.rejects(withTransaction((q) => commitOutgoingRow(q, row(4, 'R', 10), id, newLedgerMemo())), /is closed/);
+});
+
+test('#7 a new A-coded sales-register row stays unmapped and does not close its lot', async () => {
+  const row = { ref: `${'ef'.repeat(10)}:1`, date: '2026-10-01', lot_id: lot(21), meters: 100, bill_no: `${id}-A1`, lot_status_code: 'A' };
+  await withTransaction((q) => commitOutgoingRow(q, row, id, newLedgerMemo()));
+  const movement = (await query("SELECT entry_status, lot_status_code FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal'", [lot(21)])).rows[0];
+  assert.deepEqual(movement, { entry_status: null, lot_status_code: 'A' });
+  assert.equal((await lotRow(lot(21))).closed_at, null);
+  assert.equal(await balance(lot(21)), 900);
 });
 
 // ---------- closing by hand marks the last sale End ----------
