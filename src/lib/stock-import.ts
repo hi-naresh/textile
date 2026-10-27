@@ -132,7 +132,7 @@ export function importTemplate(wb: ExcelJS.Workbook, markets: { id: number; code
     'One row per challan. Direction IN = received, OUT = dispatched. Keep the column headings as they are.',
     `SR No: the number from your paper register. Must not repeat within IN (or within OUT). Next free now: IN ${nextSr.IN}, OUT ${nextSr.OUT}. Leave blank if not used.`,
     'IN: Lot No, Grey meters and/or Finished meters, Mill, Weaver, Location. Quality + Design only for a new lot.',
-    `Location (IN): market code, shop no., pipe no. — e.g. "${m} 245 · Pipe 3", "${m} 245 3" or "${m} 245" (pipe optional, 1 to 999). The market's full name works too.${locations.length ? ` Markets: ${marketList(markets)}.` : ''} A new shop no. is added to the market. Godown, Shop and Floor are no longer used.`,
+    `Location (IN): market code, shop no., pipe no. — e.g. "${m} 245 · Pipe 3", "${m} 245 3" or "${m} 245" (pipes optional, letters or digits; several pipes: "LM 245 · Pipe A25, B3"). The market's full name works too.${locations.length ? ` Markets: ${marketList(markets)}.` : ''} A new shop no. is added to the market. Godown, Shop and Floor are no longer used.`,
     'OUT: Lot No, Meters, Party. The lot must have enough stock at that row (rows are applied top to bottom).',
     'Pieces (taka): whole number, optional, for IN and OUT.',
     'Lot and challan numbers: letters, digits, "-" and "/" only. Names are matched to spellings already used.',

@@ -86,7 +86,7 @@ export async function canonicalLotAttr(q: Q, col: 'quality' | 'design', value: s
 export const SYSTEM_LOCATIONS = { floor: 'Floor', dispatched: 'Dispatched' } as const;
 
 /** A checked market location: the label stored in lot_locations.location + its structured copy. */
-export interface Place { location: string; market_id: number; shop_no: string; pipe_no: number | null }
+export interface Place { location: string; market_id: number; shop_no: string; pipe_no: string | null }
 
 export interface MarketRow { id: number; name: string; code: string; active: boolean }
 export async function marketRows(q: Q): Promise<MarketRow[]> {

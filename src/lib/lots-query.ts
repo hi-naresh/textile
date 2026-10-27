@@ -11,6 +11,25 @@ import type { StockStatus } from './types';
 import { COOKIE } from './auth/config';
 import { marketSearchPatterns } from './markets';
 
+/** Location filter on a lot's CURRENT place (lots.cur_location): a market code ("LM"), optionally a shop ("245"),
+ *  or "@floor" / "@dispatched" / "@none" (no place recorded). Returns a SQL condition or null. */
+export function locationCondition(market: string | null | undefined, shop: string | null | undefined, p: (v: unknown) => string): string | null {
+  const m = (market ?? '').trim();
+  if (!m) return null;
+  if (m === '@floor') return `l.cur_location = 'Floor'`;
+  if (m === '@dispatched') return `l.cur_location = 'Dispatched'`;
+  if (m === '@none') return `l.cur_location IS NULL`;
+  const code = m.toUpperCase();
+  if (!/^[A-Z0-9]{1,6}$/.test(code)) return 'false';
+  const sh = (shop ?? '').replace(/\s+/g, '').toUpperCase().replace(/^0+(?=\d)/, '');
+  if (sh) {
+    if (!/^[1-9]\d{0,6}[A-Z]?$/.test(sh)) return 'false';
+    const exact = p(`${code} ${sh}`);
+    return `(l.cur_location = ${exact} OR l.cur_location LIKE ${p(`${code} ${sh} ·%`)})`;
+  }
+  return `l.cur_location LIKE ${p(`${code} %`)}`;
+}
+
 /** Must match idx_lots_search_trgm in scripts/migrations/010_stock_state_and_search.sql exactly. */
 export const LOT_DOC = `lower(l.lot_id::text || ' ' || l.quality::text || ' ' || l.design::text || ' ' || COALESCE(l.cur_location, '')::text)`;
 /** With COLLATE "C": must match idx_lots_lot_c (prefix LIKE + ordering from the index). */
@@ -70,8 +89,15 @@ const clip = (v: string | null | undefined, max = 100) => {
 };
 
 export interface LotFilters {
-  q: string; status: string; inStock: boolean; quality: string; closed?: boolean;
-  stockStatus?: StockStatus | ''; scopeUserId?: string | null;
+  q: string;
+  status: string;
+  inStock: boolean;
+  quality: string;
+  closed?: boolean;
+  stockStatus?: StockStatus | '';
+  scopeUserId?: string | null;
+  market?: string;
+  shop?: string;
 } // closed: the owner's Closed lots view
 export const LOT_STATUSES = ['active', 'completed', 'dispatched', 'hold'];
 const STOCK_STATUSES: StockStatus[] = ['packed', 'running', 'hold', 'end'];
@@ -86,6 +112,8 @@ export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
     closed: sp.get('closed') === '1',
     stockStatus: STOCK_STATUSES.includes(sp.get('stock_status') as StockStatus) ? sp.get('stock_status') as StockStatus : '',
     scopeUserId: null,
+    market: clip(sp.get('market'), 12),
+    shop: clip(sp.get('shop'), 10),
   };
 }
 
@@ -110,6 +138,8 @@ function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> 
     )`);
   }
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
+  const lc = locationCondition(f.market, f.shop, p);
+  if (lc) parts.push(lc);
   for (const word of f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6)) {
     const w = `${LOT_DOC} LIKE ${p(`%${likeEscape(word)}%`)}`;
     const mk = (alts.get(word) ?? []).map((x) => ` OR ${LOT_DOC} LIKE ${p(x)}`).join('');
@@ -228,4 +258,27 @@ export function startEarly<T>(req: NextRequest, fn: () => Promise<T>): Promise<T
   const p = fn();
   p.catch(() => {}); // an unauthorised caller never awaits it
   return p;
+}
+
+/** Totals for the filtered lots (the "Lots & balance" cards): no paging, one aggregate. */
+export async function lotsSummary(q: Q, f: LotFilters) {
+  const params: unknown[] = [];
+  const parts = lotWhere(f, params, await lotAlts(q, f));
+  const r = await q(
+    `SELECT count(*)::int AS lots,
+            count(*) FILTER (WHERE l.bal_m > 0)::int AS in_stock_lots,
+            COALESCE(SUM(l.bal_m) FILTER (WHERE l.bal_m > 0), 0) AS on_hand_m,
+            COALESCE(SUM(l.in_total_m), 0) AS in_m,
+            COALESCE(SUM(l.out_total_m), 0) AS out_m,
+            count(DISTINCT lower(l.quality))::int AS qualities,
+            count(*) FILTER (WHERE l.bal_m > 0 AND NOT EXISTS (SELECT 1 FROM stock_movements s WHERE s.lot_id = l.lot_id AND s.direction = 'OUT' AND s.kind = 'normal'))::int AS packed_lots,
+            COALESCE(SUM(l.final_meters), 0) AS final_m
+       FROM lots l ${parts.length ? `WHERE ${parts.join(' AND ')}` : ''}`,
+    params,
+  );
+  const x = r.rows[0];
+  return {
+    lots: Number(x.lots), in_stock_lots: Number(x.in_stock_lots), on_hand_m: Number(x.on_hand_m), in_m: Number(x.in_m), out_m: Number(x.out_m),
+    qualities: Number(x.qualities), packed_lots: Number(x.packed_lots), running_lots: Number(x.in_stock_lots) - Number(x.packed_lots), final_m: Number(x.final_m),
+  };
 }

@@ -1,5 +1,7 @@
 'use client';
 
+import { useQualityCatalog } from './QualityCatalog';
+import { FinalMetersField } from '../FinalMeters';
 import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, PageHead, Pill, Segmented, Track, dayTime, fmt, inr } from '../ui';
@@ -147,7 +149,7 @@ export function ReviewQueue({ ctx }: { ctx: Ctx }) {
   const act = async (fn: () => Promise<boolean>) => { setBusy(true); const ok = await fn(); setBusy(false); if (ok) setSelId(null); };
   const arrivalLoc = sel && arrival?.id === sel.id ? arrival.loc : '';
   const confirm = () => {
-    if (sel && arrival?.id === sel.id && !arrival.done) { d.showToast('Finish the location (shop no., pipe no. 1 to 999) or pick "Not now".', 'warning'); return; }
+    if (sel && arrival?.id === sel.id && !arrival.done) { d.showToast('Finish the location (shop no., pipe nos.) or pick "Not now".', 'warning'); return; }
     if (!editing) return act(() => d.confirmCapture(role, sel!, undefined, reviewSeconds(), arrivalLoc));
     const out: Record<string, unknown> = { ...data };
     keys.forEach((k) => {
@@ -314,7 +316,7 @@ export function Allot({ ctx }: { ctx: Ctx }) {
 
 // ---------------- Manual stock entry (owner) ----------------
 const todayDateIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', entry_status: 'running', date: '' };
+const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', entry_status: 'running', date: '', final_meters: '' };
 
 interface SrInfo { next: number; taken?: { lot_id: string; ts: string } | null; sr?: number }
 
@@ -336,6 +338,12 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const grey = parseFloat(f.grey_meters);
   const fin = parseFloat(f.finished_meters);
   const diff = Number.isFinite(grey) && Number.isFinite(fin) && grey > 0 ? ((grey - fin) / grey) * 100 : null;
+  const shortM = diff != null ? Math.round((grey - fin) * 100) / 100 : null;
+  // Quality catalog: a new lot may only use a catalog quality (checked again on the server).
+  const catalog = useQualityCatalog(d.stockRev).active;
+  const qualityTyped = f.quality.replace(/\s+/g, ' ').trim();
+  const qualityHit = catalog?.find((x) => x.toLowerCase() === qualityTyped.toLowerCase()) ?? null;
+  const qualityBad = !!qualityTyped && catalog != null && !qualityHit;
 
   // Suggest the next SR no. (last + 1) for this direction; the person can still type another.
   useEffect(() => {
@@ -391,8 +399,11 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     if (piecesBad) return d.showToast('Pieces (taka) must be a whole number.', 'warning');
     if (isIn && !entry.grey_meters && !entry.finished_meters) return d.showToast('Enter grey meters or finished meters.', 'warning');
     if (isIn && !entry.mill_name.trim()) return d.showToast('Mill name is required.', 'warning');
-    if (isIn && !entry.location) return d.showToast('Pick the location: market and shop no. (pipe no. if any, 1 to 999).', 'warning');
+    if (isIn && !entry.location) return d.showToast('Pick the location: market and shop no. (pipe nos. if any, like 3 or A25).', 'warning');
     if (isIn && lotChecked && !known && (!entry.quality.trim() || !entry.design.trim())) return d.showToast('New lot: enter quality and design.', 'warning');
+    if (isIn && lotChecked && !known && qualityBad) return d.showToast(`Quality "${qualityTyped}" is not in the quality catalog. Pick one from the list, or add it in Stock ledger → Quality catalog.`, 'warning');
+    if (isIn && qualityHit) entry.quality = qualityHit;
+    if (!isIn && entry.entry_status !== 'end') entry.final_meters = '';
     if (!isIn && (!entry.meters || !entry.party.trim())) return d.showToast('Meters and party (client) are required.', 'warning');
     if (moreBad) return d.showToast(moreBad, 'warning');
     setBusy(true);
@@ -442,7 +453,8 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <label className="fld">Grey meters<input className="num" inputMode="decimal" value={f.grey_meters} onChange={set('grey_meters')} placeholder="0.0" /></label>
             <label className="fld">Finished meters<input className="num" inputMode="decimal" value={f.finished_meters} onChange={set('finished_meters')} placeholder="0.0" /></label>
           </div>
-          <span className="muted small hint">Stock is counted in finished meters (grey if finished isn’t known yet).{diff != null ? ` Grey → finished difference: ${diff.toFixed(1)}%.` : ''}</span>
+          {shortM != null && <span className={`sf-shortage ${shortM > 0 ? 'warn' : ''}`}>Shortage: {fmt(shortM, 2)} m ({diff!.toFixed(2)}%)</span>}
+          <span className="muted small hint">Stock is counted in finished meters (grey if finished isn’t known yet). The shortage is saved as the lot’s %; when the lot ends you can update it with the final meters.</span>
           <div className="two-col">
             {piecesField}
             <label className="fld">Challan no.<input className="num" value={f.source_doc} onChange={set('source_doc')} /></label>
@@ -462,18 +474,13 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
           </div>
           {!known && f.lot_id.trim() && lotChecked && (
             <div className="two-col">
-              <label className="fld">Quality (new lot)<input name="quality" value={f.quality} onChange={set('quality')} /></label>
+              <label className="fld">Quality (new lot)<input name="quality" list="quality-catalog" value={f.quality} onChange={set('quality')} autoComplete="off" aria-invalid={qualityBad} placeholder="Type the first letter" />
+                <datalist id="quality-catalog">{(catalog ?? []).map((x) => <option key={x} value={x} />)}</datalist>
+                {qualityBad && <span className="err small">Not in the quality catalog. Pick from the list{role === 'owner' || role === 'supervisor' ? ' or add it in Stock ledger → Quality catalog' : ''}.</span>}
+              </label>
               <label className="fld">Design (new lot)<input name="design" value={f.design} onChange={set('design')} /></label>
             </div>
           )}
-          <details className="sf-more">
-            <summary>More fields (optional)</summary>
-            <div className="two-col">
-              <label className="fld">% (register)<input className="num" inputMode="decimal" value={f.register_pct ?? ''} onChange={set('register_pct')} placeholder="e.g. 9.55" /></label>
-              <label className="fld">Location code<input value={f.loc_code ?? ''} onChange={set('loc_code')} placeholder="e.g. 212 or 142+143" autoComplete="off" /></label>
-            </div>
-            <span className="muted small hint">As written in your Incoming register. Saved as notes; they don’t change stock.</span>
-          </details>
         </>
       ) : (
         <>
@@ -490,6 +497,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <span>Status</span>
             <EntryStatusPicker value={f.entry_status ?? 'running'} onChange={(v) => setF({ ...f, entry_status: v })} canEnd={canEnd} />
             <span className="muted small hint">{ENTRY_STATUS_HINT[f.entry_status ?? 'running']}</span>
+            {f.entry_status === 'end' && known && <FinalMetersField lotId={known.lot_id} extraOut={Number.isFinite(lotQty) ? lotQty : 0} value={f.final_meters ?? ''} onChange={(v) => setF((cur) => ({ ...cur, final_meters: v }))} />}
             {takesAll && canEnd && f.entry_status !== 'end' && (
               <span className="muted small hint">This takes everything left in {known!.lot_id}. <button type="button" className="linkbtn" onClick={() => setF({ ...f, entry_status: 'end' })}>Mark it End?</button></span>
             )}
@@ -536,7 +544,7 @@ export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: stri
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loc.trim()) return d.showToast('Pick the market and shop no. (pipe no. if any, 1 to 999).', 'warning');
+    if (!loc.trim()) return d.showToast('Pick the market and shop no. (pipe nos. if any, like 3 or A25).', 'warning');
     if (loc.trim() === lot?.location) return d.showToast(`${lotId} is already at ${loc.trim()}.`, 'warning');
     setBusy(true);
     const ok = await d.moveLot(role, lotId, loc.trim(), note.trim());

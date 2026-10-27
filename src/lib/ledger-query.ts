@@ -4,7 +4,7 @@
 // and the register fields: location code, linked SR (SR.NO), LOT S code — migration 013).
 // Page 1 + the next pages are keyset-paged on (ts, id); counts are capped (see cappedCount).
 import type { Q } from './db';
-import { cappedCount } from './lots-query';
+import { cappedCount, locationCondition } from './lots-query';
 import { marketSearchPatterns } from './markets';
 import { ENTRY_STATUSES, type EntryStatus } from './registers';
 
@@ -18,6 +18,8 @@ export interface LedgerFilters {
   party: string | null;
   from: string | null; // YYYY-MM-DD
   to: string | null;
+  market?: string | null; // lot's current place: market code / @floor / @dispatched / @none
+  shop?: string | null;
   today?: boolean; // the database's today (same "today" as every other today-figure)
   hideClosed?: boolean; // set by the server for people without stock.closed: no rows of closed lots, no closing adjustments
   scopeUserId?: string | null; // supervisor: only lots with job cards in their assigned sections
@@ -42,6 +44,8 @@ export function filtersFrom(sp: URLSearchParams): LedgerFilters {
     party: clip(sp.get('party')),
     from: isDate(sp.get('from')),
     to: isDate(sp.get('to')),
+    market: clip(sp.get('market'), 12),
+    shop: clip(sp.get('shop'), 10),
     today: sp.get('today') === '1',
   };
 }
@@ -92,6 +96,8 @@ export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map
   if (f.design) parts.push(`lower(l.design) = lower(${p(f.design)})`);
   if (f.lot) { const w = p(like(f.lot.toLowerCase())); parts.push(`sm.search_doc LIKE ${w} AND lower(sm.lot_id) LIKE ${w}`); }
   if (f.party) { const w = p(like(f.party.toLowerCase())); parts.push(`sm.search_doc LIKE ${w} AND lower(sm.party) LIKE ${w}`); }
+  const lc = locationCondition(f.market, f.shop, p);
+  if (lc) parts.push(lc);
   if (f.from) parts.push(`sm.ts >= ${p(f.from)}::date`);
   if (f.to) parts.push(`sm.ts < ${p(f.to)}::date + 1`);
   if (f.today) parts.push(`sm.ts >= CURRENT_DATE AND sm.ts < CURRENT_DATE + 1`);
@@ -275,3 +281,46 @@ export async function ledgerFacets(q: Q, scopeUserId: string | null = null) {
   }
   return { qualities: Object.keys(byQuality), designs: [...designs].sort((a, b) => a.localeCompare(b)), byQuality };
 }
+
+/**
+ * The "stock components" for the filtered ledger: what someone would add up in Excel, already added up.
+ * Receipts / sales are kind 'normal' only; opening and closing adjustments are shown on their own.
+ * on_hand_m = what the matching lots hold right now (open lots, positive balances), whatever the date filter.
+ */
+export async function ledgerSummary(q: Q, f: LedgerFilters) {
+  const w = whereFor(f, await ledgerAlts(q, f));
+  const r = await q(
+    `WITH m AS (SELECT sm.lot_id, sm.direction, sm.kind, sm.meters, sm.grey_meters, sm.finished_meters, sm.pieces, l.quality
+                  FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id ${w.sql})
+     SELECT count(*)::int AS entries,
+            count(DISTINCT lot_id)::int AS lots,
+            count(DISTINCT lower(quality))::int AS qualities,
+            count(*) FILTER (WHERE direction = 'IN' AND kind = 'normal')::int AS in_count,
+            COALESCE(SUM(meters) FILTER (WHERE direction = 'IN' AND kind = 'normal'), 0) AS in_m,
+            COALESCE(SUM(pieces) FILTER (WHERE direction = 'IN' AND kind = 'normal'), 0) AS in_pieces,
+            COALESCE(SUM(grey_meters) FILTER (WHERE direction = 'IN' AND kind = 'normal'), 0) AS grey_m,
+            COALESCE(SUM(grey_meters) FILTER (WHERE direction = 'IN' AND kind = 'normal' AND finished_meters IS NOT NULL), 0) AS grey_paired_m,
+            COALESCE(SUM(finished_meters) FILTER (WHERE direction = 'IN' AND kind = 'normal' AND grey_meters IS NOT NULL), 0) AS finished_paired_m,
+            COALESCE(SUM(finished_meters) FILTER (WHERE direction = 'IN' AND kind = 'normal'), 0) AS finished_m,
+            count(*) FILTER (WHERE direction = 'OUT' AND kind = 'normal')::int AS out_count,
+            COALESCE(SUM(meters) FILTER (WHERE direction = 'OUT' AND kind = 'normal'), 0) AS out_m,
+            COALESCE(SUM(pieces) FILTER (WHERE direction = 'OUT' AND kind = 'normal'), 0) AS out_pieces,
+            COALESCE(SUM(CASE WHEN direction = 'IN' THEN -meters ELSE meters END) FILTER (WHERE kind <> 'normal'), 0) AS adjust_m,
+            COALESCE(SUM(CASE WHEN direction = 'IN' THEN meters ELSE -meters END), 0) AS net_m,
+            (SELECT COALESCE(SUM(l2.bal_m), 0) FROM lots l2 WHERE l2.closed_at IS NULL AND l2.bal_m > 0 AND l2.lot_id IN (SELECT lot_id FROM m)) AS on_hand_m
+       FROM m`,
+    w.params,
+  );
+  const x = r.rows[0];
+  const n = (k: string) => Number(x[k] ?? 0);
+  const shortage = n('grey_paired_m') - n('finished_paired_m');
+  return {
+    entries: n('entries'), lots: n('lots'), qualities: n('qualities'),
+    in_count: n('in_count'), in_m: n('in_m'), in_pieces: n('in_pieces'), grey_m: n('grey_m'), finished_m: n('finished_m'),
+    shortage_m: Math.round(shortage * 100) / 100,
+    shortage_pct: n('grey_paired_m') > 0 ? Math.round((shortage / n('grey_paired_m')) * 10000) / 100 : null,
+    out_count: n('out_count'), out_m: n('out_m'), out_pieces: n('out_pieces'),
+    adjust_m: n('adjust_m'), net_m: n('net_m'), on_hand_m: n('on_hand_m'),
+  };
+}
+export type LedgerSummary = Awaited<ReturnType<typeof ledgerSummary>>;

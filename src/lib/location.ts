@@ -12,7 +12,8 @@ export interface MarketShop { id: number; shop_no: string; active: boolean; uses
 export interface MarketInfo { id: number; name: string; code: string; active: boolean; sort_order: number; shops: MarketShop[] }
 type MarketLike = Pick<MarketInfo, 'id' | 'name' | 'code' | 'active'>;
 
-export interface MarketPlace { market: MarketLike; shop: string; pipe: number | null }
+/** pipe: one or more pipes joined with ", " ("A25, B3"), or null. */
+export interface MarketPlace { market: MarketLike; shop: string; pipe: string | null }
 
 /** Set by the app only. */
 export const SYSTEM_PLACES = ['Floor', 'Dispatched'] as const;
@@ -20,9 +21,9 @@ export const SYSTEM_PLACES = ['Floor', 'Dispatched'] as const;
 export const OLD_PLACES = ['Godown', 'Shop'];
 
 export const MARKET_NAME_MAX = 60;
-export const PIPE_MAX = 999;
+export const PIPES_MAX = 10;
 
-export const PIPE_ERROR = 'Pipe no. must be a whole number like 3 (1 to 999).';
+export const PIPE_ERROR = 'Pipe no.: letters and digits, like 3, A25 or ABCD256 (up to 12 characters).';
 export const SHOP_ERROR = 'Shop no. must be digits, with an optional letter at the end, like 245 or 12A.';
 export const CODE_ERROR = 'Initials: 1 to 6 letters or digits, like LM.';
 
@@ -50,14 +51,26 @@ export function checkShop(v: unknown): Check<string> {
   return /^[1-9]\d{0,6}[A-Z]?$/.test(s) ? { ok: true, value: s } : { ok: false, error: SHOP_ERROR };
 }
 
-/** Typed pipe no.: empty → null; otherwise a whole number 1–999 (no decimals, no letters). */
-export function checkPipe(v: unknown): Check<number | null> {
-  const s = String(v ?? '').trim();
-  if (!s) return { ok: true, value: null };
-  if (!/^\d{1,4}$/.test(s)) return { ok: false, error: PIPE_ERROR };
-  const n = Number(s);
-  return n >= 1 && n <= PIPE_MAX ? { ok: true, value: n } : { ok: false, error: PIPE_ERROR };
+/** One pipe: letters / digits (and -), upper case, up to 12 characters. Leading zeros of a plain number dropped. */
+export function checkOnePipe(v: unknown): Check<string> {
+  const s = String(v ?? '').replace(/\s+/g, '').toUpperCase().replace(/^0+(?=\d+$)/, '');
+  return /^[A-Z0-9][A-Z0-9-]{0,11}$/.test(s) ? { ok: true, value: s } : { ok: false, error: PIPE_ERROR };
 }
+/** Pipes (a list, or text split on commas / spaces): empty → null; otherwise "A25, B3" (no repeats, up to PIPES_MAX). */
+export function checkPipe(v: unknown): Check<string | null> {
+  const parts = (Array.isArray(v) ? v.map((x) => String(x ?? '')) : String(v ?? '').split(/[,;/\s]+/)).map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return { ok: true, value: null };
+  const out: string[] = [];
+  for (const x of parts) {
+    const c = checkOnePipe(x);
+    if (!c.ok) return c;
+    if (!out.includes(c.value)) out.push(c.value);
+  }
+  if (out.length > PIPES_MAX) return { ok: false, error: `Up to ${PIPES_MAX} pipes per location.` };
+  return { ok: true, value: out.join(', ') };
+}
+/** "A25, B3" → ["A25", "B3"]. */
+export const splitPipes = (p: string | null | undefined): string[] => (p ? p.split(/,\s*/).filter(Boolean) : []);
 
 export function formatMarketLocation(code: string, shop: string, pipe?: number | string | null): string {
   const p = pipe == null ? '' : String(pipe).trim();
@@ -65,8 +78,9 @@ export function formatMarketLocation(code: string, shop: string, pipe?: number |
 }
 
 /** "Landmark, shop 245, pipe 3" */
-export function describePlace(name: string, shop: string, pipe: number | null): string {
-  return `${name}, shop ${shop}${pipe != null ? `, pipe ${pipe}` : ''}`;
+export function describePlace(name: string, shop: string, pipe: string | number | null): string {
+  const n = splitPipes(pipe == null ? null : String(pipe)).length;
+  return `${name}, shop ${shop}${pipe != null && pipe !== '' ? `, ${n > 1 ? 'pipes' : 'pipe'} ${pipe}` : ''}`;
 }
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -91,10 +105,9 @@ export function parseMarketLocation(text: string, markets: MarketLike[], opts: {
   if (!words.length) return { ok: false, error: `Shop no. is missing after ${hit.m.code}, like "${hit.m.code} 245 · Pipe 3".` };
   const shop = checkShop(words.shift());
   if (!shop.ok) return { ok: false, error: shop.error };
-  if (words[0] === 'pipe' || words[0] === 'p' || words[0] === 'p.') words.shift();
-  else if (words[0] && /^(pipe|p)\d+$/.test(words[0])) words[0] = words[0].replace(/^(pipe|p)/, '');
-  if (words.length > 1) return { ok: false, error: `"${text.trim()}" has extra text. Write it like "${hit.m.code} 245 · Pipe 3".` };
-  const pipe = checkPipe(words[0] ?? '');
+  if (words[0] === 'pipe' || words[0] === 'pipes' || words[0] === 'p' || words[0] === 'p.') words.shift();
+  else if (words[0] && /^pipes?\d+$/.test(words[0])) words[0] = words[0].replace(/^pipes?/, '');
+  const pipe = checkPipe(words);
   if (!pipe.ok) return { ok: false, error: pipe.error };
   return { ok: true, place: { market: hit.m, shop: shop.value, pipe: pipe.value } };
 }

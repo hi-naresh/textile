@@ -64,7 +64,7 @@ export function Overview({ ctx }: { ctx: Ctx }) {
       <div className="grid-kpi ov-figs">
         <Figure label="Stock on hand" to="stock" go={go}
           value={stock ? fmtMeters(stock.on_hand_m) : '—'}
-          sub={stock ? `Packed ${fmtMeters(stock.packed_m)} · Running ${fmtMeters(stock.running_m)} · On hold ${fmtMeters(stock.on_hold_m)}` : 'Open the stock ledger'}
+          sub={stock ? <><span className="ov-exact num strong">{fmt(stock.on_hand_m, 2)} m exact</span><br />{`Packed ${fmtMeters(stock.packed_m)} · Running ${fmtMeters(stock.running_m)} · On hold ${fmtMeters(stock.on_hold_m)}`}</> : 'Open the stock ledger'}
           />
         <Figure label="Sent out today" to="stock" go={go}
           value={d.today ? fmtMeters(d.today.out_m) : '—'}

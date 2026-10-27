@@ -1176,3 +1176,16 @@ tr.mv-adj .strong { font-weight: 500; }
   .reset-count { grid-column: 2; text-align: left; max-width: none; }
 }
 .reset-card a.btn { text-decoration: none; }
+
+/* Stock components (ledger summary cards) — migration 017 work */
+.sc { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.sc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.sc-card { padding: 12px 14px; gap: 4px; }
+.sc-value { font-size: 19px; }
+.ov-exact { color: var(--text2); }
+.sf-shortage { font-weight: 700; font-size: 15px; }
+.sf-shortage.warn { color: var(--warn); }
+.mlp-pipes { display: flex; flex-direction: column; gap: 6px; }
+.mlp-pipe input { flex: 1; min-width: 0; }
+.qc-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 640px) { .sc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sc-value { font-size: 16px; } }

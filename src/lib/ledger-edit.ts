@@ -3,6 +3,7 @@
 // Each changed field writes one ledger_edits row (who, when, old → new). No-op changes are skipped.
 // Status of an outgoing entry (Running / End): changing it to End closes the lot (closeLot); taking End off
 // the entry that closed its lot reopens the lot (reopenLot). Both happen in the same transaction as the edit.
+import { catalogQuality } from './qualities';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 import { closeLot, piecesValue, reopenLot, srValue } from './ledger';
@@ -196,7 +197,8 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     if (!lot) { problem(c.origin, `Lot ${c.lot} does not exist.`); continue; }
     let v: string;
     try {
-      if (c.field === 'quality' || c.field === 'design') v = (await canonicalLotAttr(q, c.field, requiredName(c.value, FIELD_LABEL[c.field]), lotIds))!;
+      if (c.field === 'quality') v = await catalogQuality(q, requiredName(c.value, FIELD_LABEL[c.field]));
+      else if (c.field === 'design') v = (await canonicalLotAttr(q, c.field, requiredName(c.value, FIELD_LABEL[c.field]), lotIds))!;
       else if (c.field === 'grade') v = gradeValue(c.value);
       else if (lot.closed_at) throw new LedgerError(`Lot ${lot.lot_id} is closed. Reopen it to change its status.`);
       else v = statusValue(c.value);

@@ -3,7 +3,7 @@ import { readObject, requireCap } from '@/lib/apiAuth';
 import { withTransaction } from '@/lib/db';
 import { closeLot, errorResponseBody, LedgerError, reopenLot } from '@/lib/ledger';
 
-// POST { lot_id, action: 'close' | 'reopen', note? } (owner, stock.closed)
+// POST { lot_id, action: 'close' | 'reopen', note?, final_meters? (close: meters the lot really gave; default = dispatched) } (owner, stock.closed)
 //   close  → close the lot by hand: whatever its entries leave is written off with a closing adjustment so the balance
 //            is 0; the lot leaves current stock (reason 'manual').  → { success, lot_id, adjustment_m, movement_id }
 //   reopen → remove the closing adjustment, the End entry that closed it becomes Running, the lot is back in stock.
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     if (!lotId || lotId.length > 50) throw new LedgerError('Which lot? Send its lot number.');
     if (b.action !== 'close' && b.action !== 'reopen') throw new LedgerError('action must be "close" or "reopen".');
     const out = await withTransaction<Record<string, unknown>>(async (q) => (b.action === 'close'
-      ? { ...(await closeLot(q, lotId, { reason: 'manual', by: a.by, note: b.note })) }
+      ? { ...(await closeLot(q, lotId, { reason: 'manual', by: a.by, note: b.note, finalMeters: b.final_meters })) }
       : { ...(await reopenLot(q, lotId, { by: a.by, note: b.note })) }));
     return NextResponse.json({ success: true, ...out });
   } catch (error) {

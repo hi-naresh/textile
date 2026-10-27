@@ -5,15 +5,16 @@
 //   Market   buttons "LM · Landmark" (active markets); the owner can add a market here (name + initials).
 //   Shop no. type or pick from the market's shops (most used first); a new number is added to the market
 //            (owner / supervisor) with the button, or when the entry is saved.
-//   Pipe no. optional, typed by hand: a whole number 1–999.
+//   Pipe nos. optional, one or more (a lot can sit in several pipes): letters / digits like 3, A25, ABCD256.
+//            "+ Add pipe" adds another box; pipes already used at that shop are suggested as you type.
 // Emits the label when it is complete and valid, '' otherwise (+ whether the picker is finished). Remount (key) to reset it.
 // "Floor" and "Dispatched" are never offered: the app sets them (job cards, dispatch).
-import React, { useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import Icon from './Icon';
 import { Pill } from './ui';
 import type { Ctx } from './ctx';
 import { activeMarkets, canAddShops, canManageMarkets, markets as allMarkets } from '@/lib/access';
-import { checkCode, checkMarketName, checkPipe, checkShop, describeLocation, describePlace, formatMarketLocation, parseMarketLocation } from '@/lib/location';
+import { checkCode, checkMarketName, checkPipe, checkShop, describeLocation, describePlace, formatMarketLocation, parseMarketLocation, PIPES_MAX, splitPipes } from '@/lib/location';
 import { locationTone } from '@/lib/derive';
 
 const QUICK_SHOPS = 6;
@@ -29,7 +30,8 @@ export function MarketLocationPicker({ ctx, value, onChange, exclude, optional =
   const startPlace = start && start.ok ? start.place : null;
   const [marketId, setMarketId] = useState<number | null>(startPlace?.market.id ?? (optional ? null : list[0]?.id ?? null));
   const [shop, setShop] = useState(startPlace?.shop ?? '');
-  const [pipe, setPipe] = useState(startPlace?.pipe != null ? String(startPlace.pipe) : '');
+  const [pipes, setPipes] = useState<string[]>(() => { const l = splitPipes(startPlace?.pipe ?? null); return l.length ? l : ['']; });
+  const pipe = pipes.join(', ');
   const [shopTouched, setShopTouched] = useState(false);
   const [adding, setAdding] = useState(false);
   const [busyShop, setBusyShop] = useState(false);
@@ -37,7 +39,7 @@ export function MarketLocationPicker({ ctx, value, onChange, exclude, optional =
 
   const shopCheck = checkShop(shop);
   const pipeCheck = checkPipe(pipe);
-  const shops = useMemo(() => (market?.shops ?? []).filter((s) => s.active), [market]);
+  const shops = (market?.shops ?? []).filter((s) => s.active);
   const known = shopCheck.ok && shops.some((s) => s.shop_no === shopCheck.value);
   const label = market && shopCheck.ok && pipeCheck.ok ? formatMarketLocation(market.code, shopCheck.value, pipeCheck.value) : '';
   const same = !!label && label === exclude;
@@ -51,7 +53,20 @@ export function MarketLocationPicker({ ctx, value, onChange, exclude, optional =
   };
   const pickMarket = (mId: number | null) => { setMarketId(mId); emit(mId, shop, pipe); };
   const typeShop = (v: string) => { setShop(v); emit(marketId, v, pipe); };
-  const typePipe = (v: string) => { setPipe(v); emit(marketId, shop, v); };
+  const setPipeAt = (i: number, v: string) => { const n = pipes.map((x, j) => (j === i ? v : x)); setPipes(n); emit(marketId, shop, n.join(', ')); };
+  const addPipe = () => { if (pipes.length < PIPES_MAX) setPipes([...pipes, '']); };
+  const removePipe = (i: number) => { const n = pipes.filter((_, j) => j !== i); const m = n.length ? n : ['']; setPipes(m); emit(marketId, shop, m.join(', ')); };
+  // Pipes already used at this shop (suggestions).
+  const [knownPipes, setKnownPipes] = useState<string[]>([]);
+  const shopKey = market && shopCheck.ok ? `${market.id}|${shopCheck.value}` : '';
+  useEffect(() => {
+    if (!shopKey) return;
+    const [m, s] = shopKey.split('|');
+    let alive = true;
+    fetch(`/api/markets/pipes?market_id=${m}&shop=${encodeURIComponent(s)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null)).then((x) => { if (alive && x) setKnownPipes(x.pipes ?? []); }).catch(() => {});
+    return () => { alive = false; };
+  }, [shopKey]);
 
   const addShopNow = async () => {
     if (!market || !shopCheck.ok) return;
@@ -95,10 +110,20 @@ export function MarketLocationPicker({ ctx, value, onChange, exclude, optional =
               onChange={(e) => typeShop(e.target.value)} onBlur={() => setShopTouched(true)} maxLength={10} />
             <datalist id={`${id}-shops`}>{shops.map((s) => <option key={s.id} value={s.shop_no}>{s.uses ? `${s.uses} moves` : 'new'}</option>)}</datalist>
           </label>
-          <label className="fld">Pipe no.
-            <input className="num" inputMode="numeric" value={pipe} autoComplete="off" placeholder="optional" maxLength={5}
-              aria-invalid={!!pipeErr} aria-describedby={`${id}-pipe-msg`} onChange={(e) => typePipe(e.target.value)} />
-          </label>
+          <div className="fld mlp-pipes">
+            <span>{pipes.length > 1 ? 'Pipe nos.' : 'Pipe no.'}</span>
+            {pipes.map((p, i) => (
+              <span key={i} className="row-8 mlp-pipe">
+                <input className="num" list={`${id}-pipes`} value={p} autoComplete="off" autoCapitalize="characters" placeholder={i ? 'another pipe' : 'optional, e.g. A25'} maxLength={12}
+                  aria-label={`Pipe no. ${i + 1}`} aria-invalid={!!p.trim() && !checkPipe(p).ok} aria-describedby={`${id}-pipe-msg`} onChange={(e) => setPipeAt(i, e.target.value.toUpperCase())} />
+                {pipes.length > 1 && <button type="button" className="ib" aria-label={`Remove pipe ${p || i + 1}`} onClick={() => removePipe(i)}><Icon name="x" size={14} /></button>}
+              </span>
+            ))}
+            <datalist id={`${id}-pipes`}>{knownPipes.filter((k) => !pipes.includes(k)).map((k) => <option key={k} value={k} />)}</datalist>
+            {pipes.length < PIPES_MAX && pipes[pipes.length - 1].trim() !== '' && (
+              <button type="button" className="btn sm" onClick={addPipe}><Icon name="plus" size={14} strokeWidth={2} />Add pipe</button>
+            )}
+          </div>
           {shops.length > 0 && (
             <div className="mlp-quick" role="group" aria-label={`Shops in ${market.name}, most used first`}>
               {shops.slice(0, QUICK_SHOPS).map((s) => (
@@ -165,7 +190,7 @@ function AddMarketForm({ ctx, onDone }: { ctx: Ctx; onDone: (newId: number | nul
         <button type="button" className="btn sm" onClick={() => onDone(null)}>Cancel</button>
       </div>
       {(err || serverErr) && <span className="err small mlp-adderr">{serverErr ?? err}</span>}
-      {!err && !serverErr && <span className="muted tiny mlp-adderr">Initials are the short form on labels, like {c.ok ? c.value : 'LM'} 245 · Pipe 3.</span>}
+      {!err && !serverErr && <span className="muted tiny mlp-adderr">Initials are the short form on labels, like {c.ok ? c.value : 'LM'} 245 · Pipe A25.</span>}
     </div>
   );
 }

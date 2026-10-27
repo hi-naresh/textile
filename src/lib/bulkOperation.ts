@@ -9,7 +9,7 @@ const waiting: (() => void)[] = [];
 
 export function acquireBulkSlot(signal?: AbortSignal): Promise<() => void> {
   return new Promise((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
     const cleanup = () => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);

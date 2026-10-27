@@ -4,7 +4,9 @@ import React, { useState } from 'react';
 import Icon from '../Icon';
 import { PageHead, Pill, Segmented, Sheet, Track, dayTime, effTone, fmt, inr, initials } from '../ui';
 import { LotLocationPanel } from './Shared';
-import { LedgerFilterBar } from './StockLedger';
+import { LedgerFilterBar, LedgerSummaryCards, LocationFilter, LotsSummaryCards, useSummary, type LedgerSummary, type LotsSummary } from './StockLedger';
+import { QualityCatalog } from './QualityCatalog';
+import { FinalMetersField } from '../FinalMeters';
 import { EMPTY_FILTERS, filtersActive, ledgerParams, useDebounced, useLedger, type LedgerFilterState, type LedgerRow } from '@/lib/useLedger';
 import { EMPTY_LOT_FILTERS, lotParams, useLots, type LotFilterState } from '@/lib/useLots';
 import { apiSend, flashWhenReady, useHashLink } from '@/lib/useApi';
@@ -24,7 +26,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   const { d, rate } = ctx;
   const canEdit = can(ctx.role, 'ledger.edit'); // owner only; supervisors never see edit mode
   const canClosed = can(ctx.role, 'stock.closed'); // owner: Closed lots view
-  const [view, setView] = useState<'moves' | 'lots'>('moves');
+  const [view, setView] = useState<'moves' | 'lots' | 'qualities'>('moves');
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const editing = canEdit && mode === 'edit';
   const [filters, setFilters] = useState<LedgerFilterState>(EMPTY_FILTERS);
@@ -37,6 +39,9 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   const [lotFilters, setLotFilters] = useState<LotFilterState>(EMPTY_LOT_FILTERS);
   const lotApplied = useDebounced(lotFilters, 250);
   const lt = useLots(lotApplied, d.stockRev, view === 'lots');
+  // Stock components: totals for exactly what the filters match (all entries / lots when nothing is filtered).
+  const lgSum = useSummary<LedgerSummary>('/api/stock/ledger/summary', ledgerParams(applied).toString(), d.stockRev, view === 'moves');
+  const ltSum = useSummary<LotsSummary>('/api/lots/summary', lotParams(lotApplied).toString(), d.stockRev, view === 'lots');
 
   // Deep link: #ledger=<view=moves|lots&q=&lot=&direction=&quality=&design=&party=&from=&to=&focus=>
   const link = useHashLink('ledger');
@@ -80,6 +85,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
   const [statusConfirm, setStatusConfirm] = useState<{ notes: string[]; then?: () => void } | null>(null);
   const [lotAction, setLotAction] = useState<{ kind: 'close' | 'reopen'; lot: Lot } | null>(null);
   const [lotNote, setLotNote] = useState('');
+  const [lotFinal, setLotFinal] = useState('');
   const [lotBusy, setLotBusy] = useState(false);
   const count = countDrafts(drafts);
   const lotHint = Object.keys(drafts.l).length > 0 && view === 'moves';
@@ -189,7 +195,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
     if (!lotAction || lotBusy) return;
     setLotBusy(true);
     try {
-      const r = await apiSend<{ adjustment_m?: number; balance?: number }>('/api/lots/close', 'POST', { lot_id: lotAction.lot.lot_id, action: lotAction.kind, note: lotNote.trim() || null });
+      const r = await apiSend<{ adjustment_m?: number; balance?: number }>('/api/lots/close', 'POST', { lot_id: lotAction.lot.lot_id, action: lotAction.kind, note: lotNote.trim() || null, final_meters: lotAction.kind === 'close' && lotFinal.trim() ? lotFinal.trim() : null });
       d.showToast(lotAction.kind === 'close'
         ? `Lot ${lotAction.lot.lot_id} closed${r.adjustment_m ? ` · ${fmt(Math.abs(r.adjustment_m), 1)} m ${r.adjustment_m > 0 ? 'written off' : 'written back'}` : ''}`
         : `Lot ${lotAction.lot.lot_id} reopened · ${fmt(r.balance ?? 0, 1)} m in stock`);
@@ -201,7 +207,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       setLotBusy(false);
     }
   };
-  const askLot = (kind: 'close' | 'reopen', lot: Lot) => { setLotNote(''); setLotAction({ kind, lot }); };
+  const askLot = (kind: 'close' | 'reopen', lot: Lot) => { setLotNote(''); setLotFinal(''); setLotAction({ kind, lot }); };
 
   // Infinite scroll: load the next page when the end of the table comes into view.
   const endRef = React.useRef<HTMLDivElement | null>(null);
@@ -234,7 +240,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
         <button className="btn primary" onClick={() => ctx.openSheet('stock')}><Icon name="plus" size={16} strokeWidth={2} />Manual entry</button>
       </PageHead>
       <div className="toolbar">
-        <Segmented label="View" value={view} onChange={(v) => guard(() => setView(v))} options={[{ value: 'moves', label: 'Movements' }, { value: 'lots', label: 'Lots & balance' }]} />
+        <Segmented label="View" value={view} onChange={(v) => guard(() => setView(v))} options={[{ value: 'moves', label: 'Movements' }, { value: 'lots', label: 'Lots & balance' }, { value: 'qualities', label: 'Quality catalog' }]} />
         {canEdit && (
           <Segmented label="Mode" value={mode} onChange={(v) => (v === 'view' ? guard(() => { discard(); setMode('view'); }) : setMode('edit'))}
             options={[{ value: 'view', label: 'View' }, { value: 'edit', label: <><Icon name="edit" size={13} strokeWidth={2} /> Edit</> }]} />
@@ -248,9 +254,10 @@ export function Stock({ ctx }: { ctx: Ctx }) {
           {view === 'moves' ? ' Quality and design belong to the lot, so changing them on one row changes every row of that lot.' : ''}
         </p>
       )}
-      {view === 'moves' ? (
+      {view === 'qualities' ? <QualityCatalog ctx={ctx} /> : view === 'moves' ? (
         <>
           <LedgerFilterBar value={filters} onChange={(f) => guard(() => setFilters(f))} facets={lg.facets} />
+          <LedgerSummaryCards s={lgSum.data} filtered={active} loading={lgSum.loading} />
           <div className="lf-count small t2" aria-live="polite">
             {lg.loading ? (lg.rows.length ? 'Searching…' : 'Loading…')
               : lg.total == null ? ''
@@ -296,6 +303,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
                   { value: 'hold', label: <>On hold <span className="muted tiny">{fmt(d.stockSummary?.on_hold_m ?? 0, 1)} m · {fmt(d.stockSummary?.on_hold_lots ?? 0)} lots</span></> },
                 ]} />
             )}
+            <LocationFilter market={lotFilters.market} shop={lotFilters.shop} onChange={(market, shop) => guard(() => setLotFilters((f) => ({ ...f, market, shop })))} />
           </div>
         </div>
         <div className="lf-count small t2" aria-live="polite">
@@ -303,6 +311,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
             : lt.total == null ? ''
             : <><span className="num strong">{countText(lt.total, lt.totalCapped)}</span> {lt.total === 1 && !lt.totalCapped ? 'lot' : 'lots'}{lotActive ? ' match' : ''}{lt.totalCapped || lt.total > lt.rows.length ? <> · showing {n(lt.rows.length)}</> : null}</>}
         </div>
+        {lotApplied.stock !== 'closed' && <LotsSummaryCards s={ltSum.data} filtered={lotActive} loading={ltSum.loading} />}
         {lt.error && <div className="alert bad" role="alert">{lt.error}</div>}
         {lotApplied.stock === 'closed' && <p className="small t2">Closed lots are your internal records: they don’t count in stock, and supervisors don’t see them. Each one shows what was written off so its balance is 0.</p>}
         <section className={`card flush ${lt.loading && lt.rows.length ? 'lf-stale' : ''}`}>
@@ -369,6 +378,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
                 ? <><span className="num strong">{fmt(lotAction.lot.balance, 1)} m</span> left in it will be written off, so its balance is 0.</>
                 : <><span className="num strong">{fmt(-lotAction.lot.balance, 1)} m</span> sent beyond its balance will be written back, so its balance is 0.</>}</p>
               <p>Its last sale is marked End. The lot leaves current stock and supervisors won’t see it. You can reopen it from Lots &amp; balance → Closed.</p>
+              <FinalMetersField lotId={lotAction.lot.lot_id} value={lotFinal} onChange={setLotFinal} />
             </>
           ) : (
             <p>The closing adjustment{lotAction.lot.adjustment_m ? <> of <span className="num strong">{fmt(Math.abs(lotAction.lot.adjustment_m), 1)} m</span></> : null} is removed, the sale marked End goes back to the status it had before, and the lot is back in stock.</p>

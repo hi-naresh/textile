@@ -15,8 +15,10 @@ export interface LedgerFilterState {
   party: string; // set by deep links (#ledger=…&party=…); shown as a removable chip
   from: string; // YYYY-MM-DD
   to: string;
+  market: string; // lot's current place: market code, or @floor / @dispatched / @none
+  shop: string;
 }
-export const EMPTY_FILTERS: LedgerFilterState = { q: '', direction: '', status: '', quality: '', design: '', lot: '', party: '', from: '', to: '' };
+export const EMPTY_FILTERS: LedgerFilterState = { q: '', direction: '', status: '', quality: '', design: '', lot: '', party: '', from: '', to: '', market: '', shop: '' };
 
 export interface LedgerRow {
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;

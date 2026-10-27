@@ -49,3 +49,6 @@ next-env.d.ts
 
 # lot status backfill dry run (scripts/backfill-lot-status.ts): business data, keep out of git
 lot-status-backfill.csv
+
+# temporary sync archives
+.claude-sync*

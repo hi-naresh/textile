@@ -7,6 +7,7 @@ import { markAgentsStale } from './agents/stale';
 import { trimReservations } from './stock';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
+import { catalogQuality } from './qualities';
 import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, dateValue, lotCode, lotStatusValue, metersValue, nameKey, nameValue, SYSTEM_LOCATIONS, type Place } from './normalize';
 import { billedMetersValue, billPctValue, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 
@@ -123,10 +124,10 @@ export async function currentPlace(q: Q, lotId: string, exceptSystem = false): P
     [lotId],
   );
   const x = r.rows[0];
-  return x ? { location: String(x.location), market_id: x.market_id == null ? null : Number(x.market_id), shop_no: x.shop_no ?? null, pipe_no: x.pipe_no == null ? null : Number(x.pipe_no) } : null;
+  return x ? { location: String(x.location), market_id: x.market_id == null ? null : Number(x.market_id), shop_no: x.shop_no ?? null, pipe_no: x.pipe_no == null ? null : String(x.pipe_no) } : null;
 }
 /** A lot_locations label with its structured copy (NULL parts for system / older labels). */
-export type StoredPlace = { location: string; market_id: number | null; shop_no: string | null; pipe_no: number | null };
+export type StoredPlace = { location: string; market_id: number | null; shop_no: string | null; pipe_no: string | null };
 
 export async function lockLot(q: Q, lotId: string) {
   // Serialises concurrent writes (e.g. two dispatches) against the same lot.
@@ -202,7 +203,7 @@ export interface IncomingInput {
  * Record incoming stock. Stock quantity (`meters`) = finished meters if given, else grey meters.
  * `requireLotDetails`: manual entry must name quality + design for a new lot; photo reads fall back to "Unknown".
  */
-export async function recordIncoming(q: Q, input: IncomingInput, opts: { requireLotDetails: boolean; memo?: LedgerMemo }) {
+export async function recordIncoming(q: Q, input: IncomingInput, opts: { requireLotDetails: boolean; memo?: LedgerMemo; qualityCatalog?: boolean }) {
   const memo = opts.memo;
   await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
@@ -219,7 +220,8 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   const mill = await nameMemo(memo, q, 'mill_name', nameValue(input.mill_name, 'Mill'));
   const weaver = await nameMemo(memo, q, 'weaver_name', nameValue(input.weaver_name, 'Weaver'));
   const challan = challanCode(input.source_doc);
-  const pct = registerPctValue(input.register_pct);
+  // "%" = shortage grey → finished. Worked out from the meters when both are given (manual entry no longer types it).
+  const pct = registerPctValue(input.register_pct) ?? (grey != null && finished != null && grey > 0 ? Math.round(((grey - finished) / grey) * 10000) / 100 : null);
   const locCode = locCodeValue(input.loc_code);
   const locKey = String(input.location ?? '').trim();
   const givenLocation: Place | null = await memoised(memo, `loc:${locKey}`, () => allowedLocation(q, input.location, { required: false, addShopsBy: input.add_shops_by ?? false }));
@@ -228,7 +230,8 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   const exists = await lockLot(q, lotId);
   if (exists) await assertLotOpen(q, lotId);
   if (!exists) {
-    const quality = await lotAttrMemo(memo, q, 'quality', nameValue(input.quality, 'Quality'));
+    // Manual entry: only qualities from the catalog (migration 017).
+    const quality = opts.qualityCatalog && nameValue(input.quality, 'Quality') ? await catalogQuality(q, input.quality) : await lotAttrMemo(memo, q, 'quality', nameValue(input.quality, 'Quality'));
     const design = await lotAttrMemo(memo, q, 'design', nameValue(input.design, 'Design'));
     if (opts.requireLotDetails && (!quality || !design)) throw new LedgerError('Quality and design are required for a new lot.');
     await q(`INSERT INTO lots (lot_id, quality, design, grade, status, loc_code) VALUES ($1, $2, $3, 'A', 'active', $4)`, [lotId, quality ?? 'Unknown Quality', design ?? 'Unknown Design', locCode]);
@@ -282,6 +285,7 @@ export interface OutgoingInput {
   date?: unknown; // back-date entry (YYYY-MM-DD or DD-MM-YYYY)
   status?: unknown; // lot status ('active' | 'completed' | 'dispatched' | 'hold')
   entry_status?: unknown; // status of this entry: 'running' (default) | 'end' (migration 015)
+  final_meters?: unknown; // End only: meters the lot really gave (default: everything dispatched) — migration 017
 }
 
 /**
@@ -345,13 +349,29 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
     ts: date ? `${date} 12:00:00` : null,
   });
   // End = the last sale from this lot: close it (balance → 0 with a closing adjustment).
-  if (entryStatus === 'end') await closeLot(q, lotId, { reason: 'end_entry', by: input.moved_by ?? null, endMovementId: Number(movement.id) });
+  if (entryStatus === 'end') await closeLot(q, lotId, { reason: 'end_entry', by: input.moved_by ?? null, endMovementId: Number(movement.id), finalMeters: input.final_meters });
   return movement;
+}
+
+// ---------- shortage (migration 017) ----------
+export interface LotShortage { grey_m: number | null; finished_m: number; dispatched_m: number; final_meters: number; shortage_m: number | null; shortage_pct: number | null }
+/** Grey received, finished received, dispatched and the shortage grey → final (final = `given` or everything dispatched). */
+export async function finalShortage(q: Q, lotId: string, given?: number | null): Promise<LotShortage> {
+  const r = (await q(
+    `SELECT SUM(grey_meters) FILTER (WHERE direction = 'IN' AND kind = 'normal') AS grey,
+            COALESCE(SUM(meters) FILTER (WHERE direction = 'IN' AND kind = 'normal'), 0) AS fin,
+            COALESCE(SUM(meters) FILTER (WHERE direction = 'OUT' AND kind = 'normal'), 0) AS out
+       FROM stock_movements WHERE lot_id = $1`, [lotId],
+  )).rows[0];
+  const grey = r.grey == null ? null : Number(r.grey);
+  const finalM = Math.round((given ?? Number(r.out)) * 100) / 100;
+  const sh = grey == null ? null : Math.round((grey - finalM) * 100) / 100;
+  return { grey_m: grey, finished_m: Number(r.fin), dispatched_m: Number(r.out), final_meters: finalM, shortage_m: sh, shortage_pct: sh == null || !grey ? null : Math.round((sh / grey) * 10000) / 100 };
 }
 
 // ---------- closing a lot (migration 016) ----------
 export type CloseReason = 'end_entry' | 'manual' | 'register';
-export interface LotClosed { lot_id: string; adjustment_m: number; movement_id: number | null }
+export interface LotClosed { lot_id: string; adjustment_m: number; movement_id: number | null; final_meters: number; grey_m: number | null; shortage_m: number | null }
 
 /**
  * Close a lot: whatever its entries leave (or overshoot) is written off with a closing adjustment so the balance is
@@ -360,7 +380,7 @@ export interface LotClosed { lot_id: string; adjustment_m: number; movement_id: 
  * entries close on their own date). Without one (manual close) it is now, and the lot's last sale (if any) is marked
  * End so the ledger shows why it closed; reopening turns it back to Running. Run inside the caller's transaction.
  */
-export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by?: string | null; endMovementId?: number | null; note?: unknown }): Promise<LotClosed> {
+export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by?: string | null; endMovementId?: number | null; note?: unknown; finalMeters?: unknown }): Promise<LotClosed> {
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`, 404);
   const cur = await q(`SELECT closed_at, status FROM lots WHERE lot_id = $1`, [lotId]);
   if (cur.rows[0].closed_at) throw new LedgerError(`Lot ${lotId} is already closed.`, 409);
@@ -400,6 +420,9 @@ export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by
     movementId = Number(mv.rows[0].id);
   }
   const note = text(o.note, 500);
+  // Final meters (migration 017): what the lot really gave after folding / packing. Default = everything dispatched.
+  const fin = await finalShortage(q, lotId, metersValue(o.finalMeters === '' ? null : o.finalMeters, 'Final meters'));
+  await q(`UPDATE lots SET final_meters = $2 WHERE lot_id = $1`, [lotId, fin.final_meters]);
   await q(
     `UPDATE lots SET closed_at = COALESCE($2::timestamp, CURRENT_TIMESTAMP), closed_by = $3, close_reason = $4, close_note = $5, status = 'completed' WHERE lot_id = $1`,
     [lotId, at, o.by ?? null, o.reason, note],
@@ -416,10 +439,10 @@ export async function closeLot(q: Q, lotId: string, o: { reason: CloseReason; by
     });
   }
   await q(
-    `INSERT INTO lot_closures (lot_id, action, reason, adjustment_m, movement_id, end_movement_id, by_user, note) VALUES ($1, 'close', $2, $3, $4, $5, $6, $7)`,
-    [lotId, o.reason, adjustment, movementId, endId, o.by ?? null, note],
+    `INSERT INTO lot_closures (lot_id, action, reason, adjustment_m, movement_id, end_movement_id, by_user, note, final_meters) VALUES ($1, 'close', $2, $3, $4, $5, $6, $7, $8)`,
+    [lotId, o.reason, adjustment, movementId, endId, o.by ?? null, note, fin.final_meters],
   );
-  return { lot_id: lotId, adjustment_m: adjustment, movement_id: movementId };
+  return { lot_id: lotId, adjustment_m: adjustment, movement_id: movementId, ...fin };
 }
 
 /**
@@ -456,7 +479,7 @@ export async function reopenLot(q: Q, lotId: string, o: { by?: string | null; no
     `SELECT old_value FROM ledger_edits WHERE target = 'lot' AND target_id = $1 AND field = 'status' AND new_value = 'completed' ORDER BY id DESC LIMIT 1`, [lotId],
   )).rows[0]?.old_value as string | undefined;
   const status = before === 'hold' ? 'hold' : balance > 0 ? 'active' : 'dispatched';
-  await q(`UPDATE lots SET closed_at = NULL, closed_by = NULL, close_reason = NULL, close_note = NULL, status = $2 WHERE lot_id = $1`, [lotId, status]);
+  await q(`UPDATE lots SET closed_at = NULL, closed_by = NULL, close_reason = NULL, close_note = NULL, final_meters = NULL, status = $2 WHERE lot_id = $1`, [lotId, status]);
   await q(`INSERT INTO ledger_edits (target, target_id, field, old_value, new_value, edited_by) VALUES ('lot', $1, 'status', 'completed', $2, $3)`, [lotId, status, o.by ?? null]);
   if (balance > 0) {
     const place = await currentPlace(q, lotId, true);

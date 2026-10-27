@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
     };
     const movement = await withTransaction((q) =>
       direction === 'IN'
-        ? recordIncoming(q, input, { requireLotDetails: true })
+        ? recordIncoming(q, input, { requireLotDetails: true, qualityCatalog: true })
         : recordOutgoing(q, input, { endAllowed: can(a.role, 'stock.end') })
     );
     return NextResponse.json({ success: true, movement });

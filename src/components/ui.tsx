@@ -9,6 +9,9 @@ export type Tone = 'good' | 'warn' | 'bad' | 'info' | 'neutral';
 export const fmt = (n: number | null | undefined, digits = 0) =>
   n == null || Number.isNaN(n) ? '—' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 
+/** Exact figure, Indian grouping, up to `digits` decimals (5,40,123.5). */
+export const fmtExact = (n: number | null | undefined, digits = 2) => fmt(n, digits);
+
 export const fmtM = (n: number | null | undefined) => (n == null ? '—' : `${fmt(n, 1)} m`);
 
 export const inr = (n: number) => {

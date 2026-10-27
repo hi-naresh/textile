@@ -28,6 +28,7 @@ async function send(url: string, method: string, body: unknown) {
 export interface StockEntry {
   direction: 'IN' | 'OUT';
   lot_id: string;
+  final_meters?: string; // OUT + End: meters the lot really gave (empty = same as dispatched)
   // IN
   grey_meters: string;
   finished_meters: string;
