@@ -18,15 +18,35 @@ export async function checkImportFile(file: File): Promise<ValidateResult> {
 export interface ImportProgress { done: number; total: number; saved: number; skipped: number; in: number; out: number }
 export interface ImportOutcome extends ImportProgress { ok: boolean; error?: string; failedRow?: number; failedChunk?: { from: number; to: number } }
 
+const MAX_RETRIES = 2;
+const MAX_RETRY_AFTER_MS = 30_000;
+
 async function postChunk(batch: string, rows: AnyImportRow[]) {
   const res = await fetch('/api/stock/import/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch, rows }) });
   const data = await res.json().catch(() => ({}));
   return { res, data };
 }
 
+function transientStatus(status: number) {
+  return status === 429 || status >= 500;
+}
+
+function retryDelay(res: Response, retry: number) {
+  const retryAfter = res.headers.get('Retry-After');
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    const requestedMs = Number.isFinite(seconds)
+      ? seconds * 1000
+      : Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(requestedMs)) return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, requestedMs));
+  }
+  return Math.min(MAX_RETRY_AFTER_MS, 800 * 2 ** retry);
+}
+
 /**
  * Send rows in order, CHUNK_SIZE at a time; each chunk is saved all-or-nothing on the server.
- * A network failure is retried twice (safe: the server skips rows it already saved). Stops at the first failing chunk.
+ * Network failures, 429s and server errors are retried twice (safe: the server skips rows it already saved).
+ * Stops at the first non-retryable or exhausted chunk failure.
  */
 export async function commitImport(batch: string, rows: AnyImportRow[], onProgress: (p: ImportProgress) => void, shouldStop?: () => boolean): Promise<ImportOutcome> {
   const p: ImportProgress = { done: 0, total: rows.length, saved: 0, skipped: 0, in: 0, out: 0 };
@@ -35,17 +55,27 @@ export async function commitImport(batch: string, rows: AnyImportRow[], onProgre
     const chunk = rows.slice(i, i + CHUNK_SIZE);
     const range = { from: chunk[0].row, to: chunk[chunk.length - 1].row };
     if (shouldStop?.()) return { ...p, ok: false, error: 'Stopped. Rows already saved stay saved.', failedChunk: range };
-    let attempt = 0;
+    let retry = 0;
     for (;;) {
+      let response: Awaited<ReturnType<typeof postChunk>>;
       try {
-        const { res, data } = await postChunk(batch, chunk);
-        if (!res.ok) return { ...p, ok: false, error: data?.error || 'This part of the file could not be saved.', failedRow: data?.row, failedChunk: range };
+        response = await postChunk(batch, chunk);
+      } catch {
+        if (retry >= MAX_RETRIES) return { ...p, ok: false, error: 'Network problem. Check the connection and import the same file again — rows already saved will not be added twice.', failedChunk: range };
+        await new Promise((resolve) => setTimeout(resolve, 800 * 2 ** retry));
+        retry++;
+        continue;
+      }
+      const { res, data } = response;
+      if (res.ok) {
         p.saved += data.saved; p.skipped += data.skipped; p.in += data.in; p.out += data.out;
         break;
-      } catch {
-        if (++attempt > 2) return { ...p, ok: false, error: 'Network problem. Check the connection and import the same file again — rows already saved will not be added twice.', failedChunk: range };
-        await new Promise((r) => setTimeout(r, 800 * attempt));
       }
+      if (!transientStatus(res.status) || retry >= MAX_RETRIES) {
+        return { ...p, ok: false, error: data?.error || 'This part of the file could not be saved.', failedRow: data?.row, failedChunk: range };
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelay(res, retry)));
+      retry++;
     }
     p.done += chunk.length;
     onProgress({ ...p });

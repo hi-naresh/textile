@@ -218,6 +218,37 @@ export async function ledgerAll(q: Q, f: LedgerFilters, cap = 100_000) {
   return r.rows.map(toRow);
 }
 
+/** Export matching movements in ascending ledger order without retaining the full result in memory. */
+export async function* ledgerExportRows(q: Q, f: LedgerFilters, pageSize = 5000): AsyncGenerator<LedgerRow> {
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 10_000) throw new RangeError('Export page size must be from 1 to 10,000.');
+  const w = whereFor(f, await ledgerAlts(q, f));
+  const highWater = Number((await q('SELECT COALESCE(MAX(id), 0)::int AS id FROM stock_movements')).rows[0].id);
+  if (!highWater) return;
+
+  let cursor: { ts: string; id: number } | null = null;
+  for (;;) {
+    const params = [...w.params, highWater];
+    let where = `${w.sql}${w.sql ? ' AND' : 'WHERE'} sm.id <= $${params.length}`;
+    if (cursor) {
+      params.push(cursor.ts, cursor.id);
+      where += ` AND (sm.ts, sm.id) > ($${params.length - 1}::timestamp, $${params.length})`;
+    }
+    params.push(pageSize);
+    const result = await q(
+      `SELECT ${COLS} FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id
+        ${where}
+        ORDER BY sm.ts ASC, sm.id ASC
+        LIMIT $${params.length}`,
+      params,
+    );
+    if (!result.rows.length) return;
+    for (const row of result.rows) yield toRow(row);
+    if (result.rows.length < pageSize) return;
+    const last = result.rows[result.rows.length - 1];
+    cursor = { ts: String(last.ts_key), id: Number(last.id) };
+  }
+}
+
 /** Distinct qualities / designs for the filter dropdowns, and which designs each quality has (lot_facets: one row per pair). */
 export async function ledgerFacets(q: Q, scopeUserId: string | null = null) {
   const r = scopeUserId

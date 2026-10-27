@@ -185,13 +185,31 @@ export async function lotSearch(q: Q, f: LotFilters, limit: number): Promise<Lot
   return [...out, ...has.rows.map(toLot)];
 }
 
-/** Every matching lot (Excel), lot no. order. Capped. */
-export async function lotsAll(q: Q, f: LotFilters, cap = 200_000): Promise<LotRow[]> {
-  const params: unknown[] = [];
-  const parts = lotWhere(f, params, await lotAlts(q, f));
+/** Every matching lot, streamed in keyset-paged order for large exports. */
+export async function* lotExportRows(q: Q, f: LotFilters, pageSize = 500): AsyncGenerator<LotRow> {
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 5000) throw new Error('Lot export page size must be between 1 and 5,000.');
+  const baseParams: unknown[] = [];
+  const baseParts = lotWhere(f, baseParams, await lotAlts(q, f));
   const cols = f.closed ? `${LOT_COLS}${CLOSED_COLS}` : LOT_COLS;
-  const r = await q(`SELECT ${cols} FROM lots l${f.closed ? CLOSED_JOIN : ''} ${parts.length ? `WHERE ${parts.join(' AND ')}` : ''} ORDER BY l.lot_id LIMIT ${cap}`, params);
-  return r.rows.map(toLot);
+  let cursor: string | null = null;
+  for (;;) {
+    const params = [...baseParams];
+    const parts = [...baseParts];
+    if (cursor) {
+      params.push(cursor);
+      parts.push(`l.lot_id < $${params.length}`);
+    }
+    params.push(pageSize + 1);
+    const r = await q(
+      `SELECT ${cols} FROM lots l${f.closed ? CLOSED_JOIN : ''} ${parts.length ? `WHERE ${parts.join(' AND ')}` : ''}
+       ORDER BY l.lot_id DESC LIMIT $${params.length}`,
+      params,
+    );
+    const page = r.rows.slice(0, pageSize).map(toLot);
+    for (const lot of page) yield lot;
+    if (r.rows.length <= pageSize) return;
+    cursor = page[page.length - 1].lot_id;
+  }
 }
 
 export async function lotsByIds(q: Q, ids: string[]): Promise<LotRow[]> {

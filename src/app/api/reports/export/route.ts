@@ -7,6 +7,7 @@ import { toBuffer } from '@/lib/excel';
 import { buildReport, stripForRole } from '@/lib/reports/build';
 import { reportFileName, reportWorkbook } from '@/lib/reports/export';
 import { REPORT_PERIODS, isIsoDate, type ReportPeriod } from '@/lib/reports/dates';
+import { enforceRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
 
 // GET /api/reports/export?period=day|week|month&date=YYYY-MM-DD
 //   → .xlsx, one sheet per section. Money / AI usage sheets only for the owner. Workers: 403.
@@ -15,7 +16,9 @@ const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    const { role } = await requireCap(req, 'reports.view');
+    const actor = await requireCap(req, 'reports.view');
+    await enforceRateLimit(query, actor.userId, 'report-export', 60);
+    const { role } = actor;
     const period = (sp.get('period') ?? 'day') as ReportPeriod;
     if (!REPORT_PERIODS.includes(period)) throw new LedgerError('period must be day, week or month.');
     const date = sp.get('date');
@@ -27,6 +30,8 @@ export async function GET(req: NextRequest) {
       headers: { 'Content-Type': XLSX, 'Content-Disposition': `attachment; filename="${reportFileName(report)}"`, 'Cache-Control': 'no-store' },
     });
   } catch (error) {
+    const limited = rateLimitResponse(error);
+    if (limited) return limited;
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });
   }

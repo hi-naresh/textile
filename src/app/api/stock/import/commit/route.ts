@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { withTransaction } from '@/lib/db';
+import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody } from '@/lib/ledger';
 import { CHUNK_MAX, ChunkRowError, commitChunk } from '@/lib/stock-import';
 import { readObject, requireCap } from '@/lib/apiAuth';
+import { enforceRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
 
 // Step 2 of the Excel import (owner). POST { batch, rows: ImportRow[] } — one chunk, one transaction.
 // Rows are re-checked with the ledger's rules. Rows already saved for this batch are skipped (safe to re-send).
@@ -10,6 +11,7 @@ import { readObject, requireCap } from '@/lib/apiAuth';
 export async function POST(req: NextRequest) {
   try {
     const a = await requireCap(req, 'ledger.edit');
+    await enforceRateLimit(query, a.userId, 'stock-import-commit', 300);
     const body = await readObject(req);
     const batch = body?.batch;
     const rows = body?.rows;
@@ -19,6 +21,8 @@ export async function POST(req: NextRequest) {
     const result = await withTransaction((q) => commitChunk(q, batch, rows, a.by));
     return NextResponse.json(result);
   } catch (error) {
+    const limited = rateLimitResponse(error);
+    if (limited) return limited;
     if (error instanceof ChunkRowError) return NextResponse.json({ error: `Row ${error.row}: ${error.message}`, row: error.row }, { status: 422 });
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

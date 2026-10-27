@@ -4,6 +4,7 @@
 // Each row carries import_ref "<batch>:<excel row>", so a re-sent chunk never adds a row twice.
 import ExcelJS from 'exceljs';
 import { createHash } from 'crypto';
+import type { Writable } from 'node:stream';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 import { newLedgerMemo, piecesValue, recordIncoming, recordOutgoing, srValue } from './ledger';
@@ -212,52 +213,95 @@ function wallClock(ts: string): Date {
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()));
 }
 
+const CHALLAN_COLUMNS = [
+  { header: 'S.No', key: 'sno', width: 7 },
+  { header: 'SR No', key: 'sr', width: 8 },
+  { header: 'Date', key: 'date', width: 12, style: { numFmt: 'dd-mm-yyyy' } },
+  { header: 'IN/OUT', key: 'direction', width: 8 },
+  { header: 'Challan No', key: 'challan', width: 14 },
+  { header: 'Lot No', key: 'lot_id', width: 14 },
+  { header: 'Quality', key: 'quality', width: 18 },
+  { header: 'Design', key: 'design', width: 14 },
+  { header: 'Grey Mts', key: 'grey', width: 12, style: { numFmt: '#,##0.00' } },
+  { header: 'Finished Mts', key: 'finished', width: 13, style: { numFmt: '#,##0.00' } },
+  { header: 'Stock Mts', key: 'meters', width: 12, style: { numFmt: '#,##0.00' } },
+  { header: 'Pieces (taka)', key: 'pieces', width: 12 },
+  { header: 'Mill', key: 'mill', width: 22 },
+  { header: 'Weaver', key: 'weaver', width: 22 },
+  { header: 'Party', key: 'party', width: 24 },
+  { header: 'Location', key: 'location', width: 18 },
+  { header: 'Entry', key: 'entry', width: 10 },
+  { header: 'Kind', key: 'kind', width: 26 },
+  { header: 'Linked SR (SR.NO)', key: 'linked_sr', width: 12 },
+  { header: '% (register)', key: 'pct', width: 10 },
+  { header: 'Location code', key: 'loc_code', width: 12 },
+  { header: 'L', key: 'l', width: 7 },
+  { header: 'Billed Mts (NQTY)', key: 'nqty', width: 14, style: { numFmt: '#,##0.00' } },
+  { header: 'LOT S', key: 'lots', width: 7 },
+  { header: 'Status', key: 'status', width: 10 },
+  { header: 'Taken before import (S-1…S-10)', key: 'takes', width: 30 },
+];
+
+function challanValues(r: LedgerRow, index: number) {
+  return {
+    sno: index, sr: r.sr_no, date: wallClock(r.ts), direction: r.direction, challan: r.source_doc_id ?? '', lot_id: r.lot_id,
+    quality: r.quality, design: r.design, grey: r.grey_meters, finished: r.finished_meters, meters: r.meters, pieces: r.pieces,
+    mill: r.mill_name ?? '', weaver: r.weaver_name ?? '', party: r.direction === 'OUT' ? r.party ?? '' : '', location: r.location ?? '',
+    entry: r.capture_event_id ? 'Photo' : r.imported ? 'Excel' : 'Manual',
+    kind: r.kind === 'adjustment' ? 'Opening adjustment (register)' : r.kind === 'closing' ? CLOSING_LABEL : r.direction === 'OUT' ? 'Sale / dispatch' : 'Received',
+    linked_sr: r.linked_sr ?? '', pct: r.register_pct, loc_code: r.loc_code ?? '', l: r.bill_pct, nqty: r.billed_meters, lots: r.lot_status_code ?? '',
+    status: r.entry_status ? ENTRY_STATUS_LABEL[r.entry_status] : '',
+    takes: r.takes?.length ? r.takes.map((t) => t ?? '').join(' | ') : '',
+  };
+}
+
+function configureChallanSheet(wb: ExcelJS.Workbook, name: string, streaming = false) {
+  const ws = wb.addWorksheet(name, {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  ws.columns = CHALLAN_COLUMNS;
+  ws.autoFilter = { from: 'A1', to: { row: 1, column: CHALLAN_COLUMNS.length } };
+  if (streaming) {
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = HEAD_FILL;
+  } else {
+    styleHeader(ws);
+  }
+  return ws;
+}
+
 /** Challans sheet for export (S.No first, then SR no. and pieces). */
 export function challanSheet(wb: ExcelJS.Workbook, rows: LedgerRow[]) {
-  const ws = wb.addWorksheet('Challans');
-  ws.columns = [
-    { header: 'S.No', key: 'sno', width: 7 },
-    { header: 'SR No', key: 'sr', width: 8 },
-    { header: 'Date', key: 'date', width: 12, style: { numFmt: 'dd-mm-yyyy' } },
-    { header: 'IN/OUT', key: 'direction', width: 8 },
-    { header: 'Challan No', key: 'challan', width: 14 },
-    { header: 'Lot No', key: 'lot_id', width: 14 },
-    { header: 'Quality', key: 'quality', width: 18 },
-    { header: 'Design', key: 'design', width: 14 },
-    { header: 'Grey Mts', key: 'grey', width: 12, style: { numFmt: '#,##0.00' } },
-    { header: 'Finished Mts', key: 'finished', width: 13, style: { numFmt: '#,##0.00' } },
-    { header: 'Stock Mts', key: 'meters', width: 12, style: { numFmt: '#,##0.00' } },
-    { header: 'Pieces (taka)', key: 'pieces', width: 12 },
-    { header: 'Mill', key: 'mill', width: 22 },
-    { header: 'Weaver', key: 'weaver', width: 22 },
-    { header: 'Party', key: 'party', width: 24 },
-    { header: 'Location', key: 'location', width: 18 },
-    { header: 'Entry', key: 'entry', width: 10 },
-    { header: 'Kind', key: 'kind', width: 26 },
-    { header: 'Linked SR (SR.NO)', key: 'linked_sr', width: 12 },
-    { header: '% (register)', key: 'pct', width: 10 },
-    { header: 'Location code', key: 'loc_code', width: 12 },
-    { header: 'L', key: 'l', width: 7 },
-    { header: 'Billed Mts (NQTY)', key: 'nqty', width: 14, style: { numFmt: '#,##0.00' } },
-    { header: 'LOT S', key: 'lots', width: 7 },
-    { header: 'Status', key: 'status', width: 10 },
-    { header: 'Taken before import (S-1…S-10)', key: 'takes', width: 30 },
-  ];
-  rows.forEach((r, i) => {
-    ws.addRow({
-      sno: i + 1, sr: r.sr_no, date: wallClock(r.ts), direction: r.direction, challan: r.source_doc_id ?? '', lot_id: r.lot_id,
-      quality: r.quality, design: r.design, grey: r.grey_meters, finished: r.finished_meters, meters: r.meters, pieces: r.pieces,
-      mill: r.mill_name ?? '', weaver: r.weaver_name ?? '', party: r.direction === 'OUT' ? r.party ?? '' : '', location: r.location ?? '',
-      entry: r.capture_event_id ? 'Photo' : r.imported ? 'Excel' : 'Manual',
-      kind: r.kind === 'adjustment' ? 'Opening adjustment (register)' : r.kind === 'closing' ? CLOSING_LABEL : r.direction === 'OUT' ? 'Sale / dispatch' : 'Received',
-      linked_sr: r.linked_sr ?? '', pct: r.register_pct, loc_code: r.loc_code ?? '', l: r.bill_pct, nqty: r.billed_meters, lots: r.lot_status_code ?? '',
-      status: r.entry_status ? ENTRY_STATUS_LABEL[r.entry_status] : '',
-      takes: r.takes?.length ? r.takes.map((t) => t ?? '').join(' | ') : '',
-    });
-  });
-  styleHeader(ws);
-  ws.autoFilter = { from: 'A1', to: { row: 1, column: ws.columns.length } };
+  const ws = configureChallanSheet(wb, 'Challans');
+  rows.forEach((r, i) => ws.addRow(challanValues(r, i + 1)));
   return ws;
+}
+
+/** Stream challans to XLSX without retaining the export rows or workbook in memory. */
+export async function streamChallanWorkbook(firmName: string, output: Writable, rows: AsyncIterable<LedgerRow>) {
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false });
+  wb.creator = firmName;
+  wb.created = new Date();
+  const maxDataRows = 1_048_575;
+  let sheetNumber = 1;
+  let rowsInSheet = 0;
+  let serial = 1;
+  let ws = configureChallanSheet(wb, 'Challans', true);
+  ws.getRow(1).commit();
+  for await (const row of rows) {
+    if (rowsInSheet === maxDataRows) {
+      ws.autoFilter = { from: 'A1', to: { row: rowsInSheet + 1, column: CHALLAN_COLUMNS.length } };
+      ws.commit();
+      sheetNumber++;
+      rowsInSheet = 0;
+      ws = configureChallanSheet(wb, `Challans ${sheetNumber}`, true);
+      ws.getRow(1).commit();
+    }
+    ws.addRow(challanValues(row, serial++)).commit();
+    rowsInSheet++;
+  }
+  ws.autoFilter = { from: 'A1', to: { row: rowsInSheet + 1, column: CHALLAN_COLUMNS.length } };
+  await wb.commit();
 }
 
 // ---------- validation ----------
@@ -681,6 +725,7 @@ export async function commitChunk(q: Q, batch: string, rows: unknown[], movedBy:
   // App template rows: "<batch>:<excel row>". Register rows carry their own ref (row content, so a re-saved file matches too).
   const fmtOf = (r: Record<string, unknown>) => (r.fmt === 'reg_in' || r.fmt === 'reg_out' ? r.fmt : 'tpl');
   const refs = list.map((r, i) => (fmtOf(r) === 'tpl' ? `${batch}:${nums[i]}` : String(r.ref ?? '')));
+  await q(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [batch]);
   const done = await q(`SELECT import_ref FROM stock_movements WHERE import_ref = ANY($1::text[])`, [refs]);
   const already = new Set(done.rows.map((x) => x.import_ref as string));
   const memo = newLedgerMemo();

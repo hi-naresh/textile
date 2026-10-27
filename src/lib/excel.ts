@@ -1,5 +1,7 @@
 // Excel (.xlsx) export of challans / lots and the manual-stock import template. Server-side only.
 import ExcelJS from 'exceljs';
+import type { Writable } from 'node:stream';
+import type { LotRow } from './lots-query';
 
 export const IMPORT_SHEET = 'Stock entries';
 export const IMPORT_COLUMNS = [
@@ -93,6 +95,48 @@ export function lotsSheet(wb: ExcelJS.Workbook, rows: Record<string, unknown>[])
   rows.forEach((r, i) => ws.addRow({ sno: i + 1, lot_id: r.lot_id, quality: r.quality, design: r.design, balance: Number(r.balance ?? 0), location: r.location ?? '' }));
   styleHeader(ws);
   return ws;
+}
+
+/** Stream lot balances to XLSX without retaining all matching lots or workbook rows in memory. */
+export async function streamLotsWorkbook(firmName: string, output: Writable, rows: AsyncIterable<LotRow>) {
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false });
+  wb.creator = firmName;
+  wb.created = new Date();
+  const columns = [
+    { header: 'S.No', key: 'sno', width: 7 },
+    { header: 'Lot No', key: 'lot_id', width: 14 },
+    { header: 'Quality', key: 'quality', width: 18 },
+    { header: 'Design', key: 'design', width: 14 },
+    { header: 'Balance Mts', key: 'balance', width: 13, style: { numFmt: '#,##0.00' } },
+    { header: 'Location', key: 'location', width: 14 },
+  ];
+  const maxDataRows = 1_048_575;
+  let sheetNumber = 1;
+  let rowsInSheet = 0;
+  let serial = 1;
+  const addSheet = (name: string) => {
+    const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = columns;
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9E4D8' } };
+    ws.getRow(1).commit();
+    return ws;
+  };
+  let ws = addSheet('Lots');
+  for await (const lot of rows) {
+    if (rowsInSheet === maxDataRows) {
+      ws.commit();
+      sheetNumber++;
+      rowsInSheet = 0;
+      ws = addSheet(`Lots ${sheetNumber}`);
+    }
+    ws.addRow({
+      sno: serial++, lot_id: lot.lot_id, quality: lot.quality, design: lot.design,
+      balance: lot.balance, location: lot.location ?? '',
+    }).commit();
+    rowsInSheet++;
+  }
+  await wb.commit();
 }
 
 // The import template (Direction + market-code dropdowns) is built by importTemplate() in src/lib/stock-import.ts.
