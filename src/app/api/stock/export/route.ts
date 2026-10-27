@@ -1,9 +1,10 @@
-import { PassThrough, Readable } from 'node:stream';
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { snapshotExport } from '@/lib/exportSnapshot';
+import { readBilling } from '@/lib/billing';
 import { getFirmConfig } from '@/lib/settings';
 import { streamLotsWorkbook, toBuffer } from '@/lib/excel';
-import { enforceRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
+import { enforceApiRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
 import { requireCap } from '@/lib/apiAuth';
 import { errorResponseBody, nextSr } from '@/lib/ledger';
 import { filtersFrom, ledgerExportRows } from '@/lib/ledger-query';
@@ -22,49 +23,31 @@ const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireCap(req, 'ledger.edit');
-    await enforceRateLimit(query, actor.userId, 'stock-export', 60);
+    await enforceApiRateLimit(query, actor.userId, 'stock-export');
     const sp = req.nextUrl.searchParams;
     const kind = sp.get('kind') ?? 'challans';
-    const cfg = await getFirmConfig();
     const day = new Date().toISOString().slice(0, 10);
     let name: string;
 
-    if (kind === 'challans') {
+    if (kind === 'challans' || kind === 'lots') {
       const f = filtersFrom(sp);
       const tag = [f.direction?.toLowerCase(), f.lot, f.quality, f.from && `from-${f.from}`, f.to && `to-${f.to}`].filter(Boolean).join('-').replace(/[^A-Za-z0-9-]/g, '');
-      name = `challans-${tag ? `${tag.slice(0, 60)}-` : ''}${day}.xlsx`;
-      const exportRows = ledgerExportRows((text, params) => query(text, params), f);
-      const firstRow = await exportRows.next();
-      async function* rows() {
-        if (!firstRow.done) yield firstRow.value;
-        yield* exportRows;
-      }
-      const output = new PassThrough();
-      const body = Readable.toWeb(output) as ReadableStream<Uint8Array>;
-      void streamChallanWorkbook(cfg.firm.name, output, rows())
-        .catch((error: unknown) => output.destroy(error instanceof Error ? error : new Error('Stock export failed.')));
+      name = kind === 'lots' ? `lots-${day}.xlsx` : `challans-${tag ? `${tag.slice(0, 60)}-` : ''}${day}.xlsx`;
+      const { body } = await snapshotExport(req.signal, async (q) => {
+        const billing = await readBilling(q);
+        return {
+          metadata: null,
+          write: (output) => kind === 'challans'
+            ? streamChallanWorkbook(billing.firmName, output, ledgerExportRows(q, f))
+            : streamLotsWorkbook(billing.firmName, output, lotExportRows(q, lotFiltersFrom(sp))),
+        };
+      });
       return new NextResponse(body, {
         headers: { 'Content-Type': XLSX, 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' },
       });
     }
 
-    if (kind === 'lots') {
-      const exportRows = lotExportRows((text, params) => query(text, params), lotFiltersFrom(sp));
-      const firstRow = await exportRows.next();
-      async function* rows() {
-        if (!firstRow.done) yield firstRow.value;
-        yield* exportRows;
-      }
-      const output = new PassThrough();
-      const body = Readable.toWeb(output) as ReadableStream<Uint8Array>;
-      void streamLotsWorkbook(cfg.firm.name, output, rows())
-        .catch((error: unknown) => output.destroy(error instanceof Error ? error : new Error('Lot export failed.')));
-      name = `lots-${day}.xlsx`;
-      return new NextResponse(body, {
-        headers: { 'Content-Type': XLSX, 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' },
-      });
-    }
-
+    const cfg = await getFirmConfig();
     const wb = newBook(cfg.firm.name);
     if (kind === 'template') {
       const run = (text: string, params?: unknown[]) => query(text, params);

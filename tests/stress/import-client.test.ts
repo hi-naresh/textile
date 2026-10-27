@@ -65,3 +65,53 @@ test('a lost response can be retried without duplicating an already committed ro
     globalThis.fetch = originalFetch;
   }
 });
+
+test('a truncated success response is retried as an unknown commit outcome', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => ++calls === 1
+    ? new Response('{"saved":', { status: 200 })
+    : new Response(JSON.stringify({ saved: 0, skipped: 1, in: 0, out: 0 }));
+  try {
+    const result = await commitImport('0123456789abcdef', [row], () => {});
+    assert.equal(result.ok, true);
+    assert.equal(result.done, 1);
+    assert.equal(result.skipped, 1);
+    assert.equal(calls, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('stopping during retry backoff prevents another commit request', async () => {
+  const originalFetch = globalThis.fetch;
+  let stopped = false;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    stopped = true;
+    return new Response('{}', { status: 503, headers: { 'Retry-After': '0' } });
+  };
+  try {
+    const result = await commitImport('0123456789abcdef', [row], () => {}, () => stopped);
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? '', /Stopped/);
+    assert.equal(calls, 1);
+    assert.equal(result.done, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('retry exhaustion stops before the next chunk and preserves committed progress', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const rows = Array.from({ length: 1001 }, (_, i) => ({ ...row, row: i + 2 }));
+  globalThis.fetch = async () => ++calls === 1
+    ? new Response(JSON.stringify({ saved: 500, skipped: 0, in: 500, out: 0 }))
+    : new Response('{"error":"Provider unavailable"}', { status: 503, headers: { 'Retry-After': '0' } });
+  try {
+    const result = await commitImport('0123456789abcdef', rows, () => {});
+    assert.equal(result.ok, false);
+    assert.equal(result.saved, 500);
+    assert.equal(result.done, 500);
+    assert.deepEqual(result.failedChunk, { from: 502, to: 1001 });
+    assert.equal(calls, 4);
+  } finally { globalThis.fetch = originalFetch; }
+});

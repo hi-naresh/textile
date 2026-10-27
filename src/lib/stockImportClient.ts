@@ -24,6 +24,12 @@ const MAX_RETRY_AFTER_MS = 30_000;
 async function postChunk(batch: string, rows: AnyImportRow[]) {
   const res = await fetch('/api/stock/import/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch, rows }) });
   const data = await res.json().catch(() => ({}));
+  // A proxy can truncate/replace even a 200 response after the commit succeeds.
+  // Retry the same idempotent chunk instead of reporting NaN totals or skipping it.
+  if (res.ok && (!['saved', 'skipped', 'in', 'out'].every((key) => Number.isSafeInteger(data?.[key]) && data[key] >= 0)
+    || data.saved + data.skipped !== rows.length || data.in + data.out !== data.saved)) {
+    throw new Error('Incomplete import acknowledgement.');
+  }
   return { res, data };
 }
 
@@ -57,6 +63,7 @@ export async function commitImport(batch: string, rows: AnyImportRow[], onProgre
     if (shouldStop?.()) return { ...p, ok: false, error: 'Stopped. Rows already saved stay saved.', failedChunk: range };
     let retry = 0;
     for (;;) {
+      if (shouldStop?.()) return { ...p, ok: false, error: 'Stopped. Rows already saved stay saved.', failedChunk: range };
       let response: Awaited<ReturnType<typeof postChunk>>;
       try {
         response = await postChunk(batch, chunk);

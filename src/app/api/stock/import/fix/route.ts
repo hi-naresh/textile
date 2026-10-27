@@ -3,7 +3,7 @@ import { readObject, requireCap } from '@/lib/apiAuth';
 import { errorResponseBody } from '@/lib/ledger';
 import { fixSheet, newBook } from '@/lib/stock-import';
 import { toBuffer } from '@/lib/excel';
-import { enforceRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
+import { enforceApiRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
 import { query } from '@/lib/db';
 
 // "Rows to fix" (owner, ledger.edit). POST { name, headers: string[], rows: [{ row, values: unknown[], reason }] }
@@ -15,7 +15,7 @@ const MAX_ROWS = 5000;
 export async function POST(req: NextRequest) {
   try {
     const actor = await requireCap(req, 'ledger.edit');
-    await enforceRateLimit(query, actor.userId, 'stock-import-fix', 60);
+    await enforceApiRateLimit(query, actor.userId, 'stock-import-fix');
     const body = await readObject(req);
     const headers = Array.isArray(body.headers) ? body.headers.slice(0, 60).map((h: unknown) => String(h ?? '').slice(0, 60)) : null;
     const rows = Array.isArray(body.rows) ? body.rows : null;

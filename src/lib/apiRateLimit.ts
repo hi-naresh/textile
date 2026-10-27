@@ -2,6 +2,31 @@ import { NextResponse } from 'next/server';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 
+const POLICIES = {
+  'stock-import': { env: 'API_RATE_LIMIT_STOCK_IMPORT', default: 60 },
+  'stock-import-fix': { env: 'API_RATE_LIMIT_STOCK_IMPORT_FIX', default: 60 },
+  'stock-import-commit': { env: 'API_RATE_LIMIT_STOCK_IMPORT_COMMIT', default: 300 },
+  'stock-export': { env: 'API_RATE_LIMIT_STOCK_EXPORT', default: 60 },
+  'invoice-export': { env: 'API_RATE_LIMIT_INVOICE_EXPORT', default: 60 },
+  'report-export': { env: 'API_RATE_LIMIT_REPORT_EXPORT', default: 60 },
+} as const;
+
+export function apiRateLimitBudget(scope: keyof typeof POLICIES): number {
+  const policy = POLICIES[scope];
+  const raw = process.env[policy.env];
+  if (raw === undefined || raw === '') return policy.default;
+  const limit = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1_000_000) {
+    throw new Error(`${policy.env} must be an integer between 1 and 1000000.`);
+  }
+  return limit;
+}
+
+/** Deployment-configurable budgets; keep the same values on every app instance. */
+export function enforceApiRateLimit(q: Q, userId: string, scope: keyof typeof POLICIES) {
+  return enforceRateLimit(q, userId, scope, apiRateLimitBudget(scope));
+}
+
 export class RateLimitError extends LedgerError {
   constructor(public readonly retryAfterSeconds: number) {
     super(`Too many requests. Try again in ${retryAfterSeconds} seconds.`, 429);
