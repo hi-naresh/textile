@@ -42,7 +42,7 @@ export async function planBackfill(q: Q): Promise<BackfillPlan> {
   const lots = await q(
     `SELECT e.lot_id, l.reg_lot_no, l.quality, l.bal_m, e.id, e.entry_status, to_char(e.ts, 'YYYY-MM-DD') AS d, e.source_doc_id, upper(btrim(e.lot_status_code)) AS code, e.meters,
             (SELECT COUNT(*)::int FROM stock_movements x WHERE x.lot_id = e.lot_id AND x.kind = 'normal' AND (x.ts, x.id) > (e.ts, e.id)) AS after_n
-       FROM (SELECT DISTINCT ON (lot_id) id, lot_id, ts, source_doc_id, lot_status_code, meters FROM stock_movements
+       FROM (SELECT DISTINCT ON (lot_id) id, lot_id, ts, source_doc_id, lot_status_code, meters, entry_status FROM stock_movements
               WHERE direction = 'OUT' AND kind = 'normal' AND upper(btrim(lot_status_code)) = ANY($1::text[])
                 AND (entry_status IS NULL OR entry_status = 'end')
               ORDER BY lot_id, ts DESC, id DESC) e
