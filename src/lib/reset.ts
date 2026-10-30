@@ -40,7 +40,7 @@ export function expandParts(parts: ResetPart[]): ResetPart[] {
 
 /** Tables each part empties (used for the backup file). */
 export const PART_TABLES: Record<ResetPart, string[]> = {
-  stock: ['lots', 'stock_movements', 'lot_locations', 'allocations', 'ledger_edits', 'capture_events'],
+  stock: ['lots', 'stock_movements', 'lot_closures', 'lot_locations', 'allocations', 'ledger_edits', 'capture_events'],
   floor: ['job_cards', 'allotments', 'efficiency_daily', 'cctv_activity'],
   orders: ['orders', 'inquiries', 'allocations'],
   billing: ['dispatches', 'invoices', 'payments'],
@@ -66,6 +66,7 @@ export async function resetCounts(q: Q): Promise<ResetCounts> {
   const r = await q(`SELECT
       (SELECT count(*) FROM lots)::int AS lots,
       (SELECT count(*) FROM stock_movements)::int AS moves,
+      (SELECT count(*) FROM lot_closures)::int AS closures,
       (SELECT count(*) FROM capture_events)::int AS reads,
       (SELECT count(*) FROM job_cards)::int AS jobs,
       (SELECT count(*) FROM orders)::int AS orders,
@@ -84,7 +85,7 @@ export async function resetCounts(q: Q): Promise<ResetCounts> {
   const f = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-IN')} ${n === 1 ? one : many}`;
   const label = (k: ResetPart) => RESET_PARTS.find((p) => p.key === k)!.label;
   return {
-    stock: { label: label('stock'), n: c.lots + c.moves + c.reads, detail: `${f(c.lots, 'lot')}, ${f(c.moves, 'entry', 'entries')}, ${f(c.reads, 'photo read')}` },
+    stock: { label: label('stock'), n: c.lots + c.moves + c.closures + c.reads, detail: `${f(c.lots, 'lot')}, ${f(c.moves, 'entry', 'entries')}, ${f(c.closures, 'closure record')}, ${f(c.reads, 'photo read')}` },
     floor: { label: label('floor'), n: c.jobs, detail: f(c.jobs, 'job card') },
     orders: { label: label('orders'), n: c.orders + c.inquiries, detail: `${f(c.orders, 'order')}, ${f(c.inquiries, 'inquiry', 'inquiries')}` },
     billing: { label: label('billing'), n: c.dispatches + c.invoices + c.payments, detail: `${f(c.dispatches, 'dispatch', 'dispatches')}, ${f(c.invoices, 'bill')}, ${f(c.payments, 'payment')}` },
@@ -99,7 +100,12 @@ async function restartIds(q: Q, tables: string[]) {
   for (const t of tables) {
     const s = await q(`SELECT pg_get_serial_sequence($1, 'id') AS seq, NOT EXISTS (SELECT 1 FROM ${t}) AS empty`, [t]);
     const seq = s.rows[0]?.seq as string | null;
-    if (seq && s.rows[0].empty) await q(`SELECT setval($1::regclass, 1, false)`, [seq]);
+    if (seq && s.rows[0].empty) {
+      // Unlike setval(), RESTART rolls back with a failed reset/audit write.
+      // regclass formatting quotes the database-owned sequence identifier.
+      const restart = await q(`SELECT format('ALTER SEQUENCE %s RESTART WITH 1', $1::regclass) AS sql`, [seq]);
+      await q(restart.rows[0].sql);
+    }
   }
 }
 
@@ -139,8 +145,8 @@ export async function runReset(q: Q, parts: ResetPart[], by: string): Promise<Re
   if (has('stock')) {
     // Whole stock in one go. TRUNCATE is instant even with millions of rows; it skips the row triggers,
     // so the derived lists (names, quality / design pairs) are emptied here too and the stock version is bumped.
-    const n = await q(`SELECT (SELECT count(*) FROM lots) + (SELECT count(*) FROM stock_movements) + (SELECT count(*) FROM capture_events) + (SELECT count(*) FROM job_cards) AS n`);
-    await q(`TRUNCATE allotments, job_cards, lot_locations, allocations, stock_movements, lots, ledger_edits, capture_events, known_names, lot_facets`);
+    const n = await q(`SELECT (SELECT count(*) FROM lots) + (SELECT count(*) FROM stock_movements) + (SELECT count(*) FROM lot_closures) + (SELECT count(*) FROM capture_events) + (SELECT count(*) FROM job_cards) AS n`);
+    await q(`TRUNCATE allocations, allotments, capture_events, job_cards, known_names, ledger_edits, lot_closures, lot_facets, lot_locations, lots, stock_movements`);
     await q(`DELETE FROM efficiency_daily`);
     await q(`DELETE FROM cctv_activity`);
     await q(`SELECT nextval('stock_rev')`);
@@ -163,6 +169,6 @@ export async function runReset(q: Q, parts: ResetPart[], by: string): Promise<Re
     done.employees = people.rows.length + (w.rowCount ?? 0);
   }
 
-  await restartIds(q, ['orders', 'inquiries', 'dispatches', 'invoices', 'payments', 'parties', 'stock_movements', 'lot_locations', 'job_cards', 'allocations', 'capture_events', 'ledger_edits', 'agent_suggestions']);
+  await restartIds(q, ['orders', 'inquiries', 'dispatches', 'invoices', 'payments', 'parties', 'stock_movements', 'lot_closures', 'lot_locations', 'job_cards', 'allocations', 'capture_events', 'ledger_edits', 'agent_suggestions']);
   return done;
 }

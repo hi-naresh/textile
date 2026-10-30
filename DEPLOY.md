@@ -1,6 +1,6 @@
 # Deploying to Vercel + Supabase
 
-One copy of the app per firm. Each firm gets its own Vercel project and its own Supabase database.
+One copy of the app per firm. Each firm gets its own Vercel project and its own Supabase database. This is the current isolation model; the app does not implement shared-database tenant IDs or per-firm RLS. Keep each project's database/storage credentials separate, and test foreign session tokens against the other deployment before onboarding another firm.
 
 ## What happens on every deploy
 1. You push to GitHub → Vercel starts a build.
@@ -93,3 +93,14 @@ Voice engines: Chrome / Android / Safari tabs use the phone's built-in speech re
 - After pulling this version run `npm install` (adds `exceljs`, `sharp` and `pdf-lib`).
 - Migrations also apply automatically when the local dev server starts.
 - Copy `.env.example` to `.env.local` if you want to point at another database or storage.
+
+
+## Issue #14 staging acceptance
+
+Use a separate disposable Supabase project/branch for staging and connect its credentials only to the intended staging/Preview Vercel environment. Verify the project/database mapping before testing; a schema check of a locally configured URL does not prove that mapping. Provider access and a staging target must exist before running hosted workloads.
+
+Run `npm run db:check` with the staging application's `DATABASE_URL` explicitly supplied. It enforces a read-only transaction, checks all migration records and the rate-limit table/primary key, and uses the same hosted connection settings as the CLI migrator. Apply pending migrations with the existing `db:migrate` workflow only after verifying the target. See [stress instructions](tests/stress/README.md) for exact commands, private manifests, workload execution, and cleanup.
+
+Run 5–20 distinct users with fresh synthetic files; collect function timeouts, server memory, connection counts and latency under load from Vercel/Supabase monitoring. The original issue proposes validation p95 <10 s, commit p95 <2 s, and ordinary-read p95 <300 ms. Confirm these targets and compare the hosted measurements; the current local 20-user commit result does not satisfy 2 s. Load tests and failure injection must never target the production database.
+
+The existing owner/developer Reset Data operation is the supported bulk-delete workflow. It requires authentication, an explicit RESET confirmation and the current password. Its backup includes closure history; successful resets are audited. It is distinct from selective movement deletion, which remains unsupported.

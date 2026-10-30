@@ -9,14 +9,24 @@ export async function openExportSnapshot(signal?: AbortSignal, readOnly = true) 
   const releaseSlot = await acquireBulkSlot(signal);
   let client;
   try { client = await pool.connect(); } catch (error) { releaseSlot(); throw error; }
+  const failure = new AbortController();
   let released = false;
   const release = (destroy = false) => {
     if (released) return;
     released = true;
     signal?.removeEventListener('abort', abort);
+    if (destroy) client.once('end', () => client.removeListener('error', onClientError));
+    else client.removeListener('error', onClientError);
     client.release(destroy);
     releaseSlot();
   };
+  // A checked-out pg client can emit an error between page queries. Propagate
+  // that failure to a blocked writer instead of leaving it until the deadline.
+  const onClientError = (error: Error) => {
+    release(true);
+    failure.abort(error);
+  };
+  client.on('error', onClientError);
   // Destroying the connection also rolls back and interrupts any in-flight query.
   const abort = () => release(true);
   signal?.addEventListener('abort', abort, { once: true });
@@ -36,6 +46,7 @@ export async function openExportSnapshot(signal?: AbortSignal, readOnly = true) 
   return {
     q,
     abort,
+    failureSignal: failure.signal,
     async commit() {
       try {
         const result = await q('COMMIT');
@@ -107,19 +118,23 @@ export async function snapshotExport<T>(
     if (!output.writableFinished) fail(new Error('Export download cancelled.'));
   });
   const abort = () => fail(signal.reason);
+  const databaseFailed = () => fail(snapshot.failureSignal.reason);
   signal.addEventListener('abort', abort, { once: true });
+  snapshot.failureSignal.addEventListener('abort', databaseFailed, { once: true });
   // Bound a snapshot even if a client remains connected but stops reading.
   const deadline = setTimeout(() => fail(new Error('Export exceeded five minutes.')), 300_000);
   deadline.unref();
   const cleanup = () => {
     clearTimeout(deadline);
     signal.removeEventListener('abort', abort);
+    snapshot.failureSignal.removeEventListener('abort', databaseFailed);
   };
   const writerFinished = finished(writer);
   // Observe errors immediately, including errors during prepare.
   void writerFinished.catch(() => {});
   try {
     signal.throwIfAborted();
+    snapshot.failureSignal.throwIfAborted();
     const prepared = await prepare(snapshot.q);
     writer.pipe(output, { end: false });
     const completion = (async () => {

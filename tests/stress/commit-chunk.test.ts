@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
+import { Client } from 'pg';
 import pool, { query, withTransaction, type Q } from '../../src/lib/db';
 import { recordIncoming } from '../../src/lib/ledger';
 import { ChunkRowError, commitChunk } from '../../src/lib/stock-import';
@@ -72,4 +73,34 @@ test('an injected database failure after a write rolls back the entire chunk', a
   }), /Injected database failure/);
   assert.equal(Number((await query('SELECT COUNT(*)::int AS n FROM stock_movements WHERE import_ref LIKE $1', [`${failedBatch}:%`])).rows[0].n), 0);
   assert.equal(Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [lotId])).rows[0].bal_m), 990);
+});
+
+test('terminating the actual database connection mid-chunk rolls back writes and permits an idempotent retry', { timeout: 10000 }, async () => {
+  const lostBatch = randomUUID().replace(/-/g, '').slice(0, 16);
+  const rows = [{ ...row, row: 2 }, { ...row, row: 3 }];
+  const victim = new Client({ connectionString: databaseUrl.toString() });
+  const disconnected = new Promise<void>((resolve) => victim.once('error', () => resolve()));
+  victim.on('error', () => {});
+  try {
+    await victim.connect();
+    const pid = Number((await victim.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+    await victim.query('BEGIN');
+    let terminated = false;
+    const q: Q = async (sql, params) => {
+      const result = await victim.query(sql, params);
+      if (!terminated && sql.includes('INSERT INTO stock_movements')) {
+        terminated = true;
+        assert.equal((await query('SELECT pg_terminate_backend($1) AS killed', [pid])).rows[0].killed, true);
+        await disconnected;
+      }
+      return result;
+    };
+    await assert.rejects(commitChunk(q, lostBatch, rows, null));
+    assert.equal(terminated, true);
+    assert.equal((await query('SELECT COUNT(*)::int AS n FROM stock_movements WHERE import_ref LIKE $1', [`${lostBatch}:%`])).rows[0].n, 0);
+    assert.equal(Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [lotId])).rows[0].bal_m), 990);
+    assert.equal((await withTransaction((tx) => commitChunk(tx, lostBatch, rows, null))).saved, 2);
+    assert.equal((await withTransaction((tx) => commitChunk(tx, lostBatch, rows, null))).skipped, 2);
+    assert.equal(Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [lotId])).rows[0].bal_m), 970);
+  } finally { await victim.end(); }
 });

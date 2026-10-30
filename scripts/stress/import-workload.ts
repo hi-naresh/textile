@@ -27,10 +27,16 @@ export async function runImportWorkload(send: Send, users: WorkloadUser[], valid
   }
   const read = (u: WorkloadUser, operation: string) => measure(operation, async () => {
     const response = await request(`/api/stock/ledger?limit=25&lot=${encodeURIComponent(u.lot)}`, { headers: { cookie: u.cookie } });
-    await response.json();
+    const data = await response.json();
+    if (!Array.isArray(data.rows)) throw new Error('Ledger response is not a row list.');
+    if (operation === 'read_before_import' && data.rows.length) throw new Error('Fixture lot already has movements. Use a fresh fixture.');
   });
   const exportFile = (u: WorkloadUser) => measure('export', async () => {
     const response = await request(`/api/stock/export?kind=challans&lot=${encodeURIComponent(u.lot)}`, { headers: { cookie: u.cookie } });
+    if (!response.headers.get('Content-Type')?.includes('spreadsheetml.sheet')) {
+      await response.body?.cancel();
+      throw new Error('Export did not return an XLSX response.');
+    }
     const reader = response.body!.getReader();
     let bytes = 0;
     for (;;) {
@@ -52,6 +58,10 @@ export async function runImportWorkload(send: Send, users: WorkloadUser[], valid
         const response = await request('/api/stock/import', { method: 'POST', headers: { cookie: u.cookie }, body: form });
         const data = await response.json() as ValidateResult;
         if (!data.ok || !data.batch || !data.rows?.length) throw new Error('Workbook validation failed or has no unsaved rows. Use a fresh fixture.');
+        if (data.alreadySaved || data.total !== data.rows.length || data.rows.length > 20000
+          || data.rows.some((row) => !('direction' in row) || row.direction !== 'IN' || row.lot_id !== u.lot)) {
+          throw new Error('Workload files must contain only fresh incoming template rows for the declared fixture lot.');
+        }
         return data;
       });
     }
