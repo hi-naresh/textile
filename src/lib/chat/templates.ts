@@ -193,8 +193,9 @@ export const TEMPLATES: Template[] = [
       const r = await query(
         `SELECT jc.id AS job_card, jc.lot_id, jc.process, w.name AS worker, jc.meters_in, jc.meters_out,
                 ROUND((jc.shortage / NULLIF(jc.meters_in, 0) * 100)::numeric, 2) AS shortage_pct
-         FROM job_cards jc JOIN workers w ON w.id = jc.worker_id
+         FROM job_cards jc JOIN workers w ON w.id = jc.worker_id JOIN lots l ON l.lot_id = jc.lot_id
          WHERE jc.status = 'closed' AND ($1::int IS NULL OR jc.ts_closed >= CURRENT_DATE - ($1::int - 1))
+           ${s.role === 'supervisor' ? 'AND l.closed_at IS NULL' : ''}
            AND jc.shortage / NULLIF(jc.meters_in, 0) * 100 > $2 ${sectionFilter(s, 'jc.process', 3)}
          ORDER BY shortage_pct DESC LIMIT 20`,
         s.role === 'supervisor' ? [d, shortageLimitPct, s.sections] : [d, shortageLimitPct],
@@ -212,8 +213,8 @@ export const TEMPLATES: Template[] = [
         `SELECT jc.id AS job_card, jc.lot_id, jc.process, COALESCE(w.name, 'Unassigned') AS worker, jc.meters_in, jc.ts_created::date AS since,
                 GREATEST(0, CURRENT_DATE - jc.ts_created::date) AS days_open,
                 COUNT(*) OVER () AS total_cards, SUM(jc.meters_in) OVER () AS total_meters
-         FROM job_cards jc LEFT JOIN workers w ON w.id = jc.worker_id
-         WHERE jc.status <> 'closed' ${sectionFilter(s, 'jc.process', 1)}
+         FROM job_cards jc JOIN lots l ON l.lot_id = jc.lot_id LEFT JOIN workers w ON w.id = jc.worker_id
+         WHERE jc.status <> 'closed' AND l.closed_at IS NULL ${sectionFilter(s, 'jc.process', 1)}
          ORDER BY jc.ts_created LIMIT 30`,
         s.role === 'supervisor' ? [s.sections] : [],
       );

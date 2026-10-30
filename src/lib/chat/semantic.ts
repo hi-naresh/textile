@@ -78,7 +78,7 @@ export const METRICS: Record<string, MetricDef> = {
   },
   on_floor: {
     title: 'On the floor', describe: 'meters currently on the floor (open job cards)', unit: 'm',
-    from: 'job_cards jc JOIN workers w ON w.id = jc.worker_id JOIN lots l ON l.lot_id = jc.lot_id', where: `jc.status <> 'closed'`, agg: 'SUM(jc.meters_in)',
+    from: 'job_cards jc JOIN workers w ON w.id = jc.worker_id JOIN lots l ON l.lot_id = jc.lot_id', where: `jc.status <> 'closed' AND l.closed_at IS NULL`, agg: 'SUM(jc.meters_in)',
     dims: { worker: 'w.name', section: 'jc.process', quality: 'l.quality', lot: 'jc.lot_id' },
     filters: { section: SEC('jc.process'), worker: 'w.name', quality: 'l.quality', lot: 'jc.lot_id' }, sectionScoped: SEC('jc.process'), closedLotScoped: 'l.closed_at IS NULL',
   },
@@ -419,10 +419,15 @@ export async function briefing(scope: Scope): Promise<SemanticResult> {
        (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'OUT' AND kind = 'normal' AND ts::date = CURRENT_DATE) AS out_today,
        (SELECT COUNT(*) FROM stock_movements WHERE direction = 'OUT' AND kind = 'normal' AND ts::date = CURRENT_DATE) AS out_n,
        (SELECT COALESCE(SUM(meters), 0) FROM stock_movements WHERE direction = 'IN' AND kind = 'normal' AND ts::date = CURRENT_DATE) AS in_today,
-       (SELECT COALESCE(SUM(meters_out), 0) FROM job_cards WHERE status = 'closed' AND ts_closed::date = CURRENT_DATE
-          AND ($1::text[] IS NULL OR ${SEC('process')} = ANY($1::text[]))) AS done_today,
-       (SELECT COUNT(*) FROM job_cards WHERE status <> 'closed' AND ($1::text[] IS NULL OR ${SEC('process')} = ANY($1::text[]))) AS open_cards,
-       (SELECT COALESCE(SUM(meters_in), 0) FROM job_cards WHERE status <> 'closed' AND ($1::text[] IS NULL OR ${SEC('process')} = ANY($1::text[]))) AS on_floor,
+       (SELECT COALESCE(SUM(jc.meters_out), 0) FROM job_cards jc JOIN lots l ON l.lot_id = jc.lot_id
+          WHERE jc.status = 'closed' AND jc.ts_closed::date = CURRENT_DATE
+          AND ($1::text[] IS NULL OR (l.closed_at IS NULL AND ${SEC('jc.process')} = ANY($1::text[])))) AS done_today,
+       (SELECT COUNT(*) FROM job_cards jc JOIN lots l ON l.lot_id = jc.lot_id
+          WHERE jc.status <> 'closed' AND l.closed_at IS NULL
+          AND ($1::text[] IS NULL OR ${SEC('jc.process')} = ANY($1::text[]))) AS open_cards,
+       (SELECT COALESCE(SUM(jc.meters_in), 0) FROM job_cards jc JOIN lots l ON l.lot_id = jc.lot_id
+          WHERE jc.status <> 'closed' AND l.closed_at IS NULL
+          AND ($1::text[] IS NULL OR ${SEC('jc.process')} = ANY($1::text[]))) AS on_floor,
        (SELECT COUNT(DISTINCT worker_id) FROM allotments WHERE date = CURRENT_DATE) AS workers_today,
        (SELECT COUNT(*) FROM capture_events WHERE status = 'pending') AS pending`,
     [sec],
@@ -437,5 +442,10 @@ export async function briefing(scope: Scope): Promise<SemanticResult> {
     `${n('workers_today')} worker${n('workers_today') === 1 ? '' : 's'} with work today`,
     n('pending') ? `${n('pending')} photo read${n('pending') === 1 ? '' : 's'} waiting for review` : '',
   ].filter(Boolean);
-  return { answer: `${parts.join('; ')}.`, rows: [x] };
+  // Owner-only receipt/dispatch figures must not leak through the structured tool result.
+  const visible = scope.role === 'owner' ? x : {
+    done_today: x.done_today, open_cards: x.open_cards, on_floor: x.on_floor,
+    workers_today: x.workers_today, pending: x.pending,
+  };
+  return { answer: `${parts.join('; ')}.`, rows: [visible] };
 }
