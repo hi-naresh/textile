@@ -7,6 +7,7 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const { verifySchema } = require('./check-schema');
+const { dbConfig } = require('./db-config');
 const LOCK_KEY = 72_150_926; // same lock as the runtime migrator
 
 // Migrations need a direct (non-pooled) connection. On Vercel + Supabase that's POSTGRES_URL_NON_POOLING.
@@ -18,14 +19,6 @@ const url =
   process.env.POSTGRES_URL ||
   (onVercel ? '' : 'postgresql://naresh@localhost:5432/textile_db');
 
-function dbConfig(raw) {
-  const u = new URL(raw);
-  const local = ['localhost', '127.0.0.1', '::1'].includes(u.hostname);
-  const mode = u.searchParams.get('sslmode');
-  u.searchParams.delete('sslmode');
-  u.searchParams.delete('sslrootcert');
-  return { connectionString: u.toString(), ssl: !local && mode !== 'disable' ? { rejectUnauthorized: false } : false };
-}
 
 const dir = path.join(__dirname, 'migrations');
 

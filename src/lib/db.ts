@@ -59,16 +59,24 @@ export type Q = (text: string, params?: unknown[]) => Promise<QueryResult>;
 
 export async function withTransaction<T>(fn: (q: Q) => Promise<T>): Promise<T> {
   const client = await pool.connect();
+  let connectionError: Error | undefined;
+  const onError = (error: Error) => { connectionError = error; };
+  client.on('error', onError);
   const q: Q = (text, params) => client.query(text, params as unknown[] | undefined);
   try {
     await client.query('BEGIN');
     const result = await fn(q);
-    await client.query('COMMIT');
+    const committed = await client.query('COMMIT');
+    // A helper may catch a SQL error (for example best-effort audit logging).
+    // PostgreSQL then answers ROLLBACK; returning success would hide a lost write.
+    if (committed.command !== 'COMMIT') throw new Error('Transaction rolled back before it could commit.');
     return result;
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('[DB] Rollback failed', rbErr); }
     throw err;
   } finally {
-    client.release();
+    if (connectionError) client.once('end', () => client.removeListener('error', onError));
+    else client.removeListener('error', onError);
+    client.release(!!connectionError);
   }
 }

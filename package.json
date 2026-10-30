@@ -17,6 +17,7 @@
     "stress:export-writers": "tsx scripts/stress/measure-large-exports.ts",
     "stress:report": "tsx scripts/stress/measure-report.ts",
     "stress:import-workload": "tsx scripts/stress/measure-import-workload.ts",
+    "stress:reset": "tsx scripts/stress/measure-reset.ts",
     "stress:http": "tsx scripts/stress/http-import-workload.ts",
     "stress:import-chunk": "tsx scripts/stress/measure-import-chunk.ts",
     "dev:create": "node scripts/create-developer.js",

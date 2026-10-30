@@ -7,7 +7,8 @@ import { createSession } from '../../src/lib/auth/session';
 import { can, setAccessOff } from '../../src/lib/access';
 import { closeJobCard, createJobCard, recordIncoming, recordOutgoing } from '../../src/lib/ledger';
 import { applyLedgerEdits } from '../../src/lib/ledger-edit';
-import { runSpec } from '../../src/lib/chat/semantic';
+import { briefing, runSpec } from '../../src/lib/chat/semantic';
+import { executeTool } from '../../src/lib/chat/tools';
 import { lotsByIds } from '../../src/lib/lots-query';
 import { ledgerPage } from '../../src/lib/ledger-query';
 import { LedgerError } from '../../src/lib/ledger-error';
@@ -25,7 +26,7 @@ import { applyBackfill, backfillPlanFingerprint, planBackfill } from '../../src/
 import { checkOutgoing, commitOutgoingRow } from '../../src/lib/register-import';
 import { newLedgerMemo } from '../../src/lib/ledger';
 import { search } from '../../src/lib/search';
-import { templateById } from '../../src/lib/chat/templates';
+import { templateById, type Scope } from '../../src/lib/chat/templates';
 import { createOrder } from '../../src/lib/sales/orders';
 import { manualAllocate } from '../../src/lib/sales/allocate';
 import { GET as getOrderDetail } from '../../src/app/api/orders/[id]/route';
@@ -46,7 +47,7 @@ let overridesBefore: unknown = null;
 const get = (cookie: string, path: string) => new NextRequest(`http://localhost${path}`, { headers: { cookie } });
 const post = (cookie: string, path: string, body: unknown) => new NextRequest(`http://localhost${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = (cookie: string, body: unknown) => new NextRequest('http://localhost/api/settings', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const LOTS = Array.from({ length: 30 }, (_, i) => i + 1);
+const LOTS = Array.from({ length: 34 }, (_, i) => i + 1);
 const balance = async (l: string) => Number((await query('SELECT bal_m FROM lots WHERE lot_id = $1', [l])).rows[0].bal_m);
 
 async function addLot(l: string, meters: number) {
@@ -329,6 +330,72 @@ test('#5 chat current stock excludes closed lots; supervisors cannot query their
   assert.ok(ownerOrder.allocations.some((a: { lot_id: string }) => a.lot_id === closedLot));
   const supervisorOrder = await (await getOrderDetail(get(supCookie, `/api/orders/${created.order.id}`), routeContext)).json();
   assert.ok(supervisorOrder.allocations.every((a: { lot_id: string }) => a.lot_id !== closedLot));
+});
+
+test('#5 chat work lists hide closed lots and retain owner history', async () => {
+  const owner = { role: 'owner' as const, sections: [] };
+  const supervisor = { role: 'supervisor' as const, sections: ['folding'] };
+  const closedLot = lot(31);
+  const openLot = lot(32);
+  const otherSectionLot = lot(33);
+  for (const [lotId, process, meters] of [[closedLot, 'Folding', 100], [openLot, 'Folding', 200], [otherSectionLot, 'Packing', 300]] as const) {
+    await query(`INSERT INTO job_cards (lot_id, worker_id, process, meters_in, status, ts_created)
+                 VALUES ($1, $2, $3, $4, 'in-process', CURRENT_DATE - 30)`, [lotId, id, process, meters]);
+    await query(`INSERT INTO job_cards (lot_id, worker_id, process, meters_in, meters_out, status, ts_closed)
+                 VALUES ($1, $2, $3, $4, 0, 'closed', CURRENT_DATE)`, [lotId, id, process, meters]);
+  }
+  const lookup = (template: string, scope: Scope) => executeTool('lookup', { template }, scope);
+  const before = await lookup('open_job_cards', supervisor);
+  assert.ok(before.rows?.some((r) => r.lot_id === closedLot));
+  const beforeMeters = Number(before.rows![0].total_meters);
+  const beforeCards = Number(before.rows![0].total_cards);
+  assert.equal((await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: closedLot, action: 'close' }))).status, 200);
+
+  for (const scope of [owner, supervisor]) {
+    const work = await lookup('open_job_cards', scope);
+    assert.ok(work.rows?.some((r) => r.lot_id === openLot));
+    assert.ok(work.rows?.every((r) => r.lot_id !== closedLot));
+    assert.ok(!work.answer?.includes(closedLot));
+    const floor = await executeTool('query_data', { metric: 'on_floor', filters: { lot: closedLot } }, scope);
+    assert.equal(Number(floor.rows?.[0]?.value), 0);
+  }
+  const scoped = await lookup('open_job_cards', supervisor);
+  assert.ok(scoped.rows?.every((r) => r.lot_id !== otherSectionLot));
+  assert.equal(Number(scoped.rows![0].total_meters), beforeMeters - 100);
+  assert.equal(Number(scoped.rows![0].total_cards), beforeCards - 1);
+  const shortages = await lookup('shortage_report', supervisor);
+  assert.ok(shortages.rows?.some((r) => r.lot_id === openLot));
+  assert.ok(shortages.rows?.every((r) => r.lot_id !== closedLot && r.lot_id !== otherSectionLot));
+  assert.ok((await lookup('shortage_report', owner)).rows?.some((r) => r.lot_id === closedLot));
+  assert.deepEqual((await lookup('open_job_cards', { ...supervisor, sections: [] })).rows, []);
+
+  assert.equal((await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: closedLot, action: 'reopen' }))).status, 200);
+  assert.ok((await lookup('open_job_cards', supervisor)).rows?.some((r) => r.lot_id === closedLot));
+});
+
+test('#5 briefing removes closed-lot work for supervisors but preserves owner history', async () => {
+  const owner = { role: 'owner' as const, sections: [] };
+  const supervisor = { role: 'supervisor' as const, sections: ['folding'] };
+  await query(`INSERT INTO job_cards (lot_id, worker_id, process, meters_in, meters_out, status, ts_closed)
+               VALUES ($1, $2, 'Folding', 100, NULL, 'in-process', NULL),
+                      ($1, $2, 'Folding', 100, 60, 'closed', CURRENT_DATE)`, [lot(34), id]);
+  const beforeOwner = (await briefing(owner)).rows[0];
+  const beforeSupervisor = (await briefing(supervisor)).rows[0];
+  assert.equal((await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(34), action: 'close' }))).status, 200);
+  const afterOwner = (await briefing(owner)).rows[0];
+  const afterSupervisor = (await briefing(supervisor)).rows[0];
+  for (const [before, after] of [[beforeOwner, afterOwner], [beforeSupervisor, afterSupervisor]]) {
+    assert.equal(Number(after.open_cards), Number(before.open_cards) - 1);
+    assert.equal(Number(after.on_floor), Number(before.on_floor) - 100);
+  }
+  assert.equal(Number(afterOwner.done_today), Number(beforeOwner.done_today));
+  assert.equal(Number(afterOwner.in_today), Number(beforeOwner.in_today));
+  assert.equal(Number(afterOwner.out_today), Number(beforeOwner.out_today));
+  assert.equal(Number(afterSupervisor.done_today), Number(beforeSupervisor.done_today) - 60);
+  assert.ok(!Object.hasOwn(afterSupervisor, 'in_today'));
+  assert.ok(!Object.hasOwn(afterSupervisor, 'out_today'));
+  const empty = (await briefing({ ...supervisor, sections: [] })).rows[0];
+  for (const key of ['on_floor', 'open_cards', 'done_today']) assert.equal(Number(empty[key]), 0);
 });
 
 // ---------- #6 edit status, close by hand, reopen ----------

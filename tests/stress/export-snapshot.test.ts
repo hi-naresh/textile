@@ -225,3 +225,19 @@ test('read-only snapshots reject accidental writes and a pre-aborted request use
   await assert.rejects(openExportSnapshot(AbortSignal.abort()));
   assert.equal(pool.totalCount, pool.idleCount);
 });
+
+test('database disconnect during a slow download aborts the writer and releases its slot', { timeout: 10000 }, async () => {
+  let pid = 0;
+  const { body, completion } = await snapshotExport(new AbortController().signal, async (q) => {
+    pid = Number((await q('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+    return { metadata: null, write: async (out) => {
+      while (true) if (!out.write(Buffer.alloc(64 * 1024))) await once(out, 'drain');
+    } };
+  });
+  const reader = body.getReader();
+  await reader.read();
+  assert.equal((await query('SELECT pg_terminate_backend($1) AS killed', [pid])).rows[0].killed, true);
+  await assert.rejects(completion);
+  await assert.rejects(async () => { while (!(await reader.read()).done) { /* consume until the stream error */ } });
+  assert.equal(pool.totalCount, pool.idleCount);
+});
