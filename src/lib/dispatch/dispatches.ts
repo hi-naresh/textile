@@ -130,6 +130,7 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
 
   let challan = challanCode(b.challan_no);
   if (challan) {
+    await q(`SELECT pg_advisory_xact_lock(hashtext('dispatch-challan:' || $1))`, [challan]);
     const dup = await q(`SELECT id FROM dispatches WHERE upper(challan_no) = $1 LIMIT 1`, [challan]);
     if (dup.rows[0]) throw new LedgerError(`Challan ${challan} is already used on dispatch #${dup.rows[0].id}.`, 409);
   }
@@ -153,6 +154,7 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
     await q(`UPDATE dispatches SET challan_no = $2 WHERE id = $1`, [id, challan]);
   }
   const dispatchDate = b.date ? dateValue(b.date) : b.dispatched_at ? dateValue(b.dispatched_at) : null;
+  if (dispatchDate) await q('UPDATE dispatches SET dispatched_at = ($2::date + dispatched_at::time) WHERE id = $1', [id, dispatchDate]);
   for (const l of lines) {
     await recordOutgoing(q, {
       lot_id: l.lot_id,

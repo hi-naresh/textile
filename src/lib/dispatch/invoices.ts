@@ -132,7 +132,7 @@ export async function recordTallyInvoice(q: Q, b: Record<string, unknown>, actor
   let dispatchId: number | null = null;
   if (b.dispatch_id != null && b.dispatch_id !== '') {
     dispatchId = Number(b.dispatch_id);
-    const d = await q(`SELECT party_id FROM dispatches WHERE id = $1`, [dispatchId]);
+    const d = await q(`SELECT party_id FROM dispatches WHERE id = $1 FOR UPDATE`, [dispatchId]);
     if (!d.rows[0]) throw new LedgerError(`Dispatch #${b.dispatch_id} not found.`, 404);
     if (d.rows[0].party_id !== party.id) throw new LedgerError(`Dispatch #${dispatchId} is for another party.`);
   }

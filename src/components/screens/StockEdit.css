@@ -81,3 +81,12 @@ select.se-in[data-c="entry_status"] { min-width: 124px; } /* "Not set" / "Runnin
 .se-pair > .se-cell { flex: 1 1 0; min-width: 0; }
 .se-pair .se-in { width: 100%; min-width: 0; }
 .se-pair > .se-cell:nth-child(2) { flex: 2 1 0; }
+
+@media (min-width: 761px) {
+  .ledger-tbl.se-tbl td[data-label="Lot"] .se-in,
+  .se-in:is([data-c="party"], [data-c="mill_name"], [data-c="weaver_name"]) { min-width: 250px; }
+}
+@media (max-width: 760px) {
+  .rtbl.se-tbl td:has(.se-in:is([data-c="quality"], [data-c="design"], [data-c="party"], [data-c="mill_name"], [data-c="weaver_name"])) { flex-direction: column; gap: 6px; }
+  .rtbl.se-tbl td:has(.se-in:is([data-c="quality"], [data-c="design"], [data-c="party"], [data-c="mill_name"], [data-c="weaver_name"])) > :is(.se-cell, .se-stack) { width: 100%; max-width: 100%; flex: auto; text-align: left; }
+}

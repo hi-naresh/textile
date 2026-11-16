@@ -5,6 +5,7 @@
 // Tally invoices, Tally export, party statements (₹). Supervisors never see ₹ here.
 import React, { useEffect, useState } from 'react';
 import Icon from '../Icon';
+import { DispatchEdit } from './DispatchEdit';
 import { Empty, PageHead, Pill, Segmented, Sheet, dayTime, fmt, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
 import { can } from '@/lib/access';
@@ -96,6 +97,7 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
   const rows = data?.dispatches ?? [];
   const q = who(ctx.role, actor);
 
+  const [editId, setEditId] = useState<number | null>(null);
   const [invFor, setInvFor] = useState<DispatchRow | null>(null);
   // WhatsApp column: when connected, or when a message was sent earlier.
   const waOn = !!ctx.d.status?.whatsapp;
@@ -173,6 +175,7 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
                   )}
                   <td data-label="Documents" className="r">
                     <div className={s.docs}>
+                      {owner && <button className="btn sm" onClick={() => setEditId(d.id)}>Edit</button>}
                       <a className="btn sm" href={`/api/docs/challan?dispatch_id=${d.id}&${q}`} target="_blank" rel="noopener">Challan</a>
                       <a className="btn sm" href={`/api/docs/packing-list?dispatch_id=${d.id}&${q}`} target="_blank" rel="noopener">Packing</a>
                       {owner && d.invoice_id && <a className="btn sm" href={`/api/docs/invoice?id=${d.invoice_id}&${q}`} target="_blank" rel="noopener">Invoice</a>}
@@ -184,6 +187,9 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
           </table>
         </section>
       )}
+      <Sheet open={editId != null} title="Edit dispatch" onClose={() => setEditId(null)}>
+        {editId != null && <DispatchEdit id={editId} ctx={ctx} onDone={() => { setEditId(null); onChanged(); }} />}
+      </Sheet>
       <Sheet open={invFor != null} title={invFor ? `Invoice for ${invFor.party_name ?? 'dispatch'}` : ''} onClose={() => setInvFor(null)}>
         {invFor && <InvoiceRates ctx={ctx} dispatch={invFor} busy={busy === invFor.id} onCreate={(rates) => createInvoice(invFor, rates)} />}
       </Sheet>

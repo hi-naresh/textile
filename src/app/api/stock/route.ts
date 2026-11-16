@@ -1,3 +1,4 @@
+import { serverTiming } from '@/lib/server-timing';
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
 import { can, canAddShops } from '@/lib/access';
@@ -145,8 +146,10 @@ export async function GET(request: NextRequest) {
 // Both: sr_no (optional, whole number > 0, unique per direction → 409 when taken), pieces (optional taka, whole number ≥ 0)
 // Optional register fields (migration 013): IN register_pct (0–100), loc_code ("212", "142+143"); OUT bill_pct (L), billed_meters (NQTY), lot_status_code (LOT S)
 export async function POST(request: NextRequest) {
+  const timing = serverTiming();
   try {
     const a = await requireCap(request, 'ledger.edit');
+    timing.mark('auth');
     const body = await readObject(request);
     const direction = body?.direction;
     if (direction !== 'IN' && direction !== 'OUT') {
@@ -166,7 +169,8 @@ export async function POST(request: NextRequest) {
         ? recordIncoming(q, input, { requireLotDetails: true, qualityCatalog: true })
         : recordOutgoing(q, input, { endAllowed: can(a.role, 'stock.end') })
     );
-    return NextResponse.json({ success: true, movement });
+    timing.mark('write');
+    return NextResponse.json({ success: true, movement }, { headers: timing.headers() });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

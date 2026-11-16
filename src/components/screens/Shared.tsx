@@ -438,7 +438,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   );
 
   return (
-    <form className="stack-16" onSubmit={submit}>
+    <form className="stack-16 stock-entry-form" onSubmit={submit}>
       <div className="fld">Direction
         <Segmented label="Direction" value={f.direction} onChange={switchDirection} className="fit" options={[{ value: 'IN', label: 'Incoming (IN)' }, { value: 'OUT', label: 'Outgoing (OUT)' }]} />
       </div>
@@ -483,7 +483,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <MarketLocationPicker key={round} ctx={ctx} value={f.location} onChange={(v) => setF((cur) => ({ ...cur, location: v }))} />
           </div>
           {!known && f.lot_id.trim() && lotChecked && (
-            <div className="two-col">
+            <div className="stack-16">
               <label className="fld">Quality (new lot)<input name="quality" list="quality-catalog" value={f.quality} onChange={set('quality')} autoComplete="off" aria-invalid={qualityBad} placeholder="Type the first letter" />
                 <datalist id="quality-catalog">{(catalog ?? []).map((x) => <option key={x} value={x} />)}</datalist>
                 {qualityBad && <span className="err small">Not in the quality catalog. Pick from the list{role === 'owner' || role === 'supervisor' ? ' or add it in Stock ledger → Quality catalog' : ''}.</span>}

@@ -1,3 +1,4 @@
+import { serverTiming } from '@/lib/server-timing';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, LedgerError } from '@/lib/ledger';
@@ -29,8 +30,10 @@ export async function GET(req: NextRequest) {
 //   then the WhatsApp dispatch message is queued when the owner switched it on and sent in the background
 //   (null when off / not connected / no number).
 export async function POST(req: NextRequest) {
+  const timing = serverTiming();
   try {
     const a = await requireCap(req, 'dispatch.manage');
+    timing.mark('auth');
     const b = await readObject(req);
     if (!b || typeof b !== 'object') throw new LedgerError('Send the dispatch as JSON.');
     const owner = can(a.role, 'finance.view');
@@ -42,12 +45,14 @@ export async function POST(req: NextRequest) {
       const full = await getDispatch(q, id, owner);
       return { ...full, ...(inv ? { invoice: inv.invoice, note: inv.note } : {}) };
     });
+    timing.mark('write');
     // After the commit: the dispatch is saved whatever WhatsApp does (owner switch; parties without a number are skipped).
     // Only the 'queued' log row is written here; Meta is called after the response is sent (after() → waitUntil on Vercel).
     const wa = await queueDispatch(out.dispatch.id, { by: actor });
     if (wa.job) { const job = wa.job; after(() => deliver(job).then(() => undefined)); }
     const whatsapp = wa.job ? { queued: true, message: wa.result.message } : null;
-    return NextResponse.json({ success: true, ...out, whatsapp }, { status: 201 });
+    timing.mark('queue');
+    return NextResponse.json({ success: true, ...out, whatsapp }, { status: 201, headers: timing.headers() });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

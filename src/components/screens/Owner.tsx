@@ -175,14 +175,14 @@ export function Stock({ ctx }: { ctx: Ctx }) {
         lg.holdRefresh(); // the refresh below must not reload the loaded pages (rows are patched in place)
         lt.holdRefresh();
       }
-      await d.refreshStock(); // summary / names / qualities stay in sync (only the small stock snapshot)
+      void d.refreshStock(); // Save is committed; refresh the summary in the background.
       discard();
       const n = Number(data.saved ?? 0);
       const adjustments = (data.adjustments ?? []) as { lot_id: string; adjustment_m: number }[];
       const detail = adjustments.map((x) => Math.abs(x.adjustment_m) < 0.01
         ? `Lot ${x.lot_id}: no closing adjustment needed`
         : `Lot ${x.lot_id}: ${fmt(Math.abs(x.adjustment_m), 2)} m ${x.adjustment_m > 0 ? 'written off' : 'written back'}`).join('; ');
-      d.showToast([n ? `Saved ${n} ${n === 1 ? 'change' : 'changes'}` : 'Nothing changed', detail].filter(Boolean).join(' · '));
+      d.showToast([n ? `Saved ${n} ${n === 1 ? 'change' : 'changes'}` : 'Nothing changed', detail, ...(data.warnings ?? [])].filter(Boolean).join(' · '), data.warnings?.length ? 'warning' : 'success');
       return true;
     } catch (e) {
       d.showToast(e instanceof Error ? e.message : 'Could not save. Nothing was changed.', 'danger');
@@ -251,7 +251,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
       </div>
       {editing && (
         <p className="se-note small t2">
-          Edit mode: change cells like a sheet, then Save. Set a sale’s status (Running / End) in the Status column; End closes the lot. Meters and entry dates are editable. Type dates as DD-MM-YYYY or DDMMYYYY; reopen closed lots before changing their dates. Direction and lot no. stay fixed; location has its own Move.
+          Edit mode: change cells like a sheet, then Save. Set a sale’s status (Running / End) in the Status column; End closes the lot. Meters, incoming grey/finished meters and entry dates are editable. Cancel an active invoice before correcting its meters. Dispatch party, challan and date belong in Dispatch & documents → Edit. Type dates as DD-MM-YYYY or DDMMYYYY; reopen closed lots before changing their dates. Direction and lot no. stay fixed; location has its own Move.
           {view === 'moves' ? ' Quality and design belong to the lot, so changing them on one row changes every row of that lot.' : ''}
         </p>
       )}
@@ -468,7 +468,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
       </td>
       <td data-label="Meters" className="r">{cell('meters', 'Meters', { num: true, decimal: true })}</td>
       <td data-label="Taka" className="r">{cell('pieces', 'Taka (pieces)', { num: true })}</td>
-      <td data-label="Grey → Finished" className="r num t2 d se-ro">{l.direction === 'IN' && (l.grey_meters != null || l.finished_meters != null) ? `${fmt(l.grey_meters, 2)} → ${fmt(l.finished_meters, 2)}` : '—'}</td>
+      <td data-label="Grey → Finished" className="r">{l.direction === 'IN' ? <div className="se-stack"><label>Grey{cell('grey_meters', 'Grey meters', { num: true, decimal: true })}</label><label>Finished{cell('finished_meters', 'Finished meters', { num: true, decimal: true })}</label></div> : '—'}</td>
       <td data-label={l.direction === 'IN' ? 'Mill · weaver' : 'Party'}>
         {l.direction === 'IN'
           ? <div className="se-stack">{cell('mill_name', 'Mill', { list: 'se-mills' })}{cell('weaver_name', 'Weaver', { list: 'se-mills' })}<span className="se-pair">{cell('register_pct', '%', { num: true })}{cell('loc_code', 'Location code')}</span><span className="muted tiny">% · location code</span></div>

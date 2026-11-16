@@ -11,7 +11,7 @@ import { dayTime } from '../ui';
 import './StockEdit.css';
 
 // ---------- drafts ----------
-export type MvField = 'date' | 'meters' | 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party'
+export type MvField = 'date' | 'meters' | 'grey_meters' | 'finished_meters' | 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party'
   | 'register_pct' | 'loc_code' | 'bill_pct' | 'billed_meters' | 'lot_status_code';
 export type LotField = 'quality' | 'design' | 'grade' | 'status';
 export type RowDraft = Partial<Record<string, string>>;
@@ -52,6 +52,9 @@ export function checkCell(field: string, raw: string): string | null {
   const v = raw.replace(/\s+/g, ' ').trim();
   switch (field) {
     case 'date': return entryDateError(v);
+    case 'grey_meters': case 'finished_meters':
+      if (!v) return null;
+      return Number.isFinite(numText(v)) && numText(v) > 0 && numText(v) <= 1_000_000 ? null : 'Enter a positive number up to 1,000,000.';
     case 'meters':
       if (!v) return 'Meters are required.';
       return Number.isFinite(numText(v)) && numText(v) > 0 && numText(v) <= 1_000_000 ? null : 'Enter a positive number up to 1,000,000.';
