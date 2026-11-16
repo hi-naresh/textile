@@ -1,3 +1,4 @@
+import { lotFiltersFrom } from '@/lib/lots-query';
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { errorResponseBody } from '@/lib/ledger';
@@ -11,7 +12,7 @@ import { inventorySnapshot } from '@/lib/reports/inventory';
 export async function GET(req: NextRequest) {
   try {
     await requireCap(req, 'reports.view');
-    const inv = await inventorySnapshot(query);
+    const inv = await inventorySnapshot(query, lotFiltersFrom(req.nextUrl.searchParams));
     return NextResponse.json(inv, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);

@@ -1,5 +1,6 @@
 'use client';
 
+import { srLabel } from '@/lib/sr-series';
 import React, { useState } from 'react';
 import Icon from '../Icon';
 import { PageHead, Pill, Segmented, Sheet, Track, dayTime, effTone, fmt, inr, initials } from '../ui';
@@ -56,7 +57,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
     const dir = g('direction').toUpperCase();
     /* eslint-disable react-hooks/set-state-in-effect -- applying a deep link once per link */
     if (v === 'lots') {
-      setLotFilters({ ...EMPTY_LOT_FILTERS, q: g('q') || g('lot') });
+      setLotFilters({ ...EMPTY_LOT_FILTERS, q: g('q') || g('lot'), quality: g('quality'), design: g('design'), party: g('party') });
     } else {
       setFilters({ ...EMPTY_FILTERS, q: g('q'), lot: g('lot'), direction: dir === 'IN' || dir === 'OUT' ? dir : '', quality: g('quality'), design: g('design'), party: g('party'), from: g('from'), to: g('to') });
     }
@@ -296,14 +297,16 @@ export function Stock({ ctx }: { ctx: Ctx }) {
             <Segmented label="Stock" value={lotFilters.stock || 'all'} onChange={(v) => guard(() => setLotFilters((f) => ({ ...f, stock: v === 'in' || v === 'closed' ? v : '', stockStatus: '' })))}
               options={[{ value: 'all', label: 'All lots' }, { value: 'in', label: 'In stock' }, ...(canClosed ? [{ value: 'closed' as const, label: 'Closed' }] : [])]} />
             {lotFilters.stock !== 'closed' && (
-              <Segmented label="Lot status" value={lotFilters.stockStatus || 'all'} onChange={(v) => guard(() => setLotFilters((f) => ({ ...f, stockStatus: v === 'packed' || v === 'running' || v === 'hold' ? v : '' })))}
+              <Segmented label="Lot status" value={lotFilters.stockStatus || 'all'} onChange={(v) => guard(() => setLotFilters((f) => ({ ...f, stockStatus: v === 'packed' || v === 'running' || v === 'hold' || v === 'other' ? v : '' })))}
                 options={[
                   { value: 'all', label: 'All' },
-                  { value: 'packed', label: <>Packed <span className="muted tiny">{fmt(d.stockSummary?.packed_m ?? 0, 1)} m · {fmt(d.stockSummary?.packed_lots ?? 0)} lots</span></> },
-                  { value: 'running', label: <>Running <span className="muted tiny">{fmt(d.stockSummary?.running_m ?? 0, 1)} m · {fmt(d.stockSummary?.running_lots ?? 0)} lots</span></> },
-                  { value: 'hold', label: <>On hold <span className="muted tiny">{fmt(d.stockSummary?.on_hold_m ?? 0, 1)} m · {fmt(d.stockSummary?.on_hold_lots ?? 0)} lots</span></> },
+                  { value: 'packed', label: 'Packed' },
+                  { value: 'running', label: 'Running' },
+                  { value: 'hold', label: 'On hold' },
+                  { value: 'other', label: 'Other' },
                 ]} />
             )}
+            {(['quality', 'design', 'party'] as const).map((key) => <label className="fld" key={key}>{key === 'party' ? 'Party (lots dispatched to)' : key === 'quality' ? 'Quality' : 'Design'}<input value={lotFilters[key] ?? ''} onChange={(e) => { const value = e.target.value; guard(() => setLotFilters((f) => ({ ...f, [key]: value }))); }} /></label>)}
             <LocationFilter market={lotFilters.market} shop={lotFilters.shop} onChange={(market, shop) => guard(() => setLotFilters((f) => ({ ...f, market, shop })))} />
           </div>
         </div>
@@ -314,7 +317,7 @@ export function Stock({ ctx }: { ctx: Ctx }) {
         </div>
         {lotApplied.stock !== 'closed' && <LotsSummaryCards s={ltSum.data} filtered={lotActive} loading={ltSum.loading} />}
         {lt.error && <div className="alert bad" role="alert">{lt.error}</div>}
-        {lotApplied.stock === 'closed' && <p className="small t2">Closed lots are your internal records: they don’t count in stock, and supervisors don’t see them. Each one shows what was written off so its balance is 0.</p>}
+        {lotApplied.stock === 'closed' && <p className="small t2">Closed lots are your internal records and are hidden from supervisors. Their balances should be zero; any remaining ledger balance is flagged and included in Other. Each row shows the closing adjustment.</p>}
         <section className={`card flush ${lt.loading && lt.rows.length ? 'lf-stale' : ''}`}>
           <div className="ledger-scroll">
           {lotApplied.stock === 'closed' ? (
@@ -405,7 +408,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
     return (
       <tr data-mv={l.id} data-lot={l.lot_id} className={adj || closing ? 'mv-adj' : undefined}>
         <td data-label="SR" className="r num strong">
-          {l.sr_no ?? (l.linked_sr ? <span className="t2" title="SR.NO: the incoming SR of the lot sold">↳{l.linked_sr}</span> : <span className="muted">—</span>)}
+          {(l.sr_no != null ? srLabel(l.sr_no, l.sr_series) : null) ?? (l.linked_sr ? <span className="t2" title="SR.NO: the incoming SR of the lot sold">↳{l.linked_sr}</span> : <span className="muted">—</span>)}
           {canEdit && l.edited ? <EditedMarker target="movement" id={l.id} /> : null}
         </td>
         <td data-label="Time" className="num t2">{dayTime(l.ts)}</td>
@@ -437,7 +440,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
   const previewBilled = (draft?.billed_meters === '' || (draft?.billed_meters === undefined && autoBilled && (draft?.meters !== undefined || draft?.bill_pct !== undefined)))
     && Number.isFinite(qty) && (pct == null || Number.isFinite(pct)) ? str(calculatedBilledMeters(qty, pct)) : undefined;
   const cell = (field: string, label: string, extra: { num?: boolean; decimal?: boolean; list?: string; options?: readonly string[]; optionLabels?: Record<string, string> } = {}) => (
-    <EditCell kind="m" id={l.id} field={field} orig={field === 'date' ? l.entry_date ?? new Date(l.ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) : str(l[field as keyof LedgerRow])} draft={field === 'billed_meters' ? previewBilled ?? draft?.[field] : draft?.[field]} problem={probs?.[field]} label={`${label} for ${row}`} onEdit={onEdit} {...extra} />
+    <EditCell kind="m" id={l.id} field={field} orig={field === 'sr_no' ? srLabel(l.sr_no, l.sr_series) : field === 'date' ? l.entry_date ?? new Date(l.ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) : str(l[field as keyof LedgerRow])} draft={field === 'billed_meters' ? previewBilled ?? draft?.[field] : draft?.[field]} problem={probs?.[field]} label={`${label} for ${row}`} onEdit={onEdit} {...extra} />
   );
   const lotCell = (field: 'quality' | 'design', label: string, list: string) => (
     <EditCell kind="l" id={l.lot_id} field={field} orig={l[field] ?? ''} draft={lotDraft?.[field]} problem={lotProbs?.[field]} label={`${label} of lot ${l.lot_id} (${row})`}
@@ -445,7 +448,7 @@ const MoveRow = React.memo(function MoveRow({ l, i, rate, editing, canEdit, onEd
   );
   return (
     <tr data-mv={l.id} data-lot={l.lot_id} className={draft || lotDraft ? 'se-row-changed' : undefined}>
-      <td data-label="SR" className="r">{cell('sr_no', 'SR no.', { num: true })}</td>
+      <td data-label="SR" className="r">{cell('sr_no', 'SR no.')}</td>
       <td data-label="Date">{cell('date', 'Entry date')}</td>
       {l.direction === 'OUT' ? (
         <>
@@ -494,7 +497,7 @@ const LotRow = React.memo(function LotRow({ l, i, editing, onEdit, draft, probs,
     <tr data-lot={l.lot_id} className={editing && draft ? 'se-row-changed' : undefined}>
       <td data-label="#" className="r num muted">{i + 1}</td>
       <td data-label="Lot"><div className="num strong">{l.lot_id}</div><StockStatusPill status={l.stock_status} /></td>
-      <td data-label="SR no." className="num">{l.sr_nos?.join(', ') || '—'}</td>
+      <td data-label="SR no." className="num">{(l.sr_refs ?? l.sr_nos)?.join(', ') || '—'}</td>
       <td data-label="Weaver">{l.weavers?.join(', ') || '—'}</td>
       {editing ? (
         <>
@@ -532,7 +535,7 @@ function ClosedLotRow({ l, i, onHistory, onReopen }: { l: Lot; i: number; onHist
     <tr data-lot={l.lot_id}>
       <td data-label="#" className="r num muted">{i + 1}</td>
       <td data-label="Lot"><div className="num strong">{l.lot_id}</div><button className="btn sm" onClick={() => onReopen(l)}>Reopen</button><StockStatusPill status={l.stock_status} /></td>
-      <td data-label="SR no." className="num">{l.sr_nos?.join(', ') || '—'}</td>
+      <td data-label="SR no." className="num">{(l.sr_refs ?? l.sr_nos)?.join(', ') || '—'}</td>
       <td data-label="Weaver">{l.weavers?.join(', ') || '—'}</td>
       <td data-label="Quality · design">{l.quality}<div className="muted small">{l.design}</div></td>
       <td data-label="Closed" className="num t2">{l.closed_at ? dayTime(l.closed_at) : '—'}{l.closed_by_name ? <div className="muted tiny">by {l.closed_by_name}</div> : null}</td>

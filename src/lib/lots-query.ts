@@ -35,17 +35,23 @@ export const LOT_DOC = `lower(l.lot_id::text || ' ' || l.quality::text || ' ' ||
 /** With COLLATE "C": must match idx_lots_lot_c (prefix LIKE + ordering from the index). */
 const LOT_KEY = `lower(l.lot_id::text)`;
 
+// Explicit register/entry status wins over job-card inference. Closure and hold
+// are authoritative lot states; unmapped legacy lots remain visible as Other.
 export const STOCK_STATUS_SQL = `(CASE
   WHEN l.closed_at IS NOT NULL THEN 'end'
   WHEN l.status = 'hold' THEN 'hold'
-  WHEN EXISTS (SELECT 1 FROM job_cards jc WHERE jc.lot_id = l.lot_id AND jc.status <> 'closed') THEN 'running'
-  ELSE 'packed'
+  ELSE COALESCE(
+    (SELECT sm.entry_status FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.kind = 'normal' AND sm.entry_status IS NOT NULL ORDER BY sm.ts DESC, sm.id DESC LIMIT 1),
+    CASE WHEN EXISTS (SELECT 1 FROM job_cards jc WHERE jc.lot_id = l.lot_id AND jc.status <> 'closed') THEN 'running'
+         WHEN l.status = 'active' AND EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.kind = 'normal' AND sm.direction = 'IN') THEN 'packed'
+         ELSE 'other' END)
 END)`;
 
 export const LOT_COLS = `l.lot_id, l.quality, l.design, l.grade, l.status, l.bal_m AS balance,
   l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no, l.closed_at,
   ${STOCK_STATUS_SQL} AS stock_status,
   ARRAY(SELECT DISTINCT sm.sr_no FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.kind = 'normal' AND sm.sr_no IS NOT NULL ORDER BY sm.sr_no) AS sr_nos,
+  ARRAY(SELECT DISTINCT CASE WHEN sm.sr_series = '' THEN sm.sr_no::text ELSE sm.sr_series || '-' || sm.sr_no::text END FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.kind = 'normal' AND sm.sr_no IS NOT NULL ORDER BY 1) AS sr_refs,
   ARRAY(SELECT DISTINCT sm.weaver_name FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.kind = 'normal' AND sm.weaver_name IS NOT NULL ORDER BY sm.weaver_name) AS weavers`;
 /** Closed lots view: how / when / who and what was written off (the latest close in lot_closures). */
 const CLOSED_COLS = `, l.close_reason, l.close_note, COALESCE(u.name, l.closed_by) AS closed_by_name, c.adjustment_m`;
@@ -56,7 +62,7 @@ const CLOSED_JOIN = ` LEFT JOIN users u ON u.id = l.closed_by
 export const COUNT_CAP = 10_000;
 
 export type LotRow = {
-  sr_nos?: number[]; weavers?: string[];
+  sr_refs?: string[]; sr_nos?: number[]; weavers?: string[];
   lot_id: string; quality: string; design: string; grade: string; status: string; balance: number;
   stock_status: StockStatus; // Derived from hold status, open job cards and closure
   location: string | null; location_stage: string | null; location_ts: string | null;
@@ -77,6 +83,7 @@ export function toLot(r: Record<string, unknown>): LotRow {
     loc_code: (r.loc_code as string) ?? null, reg_lot_no: (r.reg_lot_no as string) ?? null,
     closed_at: iso(r.closed_at),
     stock_status: r.stock_status as StockStatus,
+    sr_refs: (r.sr_refs as string[]) ?? [],
     sr_nos: ((r.sr_nos as unknown[]) ?? []).map(Number), weavers: (r.weavers as string[]) ?? [],
     ...('close_reason' in r ? {
       close_reason: (r.close_reason as LotRow['close_reason']) ?? null, close_note: (r.close_note as string) ?? null,
@@ -97,13 +104,15 @@ export interface LotFilters {
   status: string;
   inStock: boolean;
   quality: string;
+  design?: string;
+  party?: string;
   closed?: boolean;
   stockStatus?: StockStatus | '';
   market?: string;
   shop?: string;
 } // closed: the owner's Closed lots view
 export const LOT_STATUSES = ['active', 'completed', 'dispatched', 'hold'];
-const STOCK_STATUSES: StockStatus[] = ['packed', 'running', 'hold', 'end'];
+const STOCK_STATUSES: StockStatus[] = ['packed', 'running', 'hold', 'other', 'end'];
 
 export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
   const status = (sp.get('status') ?? '').trim().toLowerCase();
@@ -112,6 +121,7 @@ export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
     status: LOT_STATUSES.includes(status) ? status : '',
     inStock: sp.get('in_stock') === '1',
     quality: clip(sp.get('quality')),
+    design: clip(sp.get('design')), party: clip(sp.get('party')),
     closed: sp.get('closed') === '1',
     stockStatus: STOCK_STATUSES.includes(sp.get('stock_status') as StockStatus) ? sp.get('stock_status') as StockStatus : '',
     market: clip(sp.get('market'), 12),
@@ -122,19 +132,23 @@ export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
 /** Search words that name a market → LIKE patterns for its location labels ("landmark" → "% lm %"). */
 const lotAlts = (q: Q, f: LotFilters) => marketSearchPatterns(q, f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6));
 
-function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> = new Map()): string[] {
+function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> = new Map(), includeExceptions = false): string[] {
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
-  const parts: string[] = [f.closed ? 'l.closed_at IS NOT NULL' : 'l.closed_at IS NULL'];
-  if (f.inStock) parts.push('l.bal_m > 0');
+  const end = `${STOCK_STATUS_SQL} = 'end'`;
+  const parts: string[] = [f.closed ? end : includeExceptions ? `(NOT (${end}) OR l.bal_m <> 0)` : `NOT (${end})`];
+  if (f.inStock) parts.push(includeExceptions ? `(l.bal_m > 0 OR (${end} AND l.bal_m <> 0))` : 'l.bal_m > 0');
   if (f.status) parts.push(`l.status = ${p(f.status)}`);
-  if (f.stockStatus) parts.push(`${STOCK_STATUS_SQL} = ${p(f.stockStatus)}`);
+  if (f.stockStatus) parts.push(includeExceptions && f.stockStatus === 'other' ? `(${STOCK_STATUS_SQL} = 'other' OR (${end} AND l.bal_m <> 0))` : `${STOCK_STATUS_SQL} = ${p(f.stockStatus)}`);
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
+  if (f.design) parts.push(`lower(l.design) = lower(${p(f.design)})`);
+  if (f.party) parts.push(`EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'OUT' AND sm.kind = 'normal' AND lower(btrim(sm.party)) = lower(${p(f.party.trim())}))`);
   const lc = locationCondition(f.market, f.shop, p);
   if (lc) parts.push(lc);
   for (const word of f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6)) {
     const w = `${LOT_DOC} LIKE ${p(`%${likeEscape(word)}%`)}`;
     const mk = (alts.get(word) ?? []).map((x) => ` OR ${LOT_DOC} LIKE ${p(x)}`).join('');
-    const sr = /^\d{1,10}$/.test(word) && Number(word) <= 2147483647 ? ` OR sm.sr_no = ${p(Number(word))}` : '';
+    const prefixed = /^([a-z][a-z0-9]{0,9})-(\d{1,10})$/.exec(word);
+    const sr = prefixed && Number(prefixed[2]) <= 2_000_000_000 ? ` OR (sm.sr_series = ${p(prefixed[1].toUpperCase())} AND sm.sr_no = ${p(Number(prefixed[2]))})` : /^\d{1,10}$/.test(word) && Number(word) <= 2147483647 ? ` OR sm.sr_no = ${p(Number(word))}` : '';
     const incoming = `l.lot_id IN (SELECT sm.lot_id FROM stock_movements sm WHERE sm.direction = 'IN' AND sm.kind = 'normal' AND (lower(sm.weaver_name) LIKE ${p(`%${likeEscape(word)}%`)}${sr}))`;
     parts.push(`(${w}${mk} OR ${incoming})`);
   }
@@ -270,8 +284,36 @@ export async function lotsSummary(q: Q, f: LotFilters) {
     params,
   );
   const x = r.rows[0];
+  const breakdown = await stockBreakdown(q, f);
   return {
-    lots: Number(x.lots), in_stock_lots: Number(x.in_stock_lots), on_hand_m: Number(x.on_hand_m), in_m: Number(x.in_m), out_m: Number(x.out_m),
-    qualities: Number(x.qualities), packed_lots: Number(x.packed_lots), running_lots: Number(x.in_stock_lots) - Number(x.packed_lots), final_m: Number(x.final_m),
+    lots: Number(x.lots), in_stock_lots: Number(x.in_stock_lots), in_m: Number(x.in_m), out_m: Number(x.out_m),
+    qualities: Number(x.qualities), final_m: Number(x.final_m), ...breakdown,
+  };
+}
+
+/** Same stock buckets for the overview, filtered lot cards, inventory and chat.
+ * Trigger-maintained bal_m is the ledger sum. Ended nonzero balances are retained
+ * in Other and explicitly flagged; they never silently disappear from totals.
+ */
+export async function stockBreakdown(q: Q, f: LotFilters = { q: '', status: '', inStock: false, quality: '' }) {
+  const params: unknown[] = [];
+  const parts = lotWhere(f, params, await lotAlts(q, f), true);
+  const result = await q(`WITH matches AS MATERIALIZED (
+    SELECT l.lot_id, l.bal_m AS balance, ${STOCK_STATUS_SQL} AS state FROM lots l WHERE ${parts.join(' AND ')}
+  ), stock AS (SELECT *, CASE WHEN state = 'end' THEN 'other' ELSE state END AS bucket FROM matches WHERE balance > 0 OR (state = 'end' AND balance <> 0))
+  SELECT COALESCE(SUM(balance), 0) AS on_hand_m, COUNT(*)::int AS active_lots,
+    COALESCE(SUM(balance) FILTER (WHERE bucket = 'packed'), 0) AS packed_m, COUNT(*) FILTER (WHERE bucket = 'packed')::int AS packed_lots,
+    COALESCE(SUM(balance) FILTER (WHERE bucket = 'running'), 0) AS running_m, COUNT(*) FILTER (WHERE bucket = 'running')::int AS running_lots,
+    COALESCE(SUM(balance) FILTER (WHERE bucket = 'hold'), 0) AS on_hold_m, COUNT(*) FILTER (WHERE bucket = 'hold')::int AS on_hold_lots,
+    COALESCE(SUM(balance) FILTER (WHERE bucket = 'other'), 0) AS other_m, COUNT(*) FILTER (WHERE bucket = 'other')::int AS other_lots,
+    COUNT(*) FILTER (WHERE state = 'end')::int AS ended_balance_count,
+    COALESCE((SELECT json_agg(x) FROM (SELECT lot_id, balance FROM stock WHERE state = 'end' ORDER BY lot_id LIMIT 20) x), '[]'::json) AS ended_balances
+  FROM stock`, params);
+  const r = result.rows[0];
+  return {
+    on_hand_m: Number(r.on_hand_m), active_lots: Number(r.active_lots),
+    packed_m: Number(r.packed_m), packed_lots: Number(r.packed_lots), running_m: Number(r.running_m), running_lots: Number(r.running_lots),
+    on_hold_m: Number(r.on_hold_m), on_hold_lots: Number(r.on_hold_lots), other_m: Number(r.other_m), other_lots: Number(r.other_lots),
+    ended_balance_count: Number(r.ended_balance_count), ended_balances: (r.ended_balances as { lot_id: string; balance: string }[]).map((x) => ({ lot_id: x.lot_id, balance: Number(x.balance) })),
   };
 }

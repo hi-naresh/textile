@@ -1,3 +1,4 @@
+import { stockBreakdown, type LotFilters } from '../lots-query';
 // Fabric Inventory picture: free stock and days of cover per quality, ageing lots, lots with no
 // location, and grey→finished loss by mill. Fixed queries only; shared by GET /api/inventory,
 // the Inventory agent scan and the Reports screen. Meters only — no ₹ anywhere in here.
@@ -30,6 +31,7 @@ export interface NoLocationLot { lot_id: string; quality: string; design: string
 export interface MillLoss { mill: string; receipts: number; grey: number; finished: number; lossPct: number; gap: number; flagged: boolean }
 
 export interface InventorySnapshot {
+  stock: Awaited<ReturnType<typeof stockBreakdown>>;
   asOf: string;
   thresholds: { lowStockM: number; ageingDays: number; millLossGap: number; millMinReceipts: number };
   totals: { balance: number; reserved: number; free: number; qualities: number; low: number; short: number };
@@ -44,7 +46,7 @@ export const MILL_MIN_RECEIPTS = 3;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
-export async function inventorySnapshot(q: Q): Promise<InventorySnapshot> {
+export async function inventorySnapshot(q: Q, filters?: LotFilters): Promise<InventorySnapshot> {
   const billing = await readBilling(q);
   const { lowStockM, ageingDays } = billing;
 
@@ -150,6 +152,7 @@ export async function inventorySnapshot(q: Q): Promise<InventorySnapshot> {
 
   const sum = (xs: number[]) => r2(xs.reduce((s, x) => s + x, 0));
   return {
+    stock: await stockBreakdown(q, filters),
     asOf: String(asOfR.rows[0].d),
     thresholds: { lowStockM, ageingDays, millLossGap: MILL_LOSS_GAP, millMinReceipts: MILL_MIN_RECEIPTS },
     totals: {

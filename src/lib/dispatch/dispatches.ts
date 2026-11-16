@@ -10,7 +10,7 @@ import { entryStatusValue } from '../registers';
 import { partyByName } from '../parties';
 import { textOrNull, validActor } from './common';
 
-export interface DispatchLine { movement_id: number; lot_id: string; quality: string; design: string; meters: number; order_id: number | null }
+export interface DispatchLine { sr_no?: number | null; sr_series?: string; movement_id: number; lot_id: string; quality: string; design: string; meters: number; order_id: number | null }
 
 const LIST_SQL = `
   SELECT d.id, d.order_id, d.party_id, p.name AS party_name, p.address AS party_address, p.gstin AS party_gstin, p.state_code AS party_state,
@@ -62,13 +62,13 @@ export async function getDispatch(q: Q, id: number, owner: boolean): Promise<{ d
   const r = await q(`${LIST_SQL} WHERE d.id = $1`, [id]);
   if (!r.rows[0]) throw new LedgerError(`Dispatch #${id} not found.`, 404);
   const l = await q(
-    `SELECT sm.id AS movement_id, sm.lot_id, l.quality, l.design, sm.meters, sm.order_id
+    `SELECT sm.id AS movement_id, sm.lot_id, l.quality, l.design, sm.meters, sm.order_id, sm.sr_no, sm.sr_series
      FROM stock_movements sm JOIN lots l ON l.lot_id = sm.lot_id WHERE sm.dispatch_id = $1 AND sm.direction = 'OUT' ORDER BY sm.id`,
     [id],
   );
   return {
     dispatch: toDispatch(r.rows[0], owner),
-    lines: l.rows.map((x) => ({ movement_id: Number(x.movement_id), lot_id: x.lot_id, quality: x.quality, design: x.design, meters: Number(x.meters), order_id: x.order_id == null ? null : Number(x.order_id) })),
+    lines: l.rows.map((x) => ({ sr_no: x.sr_no == null ? null : Number(x.sr_no), sr_series: String(x.sr_series ?? ''), movement_id: Number(x.movement_id), lot_id: x.lot_id, quality: x.quality, design: x.design, meters: Number(x.meters), order_id: x.order_id == null ? null : Number(x.order_id) })),
   };
 }
 
@@ -93,7 +93,7 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
     const status = l.status ? lotStatusValue(l.status) : null;
     const entry_status = entryStatusValue(l.entry_status);
     if (entry_status === 'end' && !opts.endAllowed) throw new LedgerError(`Line ${i + 1}: you can’t mark an entry End. Choose Running.`, 403);
-    return { lot_id: lot, meters, status, entry_status, bill_pct: l.bill_pct, billed_meters: l.billed_meters };
+    return { sr_no: l.sr_no, sr_series: l.sr_series, lot_id: lot, meters, status, entry_status, bill_pct: l.bill_pct, billed_meters: l.billed_meters };
   });
 
   let order: { id: number; party_id: number; party_name: string; status: string } | null = null;
@@ -157,7 +157,7 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
   if (dispatchDate) await q('UPDATE dispatches SET dispatched_at = ($2::date + dispatched_at::time) WHERE id = $1', [id, dispatchDate]);
   for (const l of lines) {
     await recordOutgoing(q, {
-      lot_id: l.lot_id,
+      lot_id: l.lot_id, sr_no: l.sr_no, sr_series: l.sr_series,
       meters: l.meters, bill_pct: l.bill_pct, billed_meters: l.billed_meters,
       party: party.name,
       source_doc: challan,

@@ -1,3 +1,4 @@
+import { parseSr, assertSeries, srLabel } from './sr-series';
 // Excel stock import + challan export with SR no. and pieces (taka). Server-side only.
 //   1. validateImport(): read the .xlsx, check the header row against the template and every row — writes nothing.
 //   2. The browser sends the checked rows back in chunks to /api/stock/import/commit (see commitChunk()).
@@ -7,7 +8,7 @@ import { createHash } from 'crypto';
 import type { Writable } from 'node:stream';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { newLedgerMemo, piecesValue, recordIncoming, recordOutgoing, srValue } from './ledger';
+import { newLedgerMemo, piecesValue, recordIncoming, recordOutgoing } from './ledger';
 import { describePlace, marketList } from './location';
 import { challanCode, lotCode, marketRows, metersValue, nameValue, readPlace } from './normalize';
 import type { LedgerRow } from './ledger-query';
@@ -116,7 +117,7 @@ export function importTemplate(wb: ExcelJS.Workbook, markets: { id: number; code
   lists.state = 'hidden';
   const [dir, loc] = [colLetter('direction'), colLetter('location')];
   const meters = (['grey_meters', 'finished_meters', 'meters'] as Key[]).map(colLetter);
-  const whole = (['sr_no', 'pieces'] as Key[]).map(colLetter);
+  const whole = (['pieces'] as Key[]).map(colLetter);
   for (let r = 2; r <= 2001; r++) {
     ws.getCell(`${dir}${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['"IN,OUT"'], showErrorMessage: true, error: 'IN or OUT' };
     // Not strict: pick the market code, then type the shop and pipe after it ("LM 245 · Pipe 3" or "LM 245 3").
@@ -218,7 +219,7 @@ function wallClock(ts: string): Date {
 
 const CHALLAN_COLUMNS = [
   { header: 'S.No', key: 'sno', width: 7 },
-  { header: 'SR No', key: 'sr', width: 8 },
+  { header: 'SR No', key: 'sr', width: 22 },
   { header: 'Date', key: 'date', width: 12, style: { numFmt: 'dd-mm-yyyy' } },
   { header: 'IN/OUT', key: 'direction', width: 8 },
   { header: 'Challan No', key: 'challan', width: 14 },
@@ -247,7 +248,7 @@ const CHALLAN_COLUMNS = [
 
 function challanValues(r: LedgerRow, index: number) {
   return {
-    sno: index, sr: r.sr_no, date: wallClock(r.ts), direction: r.direction, challan: r.source_doc_id ?? '', lot_id: r.lot_id,
+    sno: index, sr: r.sr_series ? srLabel(r.sr_no, r.sr_series) : r.sr_no, date: wallClock(r.ts), direction: r.direction, challan: r.source_doc_id ?? '', lot_id: r.lot_id,
     quality: r.quality, design: r.design, grey: r.grey_meters, finished: r.finished_meters, meters: r.meters, pieces: r.pieces,
     mill: r.mill_name ?? '', weaver: r.weaver_name ?? '', party: r.direction === 'OUT' ? r.party ?? '' : '', location: r.location ?? '',
     entry: r.capture_event_id ? 'Photo' : r.imported ? 'Excel' : 'Manual',
@@ -313,7 +314,7 @@ export interface ImportRow {
   billed_meters?: number | null;
   row: number; // Excel row number
   direction: 'IN' | 'OUT';
-  sr_no: number | null;
+  sr_series?: string; sr_no: number | null;
   lot_id: string;
   challan: string | null;
   quality: string | null;
@@ -523,6 +524,7 @@ async function validateRegister(q: Q, ws: ExcelJS.Worksheet, headRow: number, ce
 
 /** (c) The app's own template ("Stock entries"). Rules unchanged: any problem blocks the file. */
 async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Promise<ValidateResult> {
+  const seriesCache = new Map<string, unknown>();
 
   // ----- header row -----
   const headerProblems: HeaderProblem[] = [];
@@ -600,9 +602,11 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
     const direction = d === 'IN' || d === 'OUT' ? d : null;
     if (has('direction') && !direction) add(row, 'direction', d ? `"${String(v.direction).trim()}" is not IN or OUT.` : 'Direction is empty (IN or OUT).');
     const lot = has('lot_id') ? tryField(row, 'lot_id', () => lotCode(v.lot_id)) : null;
+    const serial = tryField(row, 'sr_no', () => parseSr(v.sr_no));
+    if (serial?.series) { try { await assertSeries(q, serial.series, seriesCache); } catch (e) { add(row, 'sr_no', (e as Error).message); } }
     const x: ImportRow = {
       row, direction: direction ?? 'IN', lot_id: lot ?? '',
-      sr_no: tryField(row, 'sr_no', () => srValue(v.sr_no)),
+      sr_no: serial?.number ?? null, sr_series: serial?.series ?? '',
       challan: tryField(row, 'challan', () => challanCode(v.challan)),
       quality: tryField(row, 'quality', () => nameValue(v.quality, 'Quality')),
       design: tryField(row, 'design', () => nameValue(v.design, 'Design')),
@@ -643,17 +647,17 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
   const srFirst = new Map<string, number>();
   for (const r of parsed) {
     if (r.sr_no == null) continue;
-    const k = `${r.direction}:${r.sr_no}`;
+    const k = `${r.direction}:${srLabel(r.sr_no, r.sr_series)}`;
     const first = srFirst.get(k);
     if (first != null) add(r.row, 'sr_no', `SR no. ${r.sr_no} (${r.direction}) is also on row ${first}.`);
     else srFirst.set(k, r.row);
   }
   const srs = [...new Set(parsed.map((r) => r.sr_no).filter((n): n is number => n != null))];
   if (srs.length) {
-    const used = await q(`SELECT direction, sr_no, lot_id FROM stock_movements WHERE sr_no = ANY($1::int[])`, [srs]);
-    const taken = new Map(used.rows.map((u) => [`${u.direction}:${u.sr_no}`, u.lot_id as string]));
+    const used = await q(`SELECT direction, sr_no, sr_series, lot_id FROM stock_movements WHERE sr_no = ANY($1::int[])`, [srs]);
+    const taken = new Map(used.rows.map((u) => [`${u.direction}:${srLabel(u.sr_no, u.sr_series)}`, u.lot_id as string]));
     for (const r of parsed) {
-      const lotUsing = r.sr_no != null ? taken.get(`${r.direction}:${r.sr_no}`) : undefined;
+      const lotUsing = r.sr_no != null ? taken.get(`${r.direction}:${srLabel(r.sr_no, r.sr_series)}`) : undefined;
       if (lotUsing) add(r.row, 'sr_no', `SR no. ${r.sr_no} is already used on an ${r.direction === 'IN' ? 'incoming' : 'outgoing'} entry (${lotUsing}).`);
     }
   }
@@ -753,13 +757,13 @@ export async function commitChunk(q: Q, batch: string, rows: unknown[], movedBy:
         await recordIncoming(q, {
           lot_id: r.lot_id, quality: r.quality, design: r.design, grey_meters: r.grey_meters, finished_meters: r.finished_meters,
           mill_name: r.mill_name, weaver_name: r.weaver_name, source_doc: r.challan, location: r.location,
-          sr_no: r.sr_no, pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy, add_shops_by: movedBy,
+          sr_no: r.sr_no, sr_series: r.sr_series ?? '', pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy, add_shops_by: movedBy,
         }, { requireLotDetails: true, memo });
         inCount++;
       } else if (r.direction === 'OUT') {
         await recordOutgoing(q, {
           lot_id: r.lot_id, meters: r.meters, party: r.party, source_doc: r.challan, bill_pct: r.bill_pct, billed_meters: r.billed_meters,
-          sr_no: r.sr_no, pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy,
+          sr_no: r.sr_no, sr_series: r.sr_series ?? '', pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy,
         }, { memo });
         outCount++;
       } else {

@@ -1,3 +1,4 @@
+import { parseSr, assertSeries, srLabel } from './sr-series';
 // Stock ledger edit mode (owner): PATCH /api/stock/edit applies a batch of cell edits in ONE transaction.
 // Every change is validated first; if any is invalid nothing is saved (422 with one problem per bad cell).
 // Each changed field writes one ledger_edits row (who, when, old → new). No-op changes are skipped.
@@ -9,7 +10,7 @@ import { entryDateValue } from './entry-date';
 import { catalogQuality } from './qualities';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { closeLot, piecesValue, reopenLot, srValue } from './ledger';
+import { closeLot, piecesValue, reopenLot } from './ledger';
 import { canonicalLotAttr, canonicalName, challanCode, metersValue, nameValue } from './normalize';
 import { billedMetersValue, billPctValue, calculatedBilledMeters, resolveBilledMeters, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 import { markAgentsStale } from './agents/stale';
@@ -74,7 +75,7 @@ export function parseChanges(body: Record<string, unknown>): EditChange[] {
 }
 
 interface MovementRow {
-  date: string; grey_meters: number | null; finished_meters: number | null; order_id: number | null; dispatch_id: number | null;
+  sr_series: string; date: string; grey_meters: number | null; finished_meters: number | null; order_id: number | null; dispatch_id: number | null;
   id: number; lot_id: string; direction: 'IN' | 'OUT'; kind: string; meters: number; sr_no: number | null; pieces: number | null; source_doc_id: string | null; mill_name: string | null; weaver_name: string | null; party: string | null;
   register_pct: number | null; loc_code: string | null; bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null;
   entry_status: string | null;
@@ -134,7 +135,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     await q(`SELECT lot_id FROM lots WHERE lot_id = ANY($1::text[]) ORDER BY lot_id FOR UPDATE`, [lotIdsToLock]);
   }
   const mvRes = mvIds.length
-    ? await q(`SELECT id, lot_id, direction, kind, meters, grey_meters, finished_meters, order_id, dispatch_id, to_char(ts, 'YYYY-MM-DD') AS date, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code, entry_status
+    ? await q(`SELECT id, lot_id, direction, kind, meters, grey_meters, finished_meters, order_id, dispatch_id, sr_series, to_char(ts, 'YYYY-MM-DD') AS date, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code, entry_status
                  FROM stock_movements WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`, [mvIds])
     : { rows: [] };
   const n = (v: unknown) => (v == null ? null : Number(v));
@@ -172,7 +173,14 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
         v = metersValue(c.value, 'Meters');
         if (v == null) throw new LedgerError('Meters are required.');
       }
-      else if (field === 'sr_no') v = srValue(c.value);
+      else if (field === 'sr_no') {
+        const serial = parseSr(c.value);
+        await assertSeries(q, serial.series);
+        v = serial.number;
+        const previous = mvFinal.get(`${m.id}:sr_series`);
+        if (previous && previous.value !== serial.series) throw new LedgerError('SR is changed twice with different prefixes.');
+        mvFinal.set(`${m.id}:sr_series`, { m, field: 'sr_series', value: serial.series, origin: c.origin });
+      }
       else if (field === 'pieces') v = piecesValue(c.value);
       else if (field === 'source_doc_id') v = challanCode(c.value);
       else if (IN_ONLY.includes(field) && m.direction !== 'IN') throw new LedgerError(`${FIELD_LABEL[field]} is only for incoming (IN) entries.`);
@@ -270,18 +278,18 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
   }
 
   // 3. SR no. is unique per direction — against the database and between the changes in this batch.
-  const srChanges = [...mvFinal.values()].filter((x) => x.field === 'sr_no' && !same(x.m.sr_no, x.value));
+  const srChanges = [...mvFinal.values()].filter((x) => x.field === 'sr_no' && (!same(x.m.sr_no, x.value) || !same(x.m.sr_series, mvFinal.get(`${x.m.id}:sr_series`)?.value ?? x.m.sr_series)));
   const srMoving = srChanges.map((x) => x.m.id); // their old numbers become free
   for (const dir of ['IN', 'OUT'] as const) {
     const mine = srChanges.filter((x) => x.m.direction === dir && x.value != null);
     if (!mine.length) continue;
     const taken = await q(
-      `SELECT sr_no, lot_id FROM stock_movements WHERE direction = $1 AND sr_no = ANY($2::int[]) AND NOT (id = ANY($3::int[]))`,
+      `SELECT sr_no, sr_series, lot_id FROM stock_movements WHERE direction = $1 AND sr_no = ANY($2::int[]) AND NOT (id = ANY($3::int[]))`,
       [dir, mine.map((x) => x.value), srMoving.length ? srMoving : [0]],
     );
-    const used = new Map<number, string>(taken.rows.map((r) => [Number(r.sr_no), String(r.lot_id)]));
+    const used = new Map<string, string>(taken.rows.map((r) => [srLabel(Number(r.sr_no), r.sr_series), String(r.lot_id)]));
     for (const x of mine) {
-      const sr = x.value as number;
+      const sr = srLabel(x.value as number, String(mvFinal.get(`${x.m.id}:sr_series`)?.value ?? x.m.sr_series));
       const hit = used.get(sr);
       if (hit !== undefined) problem(x.origin, `SR ${sr} is already used by an ${dir} entry (lot ${hit}).`);
       else used.set(sr, x.m.lot_id); // a later change in this batch with the same SR collides with this one
@@ -353,7 +361,8 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     // Free the old SR numbers first so swaps inside one batch don't trip the unique index.
     const freeing = srChanges.filter((x) => x.m.sr_no != null).map((x) => x.m.id);
     if (freeing.length) await q(`UPDATE stock_movements SET sr_no = NULL WHERE id = ANY($1::int[])`, [freeing]);
-    for (const [id, { sets }] of mvSet) {
+    for (const [id, { sets, m }] of mvSet) {
+      if (freeing.includes(id) && !sets.some(([f]) => f === 'sr_no')) sets.push(['sr_no', m.sr_no]);
       // Column names come from the MOVEMENT_FIELDS whitelist, never from the request text.
       const cols = sets.map(([f], i) => f === 'date' ? `ts = ($${i + 2}::date + ts::time)` : `${f} = $${i + 2}`).join(', ');
       await q(`UPDATE stock_movements SET ${cols} WHERE id = $1`, [id, ...sets.map(([, v]) => v)]);

@@ -17,11 +17,13 @@ import { checkCode, checkMarketName, checkShop, type MarketInfo } from '@/lib/lo
 import { FirmBilling, FirmParties } from './MasterData';
 import { UsersAndSignUps } from './Team';
 import { PolicyPart } from './Policy';
+import { SrSeries } from './SrSeries';
 import { ResetData } from '../ResetData';
 
-type Part = 'firm' | 'parties' | 'places' | 'policy' | 'team' | 'reset';
+type Part = 'series' | 'firm' | 'parties' | 'places' | 'policy' | 'team' | 'reset';
 const PARTS: { value: Part; label: string; icon: string }[] = [
   { value: 'firm', label: 'Firm & billing', icon: 'factory' },
+  { value: 'series', label: 'SR series', icon: 'box' },
   { value: 'parties', label: 'Parties', icon: 'users' },
   { value: 'places', label: 'Markets & locations', icon: 'box' },
   { value: 'policy', label: 'Policy', icon: 'shield' },
@@ -71,6 +73,7 @@ export function MyFirm({ ctx }: { ctx: Ctx }) {
           </button>
         ))}
       </nav>
+      {part === 'series' && <SrSeries ctx={ctx} />}
       {part === 'firm' && <FirmPart ctx={ctx} />}
       {part === 'parties' && <FirmParties ctx={ctx} link={partyLink} />}
       {part === 'places' && <PlacesPart ctx={ctx} />}

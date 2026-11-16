@@ -92,7 +92,8 @@ export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map
   if (f.q) {
     for (const word of f.q.toLowerCase().split(' ').slice(0, 6)) {
       const w = p(like(word));
-      const sr = /^\d{1,9}$/.test(word) ? ` OR sm.sr_no = ${p(Number(word))}` : '';
+      const prefixed = /^([a-z][a-z0-9]{0,9})-(\d{1,10})$/.exec(word);
+      const sr = prefixed && Number(prefixed[2]) <= 2_000_000_000 ? ` OR (sm.sr_series = ${p(prefixed[1].toUpperCase())} AND sm.sr_no = ${p(Number(prefixed[2]))})` : /^\d{1,9}$/.test(word) ? ` OR sm.sr_no = ${p(Number(word))}` : '';
       const mk = (alts.get(word) ?? []).map((x) => ` OR sm.search_doc LIKE ${p(x)}`).join('');
       parts.push(sr || mk ? `(sm.search_doc LIKE ${w}${sr}${mk})` : `sm.search_doc LIKE ${w}`);
     }
@@ -102,7 +103,7 @@ export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map
 
 /** Columns for a ledger row (no ₹: this feed is shared with supervisors). `loc`: where the movement put the lot. */
 const COLS = `sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.finished_meters, sm.mill_name, sm.weaver_name, sm.party,
-  sm.source_doc_id, sm.capture_event_id, sm.sr_no, sm.pieces, sm.ts, to_char(sm.ts, 'YYYY-MM-DD') AS entry_date, (sm.import_ref IS NOT NULL) AS imported,
+  sm.source_doc_id, sm.capture_event_id, sm.sr_no, sm.sr_series, sm.pieces, sm.ts, to_char(sm.ts, 'YYYY-MM-DD') AS entry_date, (sm.import_ref IS NOT NULL) AS imported,
   to_char(sm.ts, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS ts_key, l.quality, l.design, (sm.ts::date = CURRENT_DATE) AS is_today,
   (SELECT ll.location FROM lot_locations ll WHERE ll.lot_id = sm.lot_id AND ll.stock_movement_id = sm.id ORDER BY ll.id DESC LIMIT 1) AS location,
   EXISTS (SELECT 1 FROM ledger_edits le WHERE le.target = 'movement' AND le.target_id = sm.id::text) AS edited,
@@ -115,7 +116,7 @@ export interface LedgerRow {
   entry_date?: string;
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
   mill_name: string | null; weaver_name: string | null; party: string | null; source_doc_id: string | null; capture_event_id: number | null;
-  sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
+  sr_series?: string; sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
   edited: boolean; // changed in the ledger's edit mode (see ledger_edits)
   // Register fields (migration 013). kind 'adjustment' = opening adjustment from the Incoming register (an OUT, not a sale);
   // 'closing' = closing adjustment written when the lot closed (migration 016; IN or OUT, not a receipt or sale).
@@ -134,7 +135,7 @@ function toRow(r: Record<string, unknown>): LedgerRow {
     id: Number(r.id), lot_id: String(r.lot_id), direction: r.direction as 'IN' | 'OUT', meters: Number(r.meters),
     grey_meters: num(r.grey_meters), finished_meters: num(r.finished_meters),
     mill_name: (r.mill_name as string) ?? null, weaver_name: (r.weaver_name as string) ?? null, party: (r.party as string) ?? null,
-    source_doc_id: (r.source_doc_id as string) ?? null, capture_event_id: num(r.capture_event_id), sr_no: num(r.sr_no), pieces: num(r.pieces),
+    source_doc_id: (r.source_doc_id as string) ?? null, capture_event_id: num(r.capture_event_id), sr_no: num(r.sr_no), sr_series: String(r.sr_series ?? ''), pieces: num(r.pieces),
     ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts), imported: !!r.imported,
     quality: String(r.quality ?? ''), design: String(r.design ?? ''), is_today: !!r.is_today, location: (r.location as string) ?? null,
     edited: !!r.edited,

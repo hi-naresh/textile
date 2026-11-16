@@ -1,3 +1,4 @@
+import { parseSr, seriesValue, assertSeries, srLabel } from './sr-series';
 // Stock ledger + lot location writes, shared by:
 //   POST /api/stock (manual), POST /api/capture (AI auto-commit), POST /api/capture/confirm (review),
 //   /api/job-cards (create / close) and /api/lots/location (manual move).
@@ -49,24 +50,24 @@ export function piecesValue(v: unknown): number | null {
 const DIR_WORD = { IN: 'incoming', OUT: 'outgoing' } as const;
 
 /** Next SR no. for a direction: last used + 1 (1 when none yet). */
-export async function nextSr(q: Q, direction: 'IN' | 'OUT'): Promise<{ last: number | null; next: number }> {
-  const r = await q(`SELECT MAX(sr_no) AS last FROM stock_movements WHERE direction = $1`, [direction]);
+export async function nextSr(q: Q, direction: 'IN' | 'OUT', prefix = ''): Promise<{ last: number | null; next: number }> {
+  const r = await q(`SELECT MAX(sr_no) AS last FROM stock_movements WHERE direction = $1 AND sr_series = $2`, [direction, seriesValue(prefix)]);
   const last = r.rows[0]?.last == null ? null : Number(r.rows[0].last);
   return { last, next: (last ?? 0) + 1 };
 }
 
 /** The entry already using this SR no. in this direction, if any. */
-export async function srTaken(q: Q, direction: 'IN' | 'OUT', sr: number): Promise<{ lot_id: string; ts: string } | null> {
-  const r = await q(`SELECT lot_id, to_char(ts, 'DD Mon YYYY') AS ts FROM stock_movements WHERE direction = $1 AND sr_no = $2 LIMIT 1`, [direction, sr]);
+export async function srTaken(q: Q, direction: 'IN' | 'OUT', sr: number, prefix = ''): Promise<{ lot_id: string; ts: string } | null> {
+  const r = await q(`SELECT lot_id, to_char(ts, 'DD Mon YYYY') AS ts FROM stock_movements WHERE direction = $1 AND sr_no = $2 AND sr_series = $3 LIMIT 1`, [direction, sr, seriesValue(prefix)]);
   return r.rows[0] ?? null;
 }
 
-async function assertSrFree(q: Q, direction: 'IN' | 'OUT', sr: number | null) {
+async function assertSrFree(q: Q, direction: 'IN' | 'OUT', sr: number | null, prefix = '') {
   if (sr == null) return;
-  const hit = await srTaken(q, direction, sr);
+  const hit = await srTaken(q, direction, sr, prefix);
   if (!hit) return;
-  const { next } = await nextSr(q, direction);
-  throw new LedgerError(`SR no. ${sr} is already used on another ${DIR_WORD[direction]} entry (${hit.lot_id}, ${hit.ts}). Next free number: ${next}.`, 409);
+  const { next } = await nextSr(q, direction, prefix);
+  throw new LedgerError(`SR no. ${srLabel(sr, prefix)} is already used on another ${DIR_WORD[direction]} entry (${hit.lot_id}, ${hit.ts}). Next free number: ${srLabel(next, prefix)}.`, 409);
 }
 
 export const importRef = (v: unknown): string | null => {
@@ -187,6 +188,7 @@ export interface IncomingInput {
   source_doc?: unknown;
   location?: unknown;
   purchase_rate?: unknown; // ₹/m grey purchase rate (Pu.Rate), for costing
+  sr_series?: unknown;
   sr_no?: unknown; // paper-register serial, unique per direction
   pieces?: unknown; // taka
   import_ref?: unknown; // "<batch>:<row>" from an Excel import
@@ -208,7 +210,8 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
   const date = dateValue(input.date);
-  const sr = srValue(input.sr_no);
+  const { number: sr, series } = parseSr(input.sr_no, input.sr_series);
+  await assertSeries(q, series, opts.memo?.values);
   const pieces = piecesValue(input.pieces);
   const ref = importRef(input.import_ref);
   const grey = metersValue(input.grey_meters, 'Grey meters');
@@ -225,7 +228,7 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   const locCode = locCodeValue(input.loc_code);
   const locKey = String(input.location ?? '').trim();
   const givenLocation: Place | null = await memoised(memo, `loc:${locKey}`, () => allowedLocation(q, input.location, { required: false, addShopsBy: input.add_shops_by ?? false }));
-  await assertSrFree(q, 'IN', sr);
+  await assertSrFree(q, 'IN', sr, series);
 
   const exists = await lockLot(q, lotId);
   if (exists) await assertLotOpen(q, lotId);
@@ -244,9 +247,9 @@ export async function recordIncoming(q: Q, input: IncomingInput, opts: { require
   }
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id, purchase_rate, sr_no, pieces, import_ref, register_pct, loc_code, ts)
-     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE(($15::date + interval '12 hours'), CURRENT_TIMESTAMP)) RETURNING *`,
-    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null, metersValue(input.purchase_rate, 'Purchase rate'), sr, pieces, ref, pct, locCode, date],
+    `INSERT INTO stock_movements (lot_id, direction, meters, grey_meters, finished_meters, mill_name, weaver_name, party, source_doc_id, capture_event_id, purchase_rate, sr_no, pieces, import_ref, register_pct, loc_code, ts, sr_series)
+     VALUES ($1, 'IN', $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE(($15::date + interval '12 hours'), CURRENT_TIMESTAMP), $16) RETURNING *`,
+    [lotId, stockMeters, grey, finished ?? (grey == null ? legacy : null), mill, weaver, challan, input.capture_event_id ?? null, metersValue(input.purchase_rate, 'Purchase rate'), sr, pieces, ref, pct, locCode, date, series],
   );
   const movement = mv.rows[0];
   // No location given (e.g. a photo read): an existing lot stays where it is; a new lot (or one that was dispatched)
@@ -276,6 +279,7 @@ export interface OutgoingInput {
   moved_by?: string | null;
   order_id?: number | null; // set when dispatched against a known order (Logistics agent)
   dispatch_id?: number | null; // truck / parcel grouping
+  sr_series?: unknown;
   sr_no?: unknown;
   pieces?: unknown;
   import_ref?: unknown;
@@ -297,7 +301,8 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   await staleOnce(q, memo);
   const lotId = lotCode(input.lot_id)!;
   const date = dateValue(input.date);
-  const sr = srValue(input.sr_no);
+  const { number: sr, series } = parseSr(input.sr_no, input.sr_series);
+  await assertSeries(q, series, opts.memo?.values);
   const pieces = piecesValue(input.pieces);
   const ref = importRef(input.import_ref);
   const meters = metersValue(input.meters, 'Meters');
@@ -311,16 +316,16 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   const entryStatus = entryStatusValue(input.entry_status) ?? 'running';
   if (entryStatus === 'end' && !opts.endAllowed) throw new LedgerError('You can’t mark an entry End. Ask the owner to switch it on for you, or choose Running.', 403);
   if (!party) throw new LedgerError('Party (the client receiving the goods) is required for outgoing stock.');
-  await assertSrFree(q, 'OUT', sr);
+  await assertSrFree(q, 'OUT', sr, series);
 
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist.`);
   await assertLotOpen(q, lotId);
   const balance = await lotBalance(q, lotId);
 
   const mv = await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id, sr_no, pieces, import_ref, bill_pct, billed_meters, lot_status_code, entry_status, ts)
-     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE(($15::date + interval '12 hours'), CURRENT_TIMESTAMP)) RETURNING *`,
-    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null, sr, pieces, ref, billPct, billed, statusCode, entryStatus, date],
+    `INSERT INTO stock_movements (lot_id, direction, meters, party, source_doc_id, capture_event_id, order_id, dispatch_id, sr_no, pieces, import_ref, bill_pct, billed_meters, lot_status_code, entry_status, ts, sr_series)
+     VALUES ($1, 'OUT', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE(($15::date + interval '12 hours'), CURRENT_TIMESTAMP), $16) RETURNING *`,
+    [lotId, meters, party, challan, input.capture_event_id ?? null, input.order_id ?? null, input.dispatch_id ?? null, sr, pieces, ref, billPct, billed, statusCode, entryStatus, date, series],
   );
   const movement = mv.rows[0];
   // Logistics agent: link the dispatch to its order / allocation, update order status (same transaction).

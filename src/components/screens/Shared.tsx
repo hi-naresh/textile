@@ -1,7 +1,9 @@
 'use client';
+import { useApi } from '@/lib/useApi';
 
 import { useQualityCatalog } from './QualityCatalog';
 import { FinalMetersField } from '../FinalMeters';
+import { parseSr } from '@/lib/sr-series';
 import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, PageHead, Pill, Segmented, Track, dayTime, fmt, inr } from '../ui';
@@ -322,7 +324,7 @@ export function Allot({ ctx }: { ctx: Ctx }) {
 
 // ---------------- Manual stock entry (owner) ----------------
 const todayDateIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', entry_status: 'running', date: '', final_meters: '' };
+const EMPTY_ENTRY: StockEntry = { sr_series: '', direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', entry_status: 'running', date: '', final_meters: '' };
 
 interface SrInfo { next: number; taken?: { lot_id: string; ts: string } | null; sr?: number }
 
@@ -352,10 +354,11 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const qualityHit = catalog?.find((x) => x.toLowerCase() === qualityTyped.toLowerCase()) ?? null;
   const qualityBad = !!qualityTyped && catalog != null && !qualityHit;
 
+  const seriesApi = useApi<{ series: { prefix: string; name: string; active: boolean }[] }>('/api/stock/series');
   // Suggest the next SR no. (last + 1) for this direction; the person can still type another.
   useEffect(() => {
     let alive = true;
-    fetch(`/api/stock/next-sr?direction=${f.direction}`, { cache: 'no-store' })
+    fetch(`/api/stock/next-sr?direction=${f.direction}&series=${encodeURIComponent(f.sr_series ?? '')}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((x: SrInfo | null) => {
         if (!alive || !x) return;
@@ -365,23 +368,25 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
       .catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on direction change / after a save
-  }, [f.direction, round]);
+  }, [f.direction, f.sr_series, round]);
 
   // Typed SR no.: check it is free (debounced).
   const srText = f.sr_no.trim();
   useEffect(() => {
-    if (!srTouched || !/^\d{1,9}$/.test(srText)) return;
+    if (!srTouched) return;
+    try { parseSr(srText, f.sr_series); } catch { return; }
     let alive = true;
     const t = setTimeout(() => {
-      fetch(`/api/stock/next-sr?direction=${f.direction}&sr=${srText}`, { cache: 'no-store' })
+      fetch(`/api/stock/next-sr?direction=${f.direction}&series=${encodeURIComponent(f.sr_series ?? '')}&sr=${encodeURIComponent(srText)}`, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((x: SrInfo | null) => { if (alive && x) setSr(x); })
         .catch(() => {});
     }, 350);
     return () => { alive = false; clearTimeout(t); };
-  }, [srText, srTouched, f.direction]);
-  const srTaken = sr?.taken && String(sr.sr) === srText ? sr.taken : null;
-  const srBad = srText !== '' && !/^\d{1,9}$/.test(srText);
+  }, [srText, srTouched, f.direction, f.sr_series]);
+  let srNumber: number | null = null, srBad = false;
+  try { srNumber = parseSr(srText, f.sr_series).number; } catch { srBad = true; }
+  const srTaken = sr?.taken && sr.sr === srNumber ? sr.taken : null;
   const piecesBad = f.pieces.trim() !== '' && !/^\d{1,7}$/.test(f.pieces.trim());
   const numOk = (v: string | undefined, min: number, max: number, minOpen = false) => { const t = (v ?? '').trim(); if (!t) return true; const n = Number(t); return Number.isFinite(n) && (minOpen ? n > min : n >= min) && n <= max; };
   const moreBad = isIn
@@ -418,15 +423,15 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     setBusy(true);
     const ok = await d.addStock(role, entry);
     setBusy(false);
-    if (ok) { setBilledAuto(true); setF({ ...EMPTY_ENTRY, direction: f.direction, date: f.date || todayDateIso() }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
+    if (ok) { setBilledAuto(true); setF({ ...EMPTY_ENTRY, direction: f.direction, sr_series: f.sr_series, date: f.date || todayDateIso() }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
     else setRound((r) => r + (srTouched ? 0 : 1)); // e.g. someone else took the SR no. meanwhile: suggest a fresh one
   };
 
   const srField = (
     <label className="fld">SR no.
-      <input className="num" inputMode="numeric" value={f.sr_no} aria-invalid={srBad || !!srTaken}
+      <input className="num" value={f.sr_no} aria-invalid={srBad || !!srTaken}
         onChange={(e) => { setSrTouched(true); setF({ ...f, sr_no: e.target.value }); }} placeholder={sr ? String(sr.next) : ''} />
-      {srBad ? <span className="err small">Whole number only, e.g. 1542.</span> : srTaken ? (
+      {srBad ? <span className="err small">Enter a number or prefix-number, e.g. RS-104.</span> : srTaken ? (
         <span className="sr-note bad">Used on {srTaken.lot_id} ({srTaken.ts}). <button type="button" className="linkbtn" onClick={() => { setSrTouched(false); setF({ ...f, sr_no: String(sr!.next) }); }}>Use {sr!.next}</button></span>
       ) : (
         <span className="sr-note">{srTouched && sr && srText !== String(sr.next) ? <>Next in register: {sr.next}</> : 'From your paper register'}</span>
@@ -442,6 +447,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
       <div className="fld">Direction
         <Segmented label="Direction" value={f.direction} onChange={switchDirection} className="fit" options={[{ value: 'IN', label: 'Incoming (IN)' }, { value: 'OUT', label: 'Outgoing (OUT)' }]} />
       </div>
+      <label className="fld">SR series<select value={f.sr_series ?? ''} onChange={(e) => { setSrTouched(false); setSr(null); setF({ ...f, sr_series: e.target.value, sr_no: '' }); }}><option value="">Main</option>{seriesApi.data?.series.filter((s) => s.active && s.prefix).map((s) => <option key={s.prefix} value={s.prefix}>{s.prefix} · {s.name}</option>)}</select><span className="muted small">Manage prefixes in My firm → SR series. IN and OUT count separately.</span></label>
       <div className="two-col sr-row">
         {srField}
         <label className="fld">Entry date

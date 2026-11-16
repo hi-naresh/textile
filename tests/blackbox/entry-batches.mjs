@@ -1,3 +1,4 @@
+import { moduleUrl, artifact, chromeOptions } from './browser-env.mjs';
 // Build first. Requires local _test DATABASE_URL, Playwright, installed Chrome and free port 3157.
 // Uses a fresh database and removes it after the browser/server have stopped.
 import { createRequire } from 'node:module';
@@ -6,16 +7,16 @@ import { createWriteStream } from 'node:fs';
 import assert from 'node:assert/strict';
 const root = process.cwd();
 async function main() {
-  const { createDisposableDatabase } = await import(root + '/scripts/stress/disposable-database.ts');
+  const { createDisposableDatabase } = await import(moduleUrl('scripts/stress/disposable-database.ts'));
   const isolated = await createDisposableDatabase('browserbatches');
   process.env.DATABASE_URL = isolated.url; process.env.DB_QUIET = '1';
-  const db = await import(root + '/src/lib/db.ts');
-  const { recordIncoming, recordOutgoing } = await import(root + '/src/lib/ledger.ts');
-  const { createSession } = await import(root + '/src/lib/auth/session.ts');
+  const db = await import(moduleUrl('src/lib/db.ts'));
+  const { recordIncoming, recordOutgoing } = await import(moduleUrl('src/lib/ledger.ts'));
+  const { createSession } = await import(moduleUrl('src/lib/auth/session.ts'));
   const { NextRequest } = createRequire(root + '/package.json')('next/server');
   const { chromium } = createRequire(process.env.PLAYWRIGHT_PACKAGE_JSON || root + '/package.json')('playwright');
   let server, browser;
-  const log = createWriteStream('/tmp/textile-five-browser-server.log');
+  const log = createWriteStream(artifact('textile-five-browser-server.log'));
   try {
     await db.query("INSERT INTO users (id, name, role) VALUES ('browser-owner', 'Browser Owner', 'owner')");
     for (const lot_id of ['9028', 'FP-K-91']) await db.withTransaction(q => recordIncoming(q, { lot_id, quality: 'Browser cotton', design: 'Plain', finished_meters: lot_id === '9028' ? 10000 : 1500, mill_name: 'Browser mill', weaver_name: 'Weaver Acceptance', sr_no: lot_id === '9028' ? 902801 : 902802 }, { requireLotDetails: true }));
@@ -25,13 +26,14 @@ async function main() {
     server = spawn(process.execPath, [root + '/node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', '3157'], { cwd: root, env: { ...process.env, DATABASE_URL: isolated.url, NODE_ENV: 'production', GEMINI_API_KEY: '', GOOGLE_API_KEY: '', OPENAI_API_KEY: '', DB_QUIET: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
     server.stdout.pipe(log); server.stderr.pipe(log);
     for (let i=0; i<60; i++) { try { const r=await fetch('http://127.0.0.1:3157/login'); if(r.ok) break; } catch {} await new Promise(r=>setTimeout(r,250)); }
-    browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+    browser = await chromium.launch(chromeOptions());
     const context = await browser.newContext({ viewport: { width:1366, height:768 }, locale: 'en-IN', timezoneId: 'Asia/Kolkata' });
     await context.addCookies([{ name:'tb_at', value:session.tokens.access, url:'http://127.0.0.1:3157', httpOnly:true, sameSite:'Lax' }]);
-    await context.addInitScript(() => localStorage.setItem('tb-tab', 'stock'));
+    await context.addInitScript(() => { if (!localStorage.getItem('tb-tab')) localStorage.setItem('tb-tab', 'stock'); });
     const page = await context.newPage(); page.setDefaultTimeout(10000);
     await page.goto('http://127.0.0.1:3157/#stock');
     await page.getByRole('button', { name:'Manual entry', exact:true }).waitFor();
+    console.log(JSON.stringify({ platform: process.platform, browser: await browser.version(), locale: 'en-IN', timezone: 'Asia/Kolkata' }));
     console.log('app loaded');
     await page.getByRole('button', { name:'Lots & balance', exact:true }).click();
     await page.locator('tr[data-lot="9028"]').waitFor();
@@ -43,7 +45,7 @@ async function main() {
     await page.getByRole('searchbox', { name:'Search lots' }).fill('Weaver Acceptance'); await page.waitForTimeout(600);
     await page.setViewportSize({ width:390, height:844 });
     assert.match(await lotRow.innerText(), /Weaver Acceptance/); assert.ok(await lotRow.locator('[data-label="SR no."]').isVisible());
-    await page.screenshot({ path:'/tmp/textile-five-mobile.png', fullPage:true });
+    await page.screenshot({ path:artifact('textile-five-mobile.png'), fullPage:true });
     await page.setViewportSize({ width:1366, height:768 });
     await page.getByRole('searchbox', { name:'Search lots' }).fill('');
     await page.getByRole('button', { name:'Closed', exact:true }).click();
@@ -93,7 +95,7 @@ async function main() {
     const edited=(await db.query("SELECT billed_meters, to_char(ts,'YYYY-MM-DD') AS date FROM stock_movements WHERE id=$1",[movement.id])).rows[0];
     assert.equal(edited.date,'2026-10-28'); assert.equal(Number(edited.billed_meters),1959.27);
     console.log('manual entry + edit: keyboard date, invalid date, auto/custom NQTY, hundredths: passed');
-    await page.screenshot({ path:'/tmp/textile-five-desktop.png', fullPage:true });
+    await page.screenshot({ path:artifact('textile-five-desktop.png'), fullPage:true });
   } finally {
     if(browser) await browser.close();
     if(server) { server.kill('SIGTERM'); await new Promise(r=>server.once('exit',r)); }

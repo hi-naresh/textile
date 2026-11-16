@@ -1,5 +1,6 @@
 'use client';
 
+import { parseSr, srLabel } from './sr-series';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, EfficiencyRecord, FlowDay, JobCard, TodayStock, LedgerEntry, Lot, StockSummary, Toast, ToastTone, Worker } from './types';
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
@@ -42,6 +43,7 @@ export interface StockEntry {
   party: string;
   // both
   source_doc: string;
+  sr_series?: string;
   sr_no: string; // paper-register serial (suggested: last + 1)
   pieces: string; // taka, optional
   // Register fields, optional ("More fields"): IN → %, location code; OUT → L, NQTY, LOT S
@@ -215,11 +217,12 @@ export function useTextileData() {
   }, [refresh, showToast]);
 
   const addStock = (role: Role, form: StockEntry) => {
-    const both = { sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role), date: form.date?.trim() || null };
+    const both = { sr_series: form.sr_series ?? '', sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role), date: form.date?.trim() || null };
     const body = form.direction === 'IN'
       ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, register_pct: form.register_pct?.trim() || null, loc_code: form.loc_code?.trim() || null, ...both }
       : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, bill_pct: form.bill_pct?.trim() || null, billed_meters: form.billed_meters?.trim() || null, lot_status_code: form.lot_status_code?.trim() || null, entry_status: form.entry_status ?? 'running', ...both };
-    const sr = form.sr_no.trim() ? `SR ${form.sr_no.trim()} · ` : '';
+    const serial = parseSr(form.sr_no, form.sr_series);
+    const sr = serial.number == null ? '' : `SR ${srLabel(serial.number, serial.series)} · `;
     return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'no location'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`, 'success', refreshStock, true);
   };
 

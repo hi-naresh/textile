@@ -291,7 +291,7 @@ test('#5 search and chat: closed lots are hidden, the owner is told the lot is c
   assert.match((await t.run({ lot: lot(5) }, { role: 'owner', sections: [] })).answer, /is closed: closed by its End entry/);
 });
 
-test('#5 chat current stock excludes closed lots; supervisors cannot query their history', async () => {
+test('#5/#15 chat retains anomalous ended balances with alerts, excludes them from allocation and supervisor history', async () => {
   const closedLot = lot(28);
   const quality = `Closed stock ${id}`;
   await query('UPDATE lots SET quality = $2 WHERE lot_id = $1', [closedLot, quality]);
@@ -311,10 +311,12 @@ test('#5 chat current stock excludes closed lots; supervisors cannot query their
 
   for (const metric of ['stock', 'free_stock'] as const) {
     const result = await runSpec({ metric, filters: { quality }, period: null }, owner);
-    assert.equal(result.rows[0]?.value, 0);
+    assert.equal(result.rows[0]?.value, metric === 'stock' ? 1000 : 0);
+    if (metric === 'stock') assert.match(result.answer, /Alert.*ended/);
   }
   const summary = await templateById('stock_by_quality')!.run({ quality }, owner);
-  assert.match(summary.answer, /No stock/);
+  assert.match(summary.answer, /Alert.*ended/);
+  assert.equal((await runSpec({ metric: 'stock', filters: { quality }, period: null }, supervisor)).rows[0]?.value, 0);
   assert.deepEqual(await freeLotsForQuality(query, quality), []);
   assert.equal(await lotStock(query, closedLot), null);
 
@@ -623,16 +625,16 @@ test('chat challan lookup: entries of closed lots only for the owner', async () 
 });
 
 
-test('lot stock status follows open job cards, hold, and closure rather than sales history', async () => {
+test('lot stock status uses explicit entry status before job-card inference, with hold and closure taking precedence', async () => {
   const stockStatus = async () => (await lotsByIds(query, [lot(26)]))[0].stock_status;
   assert.equal(await stockStatus(), 'packed');
   await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 1000, party }));
   assert.equal(await balance(lot(26)), 0);
-  assert.equal(await stockStatus(), 'packed');
+  assert.equal(await stockStatus(), 'running');
   assert.equal((await lotRow(lot(26))).closed_at, null);
   const sale = await withTransaction((q) => recordOutgoing(q, { lot_id: lot(26), meters: 50, party }));
   assert.equal(await balance(lot(26)), -50);
-  assert.equal(await stockStatus(), 'packed');
+  assert.equal(await stockStatus(), 'running');
   const card = await withTransaction((q) => createJobCard(q, { lot_id: lot(26), process: 'Folding', worker_id: id, meters_in: 100 }));
   assert.equal(await stockStatus(), 'running');
   await query("UPDATE lots SET status = 'hold' WHERE lot_id = $1", [lot(26)]);
@@ -640,7 +642,7 @@ test('lot stock status follows open job cards, hold, and closure rather than sal
   await withTransaction((q) => closeJobCard(q, { id: card.id, meters_out: 95 }));
   assert.equal(await stockStatus(), 'hold');
   await query("UPDATE lots SET status = 'active' WHERE lot_id = $1", [lot(26)]);
-  assert.equal(await stockStatus(), 'packed');
+  assert.equal(await stockStatus(), 'running');
   const open = await (await getLots(get(ownerCookie, `/api/lots?q=${lot(26)}`))).json();
   assert.equal(open.rows.length, 1);
   await withTransaction((q) => applyLedgerEdits(q, [edit(Number(sale.id), 'end')], id, { endAllowed: true }));
@@ -651,10 +653,10 @@ test('lot stock status follows open job cards, hold, and closure rather than sal
     assert.deepEqual(hidden.rows, []);
   }
   await lotClose(post(ownerCookie, '/api/lots/close', { lot_id: lot(26), action: 'reopen' }));
-  assert.equal(await stockStatus(), 'packed');
+  assert.equal(await stockStatus(), 'running');
   assert.equal(await balance(lot(26)), -50);
   await addLot(lot(26), 100);
-  assert.equal(await stockStatus(), 'packed'); // a later receipt does not imply active floor work
+  assert.equal(await stockStatus(), 'running'); // a receipt does not clear an explicit Running status
 });
 
 test('opening adjustments do not start a lot; old sales show Running as entries without changing the stock bucket', async () => {
@@ -689,7 +691,7 @@ test('owner stock status totals follow job cards and closed lots stay hidden fro
   assert.equal(scoped.on_hand_m, before.on_hand_m);
   assert.equal(scoped.packed_m, before.packed_m - 1000);
   assert.equal(scoped.running_m, before.running_m + 1000);
-  assert.equal(scoped.packed_m + scoped.running_m + scoped.on_hold_m, scoped.on_hand_m);
+  assert.equal(scoped.packed_m + scoped.running_m + scoped.on_hold_m + scoped.other_m, scoped.on_hand_m);
   const chatAfter = await summaryTemplate.run({}, { role: 'owner', sections: [] });
   const runningBefore = Number(chatBefore.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
   const runningAfter = Number(chatAfter.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
@@ -709,5 +711,5 @@ test('owner stock status totals follow job cards and closed lots stay hidden fro
   const afterClose = await snapshot();
   assert.equal(afterClose.packed_m, before.packed_m);
   assert.equal(afterClose.running_m, before.running_m);
-  assert.equal(afterClose.packed_m + afterClose.running_m + afterClose.on_hold_m, afterClose.on_hand_m);
+  assert.equal(afterClose.packed_m + afterClose.running_m + afterClose.on_hold_m + afterClose.other_m, afterClose.on_hand_m);
 });

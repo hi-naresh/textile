@@ -1,3 +1,4 @@
+import { STOCK_STATUS_SQL } from '../lots-query';
 // Semantic query layer for chat: "how many workers do I have?", "who folded how much today?",
 // "dispatch by party this month", "efficiency by section this week", …
 //
@@ -10,9 +11,9 @@ import type { Scope } from './templates';
 import { EXTRA_METRICS } from './metrics-phase2';
 
 // ---------- catalog ----------
-export const DIMS = ['worker', 'section', 'quality', 'design', 'party', 'mill', 'lot', 'location', 'day', 'month'] as const;
+export const DIMS = ['worker', 'section', 'quality', 'design', 'party', 'mill', 'lot', 'location', 'day', 'month', 'status'] as const;
 export type Dim = (typeof DIMS)[number];
-export const FILTERS = ['section', 'worker', 'quality', 'party', 'mill', 'lot', 'location'] as const;
+export const FILTERS = ['section', 'worker', 'quality', 'party', 'mill', 'lot', 'location', 'design'] as const;
 export type FilterKey = (typeof FILTERS)[number];
 
 export interface MetricDef {
@@ -35,11 +36,9 @@ export interface MetricDef {
 
 const SEC = (col: string) => `lower(btrim(regexp_replace(${col}, '\\s*section\\s*$', '', 'i')))`;
 const SECD = (col: string) => `initcap(btrim(regexp_replace(${col}, '\\s*section\\s*$', '', 'i')))`; // for display
-const BAL = `(SELECT l.lot_id, l.quality, l.design,
-   COALESCE(SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END), 0) AS bal,
-   (SELECT location FROM lot_locations WHERE lot_id = l.lot_id ORDER BY ts DESC, id DESC LIMIT 1) AS location
- FROM lots l LEFT JOIN stock_movements sm ON sm.lot_id = l.lot_id
- WHERE l.closed_at IS NULL GROUP BY l.lot_id, l.quality, l.design) b`;
+const BAL = `(SELECT l.lot_id, l.quality, l.design, l.bal_m AS bal,
+  ${STOCK_STATUS_SQL} AS state, CASE WHEN ${STOCK_STATUS_SQL} = 'end' THEN 'other' ELSE ${STOCK_STATUS_SQL} END AS bucket,
+  l.cur_location AS location FROM lots l WHERE l.closed_at IS NULL OR l.bal_m <> 0) b`;
 const DAY = (c: string) => `to_char(${c}, 'YYYY-MM-DD')`;
 const MONTH = (c: string) => `to_char(${c}, 'YYYY-MM')`;
 
@@ -107,11 +106,13 @@ export const METRICS: Record<string, MetricDef> = {
     dims: { worker: 'w.name', section: SECD('w.section') }, filters: { section: SEC('w.section'), worker: 'w.name' }, sectionScoped: SEC('w.section'),
   },
   stock: {
-    title: 'Stock', describe: 'meters in stock now', unit: 'm', from: BAL, where: 'b.bal > 0', agg: 'SUM(b.bal)',
-    dims: { quality: 'b.quality', design: 'b.design', lot: 'b.lot_id', location: `COALESCE(b.location, '—')` },
-    filters: { quality: 'b.quality', lot: 'b.lot_id', location: 'b.location' },
+    closedLotScoped: "b.state <> 'end'",
+    title: 'Stock', describe: 'meters in stock now', unit: 'm', from: BAL, where: "(b.bal > 0 OR (b.state = 'end' AND b.bal <> 0))", agg: 'SUM(b.bal)',
+    dims: { status: 'b.bucket', quality: 'b.quality', design: 'b.design', lot: 'b.lot_id', location: `COALESCE(b.location, '—')` },
+    filters: { quality: 'b.quality', design: 'b.design', lot: 'b.lot_id', location: 'b.location', party: 'b.lot_id' },
   },
   lots: {
+    closedLotScoped: "b.state <> 'end'",
     title: 'lots with stock', describe: 'number of lots with stock', unit: 'count', from: BAL, where: 'b.bal > 0', agg: 'COUNT(*)',
     dims: { quality: 'b.quality', location: `COALESCE(b.location, '—')` }, filters: { quality: 'b.quality', location: 'b.location' },
   },
@@ -213,7 +214,8 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
   for (const [k, v] of Object.entries(spec.filters ?? {}) as [FilterKey, string][]) {
     const col = def.filters[k];
     if (!col || !v) continue;
-    if (k === 'worker') where.push(`lower(${col}) LIKE '%' || lower(${P(v)}) || '%'`);
+    if (spec.metric === 'stock' && k === 'party') where.push(`EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.lot_id = b.lot_id AND sm.direction = 'OUT' AND sm.kind = 'normal' AND lower(btrim(sm.party)) = lower(btrim(${P(v)})))`);
+    else if (k === 'worker') where.push(`lower(${col}) LIKE '%' || lower(${P(v)}) || '%'`);
     else if (k === 'section') where.push(`${col} = lower(btrim(regexp_replace(${P(v)}, '\\s*section\\s*$', '', 'i')))`);
     // A market by name or initials ("Landmark", "LM") → its labels "LM 245 · Pipe 3"; anything else matches the label.
     else if (k === 'location') { const x = P(v); where.push(`(regexp_replace(lower(${col}), '[^a-z0-9]', '', 'g') = ${P(nameKey(v))} OR lower(${col}) LIKE ANY (SELECT lower(m.code) || ' %' FROM markets m WHERE lower(m.name) = lower(btrim(${x})) OR lower(m.code) = lower(btrim(${x}))))`); }
@@ -236,8 +238,10 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
   const measure = `${label}${about ? ` (${about})` : ''}${!isCount || !f.section ? '' : ` in ${f.section}`}`;
   const owned = ['workers', 'supervisors', 'sections', 'lots'].includes(spec.metric) || (!!def.allTimeByDefault && !period);
 
+  const endedAlert = (count: unknown) => Number(count) > 0 ? ` Alert: ${count} ended lots have nonzero ledger balances, included in Other.` : '';
+  const endedCount = spec.metric === 'stock' ? ", COUNT(*) FILTER (WHERE b.state = 'end') AS ended_count" : '';
   if (!spec.groupBy) {
-    const r = await query(`SELECT ${value} AS value${def.list ? `, ${def.list} AS names` : ''} FROM ${def.from} ${whereSql}`, params);
+    const r = await query(`SELECT ${value} AS value${endedCount}${def.list ? `, ${def.list} AS names` : ''} FROM ${def.from} ${whereSql}`, params);
     const row = r.rows[0] ?? {};
     const v = row.value == null ? null : Number(row.value);
     if (v == null) return { answer: `No ${isCount ? measure : measure.toLowerCase()} data${when}.`, rows: [] };
@@ -248,14 +252,14 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
         ? `You have ${fmt(v)} ${m1}${scopeNote}${names}.`
         : `${fmt(v)} ${m1}${when}${scopeNote}${names}.`
       : `${cap(measure)}${when}${scopeNote}: ${unitText(v, def.unit)}.`;
-    return { answer, rows: [{ value: v, ...(row.names ? { names: row.names } : {}) }] };
+    return { answer: answer + endedAlert(row.ended_count), rows: [{ value: v, ...(row.names ? { names: row.names } : {}) }] };
   }
 
   const dimExpr = def.dims[spec.groupBy]!;
   const top = spec.top ?? 10;
   const order = spec.groupBy === 'day' || spec.groupBy === 'month' ? 'label' : 'value DESC NULLS LAST';
   const r = await query(
-    `SELECT ${dimExpr} AS label, ${value} AS value FROM ${def.from} ${whereSql} GROUP BY 1 ORDER BY ${order} LIMIT ${top + 1}`,
+    `SELECT ${dimExpr} AS label, ${value} AS value${endedCount} FROM ${def.from} ${whereSql} GROUP BY 1 ORDER BY ${order} LIMIT ${top + 1}`,
     params,
   );
   const rows = r.rows.map((x) => ({ [spec.groupBy!]: x.label ?? '—', value: x.value == null ? null : Number(x.value) }));
@@ -265,7 +269,7 @@ export async function runSpec(spec: Spec, scope: Scope): Promise<SemanticResult>
   const total = def.unit === 'm' || def.unit === 'count' || def.unit === 'min' || def.unit === 'inr' ? shown.reduce((s, x) => s + (x.value ?? 0), 0) : null;
   const head = isCount ? `${cap(measure)}${when}${scopeNote}, by ${spec.groupBy}` : `${cap(measure)}${when}${scopeNote}, by ${spec.groupBy}`;
   const totalText = total != null && shown.length > 1 ? ` Total ${unitText(total, def.unit)}${rows.length > top ? ` for the top ${top}` : ''}.` : '';
-  return { answer: `${head}: ${parts.join(', ')}.${totalText}`, rows: shown };
+  return { answer: `${head}: ${parts.join(', ')}.${totalText}${endedAlert(r.rows.reduce((n, x) => n + Number(x.ended_count ?? 0), 0))}`, rows: shown };
 }
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 

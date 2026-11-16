@@ -1,3 +1,4 @@
+import { stockBreakdown } from '@/lib/lots-query';
 import { serverTiming } from '@/lib/server-timing';
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
@@ -25,25 +26,6 @@ const SNAPSHOT_SQL = `
      GROUP BY 1
   )
   SELECT
-    -- On-hand total scans every in-stock lot (index-only); skipped when stock has not changed since the cached one ($1).
-    CASE WHEN (SELECT last_value::text FROM stock_rev) = $1 THEN NULL
-         ELSE (SELECT json_build_object(
-           'on_hand_m', COALESCE(SUM(bal_m), 0),
-           'active_lots', COUNT(*),
-           'packed_m', COALESCE(SUM(bal_m) FILTER (WHERE stock_status = 'packed'), 0),
-           'packed_lots', COUNT(*) FILTER (WHERE stock_status = 'packed'),
-           'running_m', COALESCE(SUM(bal_m) FILTER (WHERE stock_status = 'running'), 0),
-           'running_lots', COUNT(*) FILTER (WHERE stock_status = 'running'),
-           'on_hold_m', COALESCE(SUM(bal_m) FILTER (WHERE stock_status = 'hold'), 0),
-           'on_hold_lots', COUNT(*) FILTER (WHERE stock_status = 'hold')
-         ) FROM (
-           SELECT l.bal_m,
-                  CASE WHEN l.status = 'hold' THEN 'hold'
-                       WHEN EXISTS (SELECT 1 FROM job_cards jc WHERE jc.lot_id = l.lot_id AND jc.status <> 'closed') THEN 'running'
-                       ELSE 'packed' END AS stock_status
-             FROM lots l
-            WHERE l.closed_at IS NULL AND l.bal_m > 0
-         ) current_stock) END AS summary,
     (SELECT COALESCE(json_agg(json_build_object('lot_id', x.lot_id, 'quality', x.quality, 'balance', x.bal_m) ORDER BY x.bal_m, x.lot_id), '[]')
        FROM (SELECT lot_id, quality, bal_m FROM lots
               WHERE closed_at IS NULL AND bal_m > 0 AND bal_m < COALESCE((SELECT low_stock_m FROM app_settings WHERE id = 1), 200)
@@ -72,32 +54,15 @@ const TODAY_ROWS_SQL = `
 
 const num = (v: unknown) => (v == null ? null : Number(v));
 
-// Last on-hand total per server instance, keyed by stock_rev. Short TTL: a writer bumps the rev before it commits,
-// so a total read in that instant could miss its change; it is recomputed within SUMMARY_TTL_MS at the latest.
-type CachedSummary = Pick<import('@/lib/types').StockSummary,
-  'on_hand_m' | 'active_lots' | 'packed_m' | 'packed_lots' | 'running_m' | 'running_lots' | 'on_hold_m' | 'on_hold_lots'>;
-let summaryCache: { rev: string; at: number; value: CachedSummary } | null = null;
-const SUMMARY_TTL_MS = 10_000;
-
 async function snapshot() {
-  const cached = summaryCache && Date.now() - summaryCache.at < SUMMARY_TTL_MS ? summaryCache : null;
-  const [s, t] = await Promise.all([query(SNAPSHOT_SQL, [cached?.rev ?? '']), query(TODAY_ROWS_SQL)]);
+  const [s, t, summary] = await Promise.all([query(SNAPSHOT_SQL), query(TODAY_ROWS_SQL), stockBreakdown(query)]);
   const x = s.rows[0];
   const rev = String(x.rev ?? '0');
-  let summary = cached?.value ?? { on_hand_m: 0, active_lots: 0, packed_m: 0, packed_lots: 0, running_m: 0, running_lots: 0, on_hold_m: 0, on_hold_lots: 0 };
-  if (x.summary) {
-    summary = {
-      on_hand_m: Number(x.summary.on_hand_m ?? 0), active_lots: Number(x.summary.active_lots ?? 0),
-      packed_m: Number(x.summary.packed_m ?? 0), packed_lots: Number(x.summary.packed_lots ?? 0),
-      running_m: Number(x.summary.running_m ?? 0), running_lots: Number(x.summary.running_lots ?? 0),
-      on_hold_m: Number(x.summary.on_hold_m ?? 0), on_hold_lots: Number(x.summary.on_hold_lots ?? 0),
-    };
-    summaryCache = { rev, at: Date.now(), value: summary };
-  }
   const flow = (x.flow ?? []) as { day: string; in_m: number; out_m: number; in_count: number; out_count: number }[];
   const last = flow[flow.length - 1] ?? { in_m: 0, in_count: 0, out_m: 0, out_count: 0 };
   return {
     stockSummary: {
+      ...summary,
       on_hand_m: summary.on_hand_m,
       active_lots: summary.active_lots,
       packed_m: summary.packed_m,

@@ -1,4 +1,5 @@
 'use client';
+import { srLabel } from '@/lib/sr-series';
 
 // Global search ("Search or ask" in the top bar; a search button in the phone header).
 // Typing shows what matches — lots, challans, parties, orders, inquiries, dispatches, people, screens —
@@ -270,7 +271,7 @@ export function useFindLink() {
 // ---------------- Lot card (for people without the Stock screen) ----------------
 interface LotCardData {
   lot: { lot_id: string; quality: string | null; design: string | null; grade: string | null; status: string | null; balance: number; location: string | null };
-  moves: { id: number; direction: string; meters: number; party: string | null; doc: string | null; sr_no: number | null; ts: string }[];
+  moves: { id: number; direction: string; meters: number; party: string | null; doc: string | null; sr_no: number | null; sr_series?: string; ts: string }[];
   jobs: { id: number; process: string; worker: string | null; meters_in: number; meters_out: number | null; status: string }[];
 }
 
@@ -313,7 +314,7 @@ export function LotSheet({ ctx, id, onClose }: { ctx: Ctx; id: string | null; on
               {show.moves.map((m) => (
                 <div key={m.id} className="list-row">
                   <Pill tone={m.direction === 'IN' ? 'good' : 'warn'}>{m.direction === 'IN' ? 'In' : 'Out'}</Pill>
-                  <div className="stack-2 grow min0"><span className="strong num">{fmt(m.meters, 1)} m{m.party ? ` · ${m.party}` : ''}</span><span className="muted small num">{[m.doc, m.sr_no ? `SR ${m.sr_no}` : null, dayTime(m.ts)].filter(Boolean).join(' · ')}</span></div>
+                  <div className="stack-2 grow min0"><span className="strong num">{fmt(m.meters, 1)} m{m.party ? ` · ${m.party}` : ''}</span><span className="muted small num">{[m.doc, m.sr_no ? `SR ${srLabel(m.sr_no, m.sr_series)}` : null, dayTime(m.ts)].filter(Boolean).join(' · ')}</span></div>
                 </div>
               ))}
               {!show.moves.length && <span className="muted small" style={{ padding: 14 }}>No movements yet.</span>}

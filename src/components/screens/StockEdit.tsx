@@ -3,6 +3,7 @@
 // Stock ledger edit mode (owner): cells turn into inputs in place, like a spreadsheet.
 // Drafts live in the Stock screen; each table row is memoised and only gets its own drafts,
 // so typing in one cell doesn't re-render the other rows. Saved via PATCH /api/stock/edit.
+import { parseSr } from '@/lib/sr-series';
 import React from 'react';
 import Icon from '../Icon';
 import { EntryDateInput } from '../EntryDateInput';
@@ -59,10 +60,7 @@ export function checkCell(field: string, raw: string): string | null {
       if (!v) return 'Meters are required.';
       return Number.isFinite(numText(v)) && numText(v) > 0 && numText(v) <= 1_000_000 ? null : 'Enter a positive number up to 1,000,000.';
     case 'sr_no':
-      if (!v) return null;
-      if (!/^\d+$/.test(v.replace(/,/g, '')) || Number(v.replace(/,/g, '')) <= 0) return 'SR must be a whole number above 0.';
-      if (Number(v.replace(/,/g, '')) > 2_000_000_000) return 'SR is too large.';
-      return null;
+      try { parseSr(v); return null; } catch (e) { return (e as Error).message; }
     case 'pieces':
       if (!v) return null;
       if (!/^\d+$/.test(v.replace(/,/g, ''))) return 'Taka must be a whole number, 0 or more.';

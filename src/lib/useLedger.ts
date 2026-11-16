@@ -24,7 +24,7 @@ export interface LedgerRow {
   entry_date?: string;
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
   mill_name: string | null; weaver_name: string | null; party: string | null; source_doc_id: string | null; capture_event_id: number | null;
-  sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
+  sr_series?: string; sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
   edited?: boolean; // changed in the ledger's edit mode
   // Register fields (see src/lib/ledger-query.ts). kind 'adjustment' = opening adjustment, 'closing' = closing adjustment; neither is a sale.
   kind?: 'normal' | 'adjustment' | 'closing';

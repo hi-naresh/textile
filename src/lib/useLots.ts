@@ -9,6 +9,7 @@ import type { Lot, StockStatus } from './types';
 
 export interface LotFilterState {
   q: string;
+  quality?: string; design?: string; party?: string;
   stock: '' | 'in' | 'closed';
   status: string;
   stockStatus: '' | StockStatus;
@@ -19,6 +20,7 @@ export const EMPTY_LOT_FILTERS: LotFilterState = { q: '', stock: '', status: '',
 
 export function lotParams(f: LotFilterState): URLSearchParams {
   const p = new URLSearchParams();
+  for (const key of ['quality', 'design', 'party'] as const) if (f[key]?.trim()) p.set(key, f[key]!.trim());
   if (f.q.trim()) p.set('q', f.q.trim());
   if (f.stock === 'in') p.set('in_stock', '1');
   if (f.stock === 'closed') p.set('closed', '1');

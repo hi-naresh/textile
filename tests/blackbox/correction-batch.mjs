@@ -1,3 +1,4 @@
+import { moduleUrl, artifact, chromeOptions } from './browser-env.mjs';
 // Build first; fresh disposable local database. Set PLAYWRIGHT_PACKAGE_JSON if Playwright is installed outside the repo.
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
@@ -5,34 +6,35 @@ import { createWriteStream } from 'node:fs';
 import assert from 'node:assert/strict';
 const root = process.cwd();
 async function main() {
-  const { createDisposableDatabase } = await import(root + '/scripts/stress/disposable-database.ts');
+  const { createDisposableDatabase } = await import(moduleUrl('scripts/stress/disposable-database.ts'));
   const isolated = await createDisposableDatabase('saveperf');
   process.env.DATABASE_URL = isolated.url; process.env.DB_QUIET = '1';
-  const db = await import(root + '/src/lib/db.ts');
-  const { recordIncoming, recordOutgoing } = await import(root + '/src/lib/ledger.ts');
-  const { createSession } = await import(root + '/src/lib/auth/session.ts');
+  const db = await import(moduleUrl('src/lib/db.ts'));
+  const { recordIncoming, recordOutgoing } = await import(moduleUrl('src/lib/ledger.ts'));
+  const { createSession } = await import(moduleUrl('src/lib/auth/session.ts'));
   const { NextRequest } = createRequire(root + '/package.json')('next/server');
   const { chromium } = createRequire(process.env.PLAYWRIGHT_PACKAGE_JSON || root + '/package.json')('playwright');
   let server, browser;
-  const log = createWriteStream('/tmp/textile-five-browser-server.log');
+  const log = createWriteStream(artifact('textile-five-browser-server.log'));
   try {
     await db.query("INSERT INTO users (id, name, role) VALUES ('browser-owner', 'Browser Owner', 'owner')");
     for (const lot_id of ['9028', 'FP-K-91']) await db.withTransaction(q => recordIncoming(q, { lot_id, quality: 'Browser cotton', design: 'Plain', finished_meters: lot_id === '9028' ? 10000 : 1500, mill_name: 'Browser mill', weaver_name: 'Weaver Acceptance', sr_no: lot_id === '9028' ? 902801 : 902802 }, { requireLotDetails: true }));
     const movement = await db.withTransaction(q => recordOutgoing(q, { lot_id: '9028', meters: 1999.25, party: 'Browser client', sr_no: 10, bill_pct: 99, date: '2026-10-29' }));
     await db.withTransaction(q => recordOutgoing(q, { lot_id: 'FP-K-91', meters: 1401.5, party: 'Browser client', entry_status: 'end', moved_by: 'browser-owner' }, { endAllowed: true }));
-    const { createDispatch } = await import(root + '/src/lib/dispatch/dispatches.ts');
+    const { createDispatch } = await import(moduleUrl('src/lib/dispatch/dispatches.ts'));
     const dispatch = await db.withTransaction(q => createDispatch(q, { party: 'Browser client', lines: [{ lot_id: '9028', meters: 10 }] }, 'browser-owner'));
     const session = await createSession(db.query, 'browser-owner', 'client', new NextRequest('http://127.0.0.1:3157/'));
     server = spawn(process.execPath, [root + '/node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', '3157'], { cwd: root, env: { ...process.env, DATABASE_URL: isolated.url, NODE_ENV: 'production', GEMINI_API_KEY: '', GOOGLE_API_KEY: '', OPENAI_API_KEY: '', DB_QUIET: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
     server.stdout.pipe(log); server.stderr.pipe(log);
     for (let i=0; i<60; i++) { try { const r=await fetch('http://127.0.0.1:3157/login'); if(r.ok) break; } catch {} await new Promise(r=>setTimeout(r,250)); }
-    browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+    browser = await chromium.launch(chromeOptions());
     const context = await browser.newContext({ viewport: { width:1366, height:768 }, locale: 'en-IN', timezoneId: 'Asia/Kolkata' });
     await context.addCookies([{ name:'tb_at', value:session.tokens.access, url:'http://127.0.0.1:3157', httpOnly:true, sameSite:'Lax' }]);
     await context.addInitScript(() => { if (!localStorage.getItem('tb-tab')) localStorage.setItem('tb-tab', 'stock'); });
     const page = await context.newPage(); page.setDefaultTimeout(10000);
     await page.goto('http://127.0.0.1:3157/#stock');
     await page.getByRole('button', { name:'Manual entry', exact:true }).waitFor();
+    console.log(JSON.stringify({ platform: process.platform, browser: await browser.version(), locale: 'en-IN', timezone: 'Asia/Kolkata' }));
     console.log('app loaded');
 
     const samples=[];

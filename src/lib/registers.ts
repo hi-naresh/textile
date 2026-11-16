@@ -107,7 +107,7 @@ export function entryStatusValue(v: unknown): EntryStatus | null {
 /** Register serial as text (SR.NO): "102" or a combined "146+204". */
 export function linkedSrValue(v: unknown): string | null {
   if (blank(v)) return null;
-  const s = String(v).replace(/\s+/g, '').trim();
+  const s = String(v).trim().replace(/^([a-z][a-z0-9]{0,9})\s+(\d+)$/i, '$1-$2').replace(/\s+/g, '').toUpperCase();
   if (s.length > 40 || !/^[A-Za-z0-9+\-/.]+$/.test(s)) throw new LedgerError(`SR.NO "${String(v).trim().slice(0, 20)}" is not valid.`);
   return s;
 }

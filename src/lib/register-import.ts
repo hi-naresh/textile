@@ -1,3 +1,4 @@
+import { parseSr, assertSeries, srLabel } from './sr-series';
 // The firm's own Excel registers as import formats (server-side only). Used by src/lib/stock-import.ts.
 //   (a) Incoming register:  DATE | SRNO | LOT NO | MTR | TAKA | % | LOCATION | MILL | WEAVER | S-1 … S-10 | STOCK | ITEM
 //   (b) Outgoing register:  DATE | BNO | ITEM | L | LOT | LOT S | QTY | NQTY | SR.NO
@@ -14,7 +15,7 @@
 import { createHash } from 'crypto';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { DISPATCHED, assertLotOpen, closeLot, currentPlace, importRef, lockLot, lotAttrMemo, moveLot, nameMemo, piecesValue, srValue, staleOnce, type LedgerMemo } from './ledger';
+import { DISPATCHED, assertLotOpen, closeLot, currentPlace, importRef, lockLot, lotAttrMemo, moveLot, nameMemo, piecesValue, staleOnce, type LedgerMemo } from './ledger';
 import { trimReservations } from './stock';
 import { challanCode, lotCode, metersValue, nameKey, nameValue } from './normalize';
 import { billPctValue, resolveBilledMeters, entryStatusValue, linkedSrValue, locCodeValue, lotStatusCodeValue, registerPctValue, statusFromLotS } from './registers';
@@ -134,7 +135,7 @@ export function detectRegister(cells: HeaderCell[]): { format: RegisterFormat; i
 // ---------- rows ----------
 export interface RegInRow {
   fmt: 'reg_in'; row: number; ref: string; adj_ref: string;
-  date: string; sr_no: number; lot_id: string; reg_lot_no: string; meters: number; pieces: number | null;
+  date: string; sr_no: number; sr_series?: string; lot_id: string; reg_lot_no: string; meters: number; pieces: number | null;
   register_pct: number | null; loc_code: string | null; mill_name: string | null; weaver_name: string | null; quality: string;
   takes: (number | null)[]; stock: number; adjustment: number; ended: boolean;
 }
@@ -220,18 +221,22 @@ export async function checkIncoming(q: Q, raw: RawRow<InKey>[], hasStockCol: boo
   type P = Omit<RegInRow, 'lot_id' | 'ref' | 'adj_ref'> & { lotRaw: string };
   const parsed: P[] = [];
   let ranOver = 0; // ended lots where S-1…S-10 add up to more than MTR
-  const firstSr = new Map<number, number>();
+  const firstSr = new Map<string, number>();
+  const seriesCache = new Map<string, unknown>();
   const preSkipped = new Set<number>();
 
   for (const { row, v } of raw) {
     const nErr = errors.length;
     const date = tryField(row, 'DATE', () => registerDate(v.date));
-    const sr = tryField(row, 'SRNO', () => { const n = srValue(v.sr); if (n == null) throw new LedgerError('SRNO is empty.'); return n; });
+    const serial = tryField(row, 'SRNO', () => { const x = parseSr(v.sr); if (x.number == null) throw new LedgerError('SRNO is empty.'); return x; });
+    const sr = serial?.number ?? null;
+    const series = serial?.series ?? '';
+    if (series) { try { await assertSeries(q, series, seriesCache); } catch (e) { errors.push({ row, field: 'SRNO', message: (e as Error).message }); } }
     // Duplicate SR in the file → error on every repeat (whatever else is wrong with the row).
     if (sr != null) {
-      const f = firstSr.get(sr);
+      const f = firstSr.get(srLabel(sr, series));
       if (f != null) errors.push({ row, field: 'SRNO', message: `SRNO ${sr} is also on row ${f}.` });
-      else firstSr.set(sr, row);
+      else firstSr.set(srLabel(sr, series), row);
     }
     if (String(v.lot ?? '').includes('+')) {
       warnings.push({ row, field: 'LOT NO', skip: true, message: `Two lots in one row (LOT NO ${rawText(v.lot)}): write one row per lot.` });
@@ -272,7 +277,7 @@ export async function checkIncoming(q: Q, raw: RawRow<InKey>[], hasStockCol: boo
     if (ended && taken > mtr + 0.01) ranOver++;
     if (date > today) warnings.push({ row, field: 'DATE', skip: false, message: `Date ${fmtDate(date)} is in the future — check it. Saved as written.` });
     parsed.push({
-      fmt: 'reg_in', row, date, sr_no: sr, lotRaw, reg_lot_no: lotRaw, meters: mtr, pieces, register_pct: pct, loc_code: loc,
+      fmt: 'reg_in', row, date, sr_no: sr, sr_series: series, lotRaw, reg_lot_no: lotRaw, meters: mtr, pieces, register_pct: pct, loc_code: loc,
       mill_name: mill, weaver_name: weaver, quality: item, takes: takes.slice(0, last), stock: stock!, adjustment: round2(mtr - stock!), ended,
     });
   }
@@ -282,12 +287,12 @@ export async function checkIncoming(q: Q, raw: RawRow<InKey>[], hasStockCol: boo
 
   // What the app already has: incoming SRs, lot numbers.
   const srs = parsed.map((r) => r.sr_no);
-  const cand = [...new Set(parsed.flatMap((r) => [r.lotRaw, `${r.lotRaw}-SR${r.sr_no}`]))];
+  const cand = [...new Set(parsed.flatMap((r) => [r.lotRaw, `${r.lotRaw}-SR${srLabel(r.sr_no, r.sr_series)}`]))];
   const [srRes, lotRes] = await Promise.all([
-    srs.length ? q(`SELECT sr_no, lot_id, import_ref, meters FROM stock_movements WHERE direction = 'IN' AND sr_no = ANY($1::int[])`, [srs]) : { rows: [] },
+    srs.length ? q(`SELECT sr_no, sr_series, lot_id, import_ref, meters FROM stock_movements WHERE direction = 'IN' AND sr_no = ANY($1::int[])`, [srs]) : { rows: [] },
     cand.length ? q(`SELECT lot_id, bal_m FROM lots WHERE lot_id = ANY($1::text[])`, [cand]) : { rows: [] },
   ]);
-  const srHas = new Map<number, { lot_id: string; ref: string | null; meters: number }>(srRes.rows.map((x) => [Number(x.sr_no), { lot_id: String(x.lot_id), ref: x.import_ref ?? null, meters: Number(x.meters) }]));
+  const srHas = new Map<string, { lot_id: string; ref: string | null; meters: number }>(srRes.rows.map((x) => [srLabel(Number(x.sr_no), x.sr_series), { lot_id: String(x.lot_id), ref: x.import_ref ?? null, meters: Number(x.meters) }]));
   const lotHas = new Map<string, number>(lotRes.rows.map((x) => [String(x.lot_id), Number(x.bal_m)]));
 
   const rows: RegInRow[] = [];
@@ -298,9 +303,9 @@ export async function checkIncoming(q: Q, raw: RawRow<InKey>[], hasStockCol: boo
   const errRows = new Set(errors.map((e) => e.row));
   for (const r of parsed) {
     if (errRows.has(r.row)) continue;
-    const ref = `${hash(`in|${r.sr_no}|${lotKey(r.lotRaw)}|${r.meters}`)}:1`;
+    const ref = `${hash(`in|${srLabel(r.sr_no, r.sr_series)}|${lotKey(r.lotRaw)}|${r.meters}`)}:1`;
     const adj_ref = ref.replace(':', 'a:');
-    const have = srHas.get(r.sr_no);
+    const have = srHas.get(srLabel(r.sr_no, r.sr_series));
     if (have) {
       if (have.ref === ref) {
         alreadySaved++;
@@ -315,7 +320,7 @@ export async function checkIncoming(q: Q, raw: RawRow<InKey>[], hasStockCol: boo
     // Lot key: the register's LOT NO, unless that number is already a lot (lot numbers repeat across mills).
     let lot_id = r.lotRaw;
     if (lotHas.has(lot_id) || usedIds.has(lot_id)) {
-      const alt = `${r.lotRaw}-SR${r.sr_no}`;
+      const alt = `${r.lotRaw}-SR${srLabel(r.sr_no, r.sr_series)}`;
       if (alt.length > 30 || lotHas.has(alt) || usedIds.has(alt)) {
         warnings.push({ row: r.row, field: 'LOT NO', skip: true, message: `Lot ${r.lotRaw} already exists and ${alt} is taken too. Not added.` });
         skipped.add(r.row);
@@ -333,7 +338,7 @@ export async function checkIncoming(q: Q, raw: RawRow<InKey>[], hasStockCol: boo
 }
 
 // ---------- (b) Outgoing register ----------
-interface LotInfo { lot_id: string; quality: string; reg_lot_no: string | null; bal: number; srs: number[]; closed: boolean }
+interface LotInfo { lot_id: string; quality: string; reg_lot_no: string | null; bal: number; srs: string[]; closed: boolean }
 
 export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegCheck<RegOutRow>> {
   const { errors, warnings, tryField } = collector();
@@ -341,7 +346,7 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
   const today = todayIso();
   const skipped = new Set<number>();
   const skip = (row: number, field: string, message: string) => { warnings.push({ row, field, message, skip: true }); skipped.add(row); };
-  type P = Omit<RegOutRow, 'lot_id' | 'ref'> & { srNum: number | null; combined: boolean; content: string };
+  type P = Omit<RegOutRow, 'lot_id' | 'ref'> & { srNum: string | null; combined: boolean; content: string };
   const parsed: P[] = [];
   const occ = new Map<string, number>();
 
@@ -364,7 +369,8 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
     if (lotRaw && lotRaw.length > 40) errors.push({ row, field: 'LOT', message: 'LOT is longer than 40 characters.' });
     if (errors.length > nErr || !date || !bill || qty == null) continue;
     const combined = !!(srText?.includes('+') || lotRaw?.includes('+'));
-    const srNum = srText && /^\d{1,9}$/.test(srText) ? Number(srText) : null;
+    const parsedSr = !combined && srText ? tryField(row, 'SR.NO', () => parseSr(srText)) : null;
+    const srNum = parsedSr?.number == null ? null : srLabel(parsedSr.number, parsedSr.series);
     if (!lotRaw && !srText) { errors.push({ row, field: 'LOT', message: 'Give the LOT or the SR.NO, so the sale can find its lot.' }); continue; }
     if (L != null && nqty != null && Math.abs(round2(qty * L / 100) - round2(nqty)) > 0.05) warnings.push({ row, field: 'NQTY', skip: false, message: `NQTY ${nqty} is not QTY × L ÷ 100 (${round2(qty * L / 100)}). Kept as given.` });
     if (!statusFromLotS(code)) warnings.push({ row, field: 'LOT S', skip: false, message: `LOT S ${code ? `"${code}" is unconfirmed` : 'is blank'}. Choose Running or End in the review before importing. The original code is kept.` });
@@ -376,18 +382,19 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
   }
 
   // Lots by incoming SR, and by lot no. (lot_id or the register's LOT NO).
-  const srs = [...new Set(parsed.map((r) => r.srNum).filter((n): n is number => n != null))];
+  const srs = [...new Set(parsed.map((r) => r.srNum).filter((n): n is string => n != null))];
+  const srParts = srs.map(value => parseSr(value));
   const lotNos = [...new Set(parsed.filter((r) => r.lot_raw && !r.combined).map((r) => lotKey(r.lot_raw!)))];
   const LOT_SQL = `SELECT l.lot_id, l.quality, l.reg_lot_no, l.bal_m, (l.closed_at IS NOT NULL) AS closed,
-       COALESCE((SELECT array_agg(sm.sr_no) FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.sr_no IS NOT NULL), '{}') AS srs
+       COALESCE((SELECT array_agg((CASE WHEN sm.sr_series = '' THEN sm.sr_no::text ELSE sm.sr_series || '-' || sm.sr_no::text END)) FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.sr_no IS NOT NULL), '{}') AS srs
      FROM lots l`;
   const [bySrRes, byLotRes] = await Promise.all([
-    srs.length ? q(`SELECT sm.sr_no AS key_sr, x.* FROM stock_movements sm JOIN LATERAL (${LOT_SQL} WHERE l.lot_id = sm.lot_id) x ON true
-                    WHERE sm.direction = 'IN' AND sm.sr_no = ANY($1::int[])`, [srs]) : { rows: [] },
+    srs.length ? q(`SELECT (CASE WHEN sm.sr_series = '' THEN sm.sr_no::text ELSE sm.sr_series || '-' || sm.sr_no::text END) AS key_sr, x.* FROM unnest($1::text[], $2::int[]) wanted(series, number) JOIN stock_movements sm ON sm.direction = 'IN' AND sm.sr_series = wanted.series AND sm.sr_no = wanted.number
+                    JOIN LATERAL (${LOT_SQL} WHERE l.lot_id = sm.lot_id) x ON true`, [srParts.map(x => x.series), srParts.map(x => x.number)]) : { rows: [] },
     lotNos.length ? q(`${LOT_SQL} WHERE upper(l.lot_id) = ANY($1::text[]) OR upper(l.reg_lot_no) = ANY($1::text[])`, [lotNos]) : { rows: [] },
   ]);
-  const toInfo = (x: Record<string, unknown>): LotInfo => ({ lot_id: String(x.lot_id), quality: String(x.quality), reg_lot_no: (x.reg_lot_no as string) ?? null, bal: Number(x.bal_m), srs: ((x.srs as unknown[]) ?? []).map(Number), closed: !!x.closed });
-  const bySr = new Map<number, LotInfo>(bySrRes.rows.map((x) => [Number(x.key_sr), toInfo(x)]));
+  const toInfo = (x: Record<string, unknown>): LotInfo => ({ lot_id: String(x.lot_id), quality: String(x.quality), reg_lot_no: (x.reg_lot_no as string) ?? null, bal: Number(x.bal_m), srs: ((x.srs as unknown[]) ?? []).map(String), closed: !!x.closed });
+  const bySr = new Map<string, LotInfo>(bySrRes.rows.map((x) => [String(x.key_sr), toInfo(x)]));
   const byLot = new Map<string, LotInfo[]>();
   for (const x of byLotRes.rows) {
     const info = toInfo(x);
@@ -474,7 +481,8 @@ export async function commitIncomingRow(q: Q, r: Record<string, unknown>, movedB
   const adjRef = importRef(r.adj_ref);
   if (!ref || !adjRef || !REF_RE.test(ref) || !REF_RE.test(adjRef)) throw new LedgerError('Import reference is not valid. Check the file again.');
   const date = registerDate(r.date);
-  const sr = srValue(r.sr_no);
+  const { number: sr, series } = parseSr(r.sr_no, r.sr_series);
+  await assertSeries(q, series, memo.values);
   if (sr == null) throw new LedgerError('SRNO is empty.');
   const lotId = lotCode(r.lot_id)!;
   const regLot = lotCode(r.reg_lot_no)!;
@@ -492,14 +500,14 @@ export async function commitIncomingRow(q: Q, r: Record<string, unknown>, movedB
   const loc = locCodeValue(r.loc_code);
   const pieces = piecesValue(r.pieces);
 
-  const taken = await q(`SELECT lot_id FROM stock_movements WHERE direction = 'IN' AND sr_no = $1 LIMIT 1`, [sr]);
+  const taken = await q(`SELECT lot_id FROM stock_movements WHERE direction = 'IN' AND sr_no = $1 AND sr_series = $2 LIMIT 1`, [sr, series]);
   if (taken.rows[0]) throw new LedgerError(`SRNO ${sr} is already used by lot ${taken.rows[0].lot_id}. Check the file again.`, 409);
   if (await lockLot(q, lotId)) throw new LedgerError(`Lot ${lotId} already exists. Check the file again.`, 409);
   await q(`INSERT INTO lots (lot_id, quality, design, grade, status, reg_lot_no, loc_code) VALUES ($1, $2, $3, 'A', 'active', $4, $5)`, [lotId, quality, NO_DESIGN, regLot, loc]);
   await q(
-    `INSERT INTO stock_movements (lot_id, direction, meters, mill_name, weaver_name, sr_no, pieces, import_ref, ts, register_pct, takes, loc_code)
-     VALUES ($1, 'IN', $2, $3, $4, $5, $6, $7, $8::date, $9, $10::numeric[], $11) RETURNING id`,
-    [lotId, meters, mill, weaver, sr, pieces, ref, date, pct, takes.length ? takes : null, loc],
+    `INSERT INTO stock_movements (lot_id, direction, meters, mill_name, weaver_name, sr_no, pieces, import_ref, ts, register_pct, takes, loc_code, sr_series)
+     VALUES ($1, 'IN', $2, $3, $4, $5, $6, $7, $8::date, $9, $10::numeric[], $11, $12) RETURNING id`,
+    [lotId, meters, mill, weaver, sr, pieces, ref, date, pct, takes.length ? takes : null, loc, series],
   );
   // No app location: the register's LOCATION code (kept in loc_code) is not a market + shop yet (docs/AMBIGUOUS.md §4).
   // The lot shows "Not recorded" until someone moves it to a market location (finished lots → Dispatched below).
