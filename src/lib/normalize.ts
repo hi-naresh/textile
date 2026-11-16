@@ -6,6 +6,7 @@ import { addShop } from './markets';
 
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
+import { entryDateValue } from './entry-date';
 
 /** Match key: lower-case letters and digits only. "Haridwar Tex." and "HARIDWAR  TEX" share a key. */
 export const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -145,6 +146,7 @@ export async function allowedLocation(q: Q, v: unknown, opts: { required: boolea
 export function dateValue(v: unknown): string | null {
   if (v === null || v === undefined || v === '') return null;
   const s = String(v).trim();
+  if (/^\d{8}$/.test(s)) return entryDateValue(s, true);
   let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) {
     const [, y, mo, d] = m;

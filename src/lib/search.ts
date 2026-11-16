@@ -1,3 +1,4 @@
+import { parseSr, srLabel } from './sr-series';
 // Global search (top bar "Search or ask"): one cheap query per kind of thing, run in parallel, each
 // limited, and only over what the caller may see. Every hit carries a deep link (tab + URL hash) that the
 // screen reads with useTakeHash / useHashLink (src/lib/useApi.ts) to open, filter or highlight the item.
@@ -124,6 +125,8 @@ export async function search(q: Q, caller: SearchCaller, raw: string, limit = 5)
   const lower = k.toLowerCase();
   const upper = k.toUpperCase();
   const num = /^\d{1,9}$/.test(k) ? Number(k) : null;
+  let srSearch: ReturnType<typeof parseSr> | null = null;
+  try { srSearch = parseSr(k); } catch { /* general text search */ }
   const contains = `%${esc(lower)}%`;
   const prefixUp = `${esc(upper)}%`;
   const owner = role === 'owner';
@@ -176,23 +179,23 @@ export async function search(q: Q, caller: SearchCaller, raw: string, limit = 5)
         const openOnly = can(role, 'stock.closed') ? '' : ' AND NOT EXISTS (SELECT 1 FROM lots cl WHERE cl.lot_id = stock_movements.lot_id AND cl.closed_at IS NOT NULL)';
         const docWhere = `${tg.doc && k.length >= 3 ? `(search_doc LIKE $1 AND lower(source_doc_id) LIKE $1)` : `source_doc_id LIKE $1`}${openOnly}`;
         const params: unknown[] = [tg.doc && k.length >= 3 ? contains : prefixUp];
-        const srSql = num != null ? ` UNION ALL (SELECT id, lot_id, direction, meters, party, source_doc_id, sr_no, ts, 1 AS by_sr FROM stock_movements WHERE sr_no = $${params.length + 1}${openOnly} LIMIT 4)` : '';
-        if (num != null) params.push(num);
+        const srSql = srSearch?.number != null ? ` UNION ALL (SELECT id, lot_id, direction, meters, party, source_doc_id, sr_no, sr_series, ts, 1 AS by_sr FROM stock_movements WHERE sr_no = $${params.length + 1}${srSearch.series ? ` AND sr_series = $${params.length + 2}` : ''}${openOnly} LIMIT 4)` : '';
+        if (srSearch?.number != null) { params.push(srSearch.number); if (srSearch.series) params.push(srSearch.series); }
         params.push(n);
         const r = await q(`
           SELECT * FROM (
-            (SELECT id, lot_id, direction, meters, party, source_doc_id, sr_no, ts, 0 AS by_sr FROM stock_movements WHERE ${docWhere} LIMIT $${params.length})
+            (SELECT id, lot_id, direction, meters, party, source_doc_id, sr_no, sr_series, ts, 0 AS by_sr FROM stock_movements WHERE ${docWhere} LIMIT $${params.length})
             ${srSql}
           ) x LIMIT $${params.length}`, params);
-        return (r.rows as { id: number; lot_id: string; direction: string; meters: string; party: string | null; source_doc_id: string | null; sr_no: number | null; ts: string; by_sr: number }[]).map((x) => {
+        return (r.rows as { id: number; lot_id: string; direction: string; meters: string; party: string | null; source_doc_id: string | null; sr_no: number | null; sr_series: string; ts: string; by_sr: number }[]).map((x) => {
           const doc = x.source_doc_id ?? '';
           const bySr = x.by_sr === 1;
-          const title = bySr ? `SR ${x.sr_no}${doc ? ` · ${doc}` : ''}` : doc;
+          const title = bySr ? `SR ${srLabel(x.sr_no, x.sr_series)}${doc ? ` · ${doc}` : ''}` : doc;
           return {
             type: 'challan' as const, id: String(x.id), title,
             subtitle: [x.direction === 'IN' ? 'In' : 'Out', x.lot_id, m1(x.meters), x.party, shortDate(x.ts)].filter(Boolean).join(' · '),
             href: stockTab
-              ? { tab: 'stock' as Tab, hash: ledgerHash({ view: 'moves', q: bySr ? String(x.sr_no) : doc || x.lot_id, focus: String(x.id) }) }
+              ? { tab: 'stock' as Tab, hash: ledgerHash({ view: 'moves', q: bySr ? srLabel(x.sr_no, x.sr_series) : doc || x.lot_id, focus: String(x.id) }) }
               : { sheet: 'lot' as const, id: x.lot_id },
             score: bySr ? (num != null ? 85 : 60) : Math.max(score(doc, k), 50),
           };
@@ -359,7 +362,7 @@ export async function lotDetails(q: Q, lotId: string, sections: string[] | null 
     q(`SELECT l.lot_id, l.quality, l.design, l.grade, l.status,
          l.bal_m AS balance, l.cur_location AS location
        FROM lots l WHERE l.lot_id = $1 AND l.closed_at IS NULL`, [lotId]), // closed lots: owner's Closed lots view only
-    q(`SELECT id, direction, meters, party, source_doc_id, sr_no, ts FROM stock_movements WHERE lot_id = $1 ORDER BY ts DESC, id DESC LIMIT 8`, [lotId]),
+    q(`SELECT id, direction, meters, party, source_doc_id, sr_no, sr_series, ts FROM stock_movements WHERE lot_id = $1 ORDER BY ts DESC, id DESC LIMIT 8`, [lotId]),
     q(`SELECT j.id, j.process, w.name AS worker_name, j.meters_in, j.meters_out, j.status FROM job_cards j LEFT JOIN workers w ON w.id = j.worker_id
        WHERE j.lot_id = $1 AND ($2::text[] IS NULL OR lower(regexp_replace(j.process, '\s*section\s*$', '', 'i')) = ANY($2) OR lower(regexp_replace(COALESCE(w.section, ''), '\s*section\s*$', '', 'i')) = ANY($2))
        ORDER BY j.id DESC LIMIT 8`, [lotId, sections]).catch(() => ({ rows: [] })),
@@ -368,7 +371,7 @@ export async function lotDetails(q: Q, lotId: string, sections: string[] | null 
   if (!l) return null;
   return {
     lot: { lot_id: String(l.lot_id), quality: (l.quality as string) ?? null, design: (l.design as string) ?? null, grade: (l.grade as string) ?? null, status: (l.status as string) ?? null, balance: Number(l.balance), location: (l.location as string) ?? null },
-    moves: (moves.rows as Record<string, unknown>[]).map((x) => ({ id: Number(x.id), direction: String(x.direction), meters: Number(x.meters), party: (x.party as string) ?? null, doc: (x.source_doc_id as string) ?? null, sr_no: (x.sr_no as number) ?? null, ts: String(x.ts instanceof Date ? x.ts.toISOString() : x.ts) })),
+    moves: (moves.rows as Record<string, unknown>[]).map((x) => ({ id: Number(x.id), direction: String(x.direction), meters: Number(x.meters), party: (x.party as string) ?? null, doc: (x.source_doc_id as string) ?? null, sr_no: (x.sr_no as number) ?? null, sr_series: String(x.sr_series ?? ''), ts: String(x.ts instanceof Date ? x.ts.toISOString() : x.ts) })),
     jobs: (jobs.rows as Record<string, unknown>[]).map((x) => ({ id: Number(x.id), process: String(x.process ?? ''), worker: (x.worker_name as string) ?? null, meters_in: Number(x.meters_in ?? 0), meters_out: x.meters_out == null ? null : Number(x.meters_out), status: String(x.status ?? '') })),
   };
 }

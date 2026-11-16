@@ -1,5 +1,6 @@
 'use client';
 
+import { parseSr, srLabel } from './sr-series';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Features, KnownNames, LotLocationEntry, Allotment, CaptureEvent, CaptureType, CctvActivity, EfficiencyRecord, FlowDay, JobCard, TodayStock, LedgerEntry, Lot, StockSummary, Toast, ToastTone, Worker } from './types';
 import { activeSupervisor, owner, setFirmConfig, type Role } from './access';
@@ -42,6 +43,7 @@ export interface StockEntry {
   party: string;
   // both
   source_doc: string;
+  sr_series?: string;
   sr_no: string; // paper-register serial (suggested: last + 1)
   pieces: string; // taka, optional
   // Register fields, optional ("More fields"): IN → %, location code; OUT → L, NQTY, LOT S
@@ -88,7 +90,7 @@ export function actorId(role: Role) {
 
 /** GET /api/stock: a small, fixed-size snapshot (no lot list; lots come paged from /api/lots and /api/lots/search). */
 interface StockSnapshot {
-  stockSummary: StockSummary | null; ledger: LedgerEntry[]; flow?: FlowDay[]; today?: TodayStock; names?: KnownNames; qualities?: string[]; rev?: string;
+  stockSummary?: StockSummary | null; ledger: LedgerEntry[]; flow?: FlowDay[]; today?: TodayStock; names?: KnownNames; qualities?: string[]; rev?: string;
 }
 
 export function useTextileData() {
@@ -96,6 +98,7 @@ export function useTextileData() {
   const [qualities, setQualities] = useState<string[]>([]);
   // Changes only when stock changed on the server (movements, locations, lot edits): ledger / lots lists reload on it.
   const [stockRev, setStockRev] = useState('0');
+  const stockRequest = useRef(0); // A late background response must not overwrite a newer save's snapshot.
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [flow, setFlow] = useState<FlowDay[]>([]);
   const [today, setToday] = useState<TodayStock | null>(null);
@@ -150,6 +153,7 @@ export function useTextileData() {
   }, []);
 
   const refresh = useCallback(async () => {
+    const version = ++stockRequest.current;
     try {
       const [settings, stock, jc, wk, cap] = await Promise.all([
         getJson<{ config: FirmConfig }>('/api/settings'),
@@ -160,7 +164,7 @@ export function useTextileData() {
       ]);
       setFirmConfig(settings.config);
       setConfigState(settings.config);
-      applyStock(stock);
+      if (version === stockRequest.current) applyStock(stock);
       setJobCards(jc.jobCards || []);
       setAllotments(jc.allotments || []);
       setWorkers(wk.workers || []);
@@ -181,8 +185,10 @@ export function useTextileData() {
 
   /** After a stock-only change (manual entry, lot move, ledger edit): reload just the small stock snapshot. */
   const refreshStock = useCallback(async () => {
+    const version = ++stockRequest.current;
     try {
-      applyStock(await getJson<StockSnapshot>('/api/stock'));
+      const stock = await getJson<StockSnapshot>('/api/stock');
+      if (version === stockRequest.current) applyStock(stock);
       setLastSync(new Date());
     } catch {
       await refresh();
@@ -197,11 +203,12 @@ export function useTextileData() {
   }, [refresh]);
 
   // ---------- Actions (each refreshes data) ----------
-  const run = useCallback(async (fn: () => Promise<unknown>, ok: string, tone: ToastTone = 'success', after: () => Promise<void> = refresh) => {
+  const run = useCallback(async (fn: () => Promise<unknown>, ok: string, tone: ToastTone = 'success', after: () => Promise<void> = refresh, background = false) => {
     try {
       await fn();
       showToast(ok, tone);
-      await after();
+      if (background) void after();
+      else await after();
       return true;
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Something went wrong.', 'danger');
@@ -210,12 +217,13 @@ export function useTextileData() {
   }, [refresh, showToast]);
 
   const addStock = (role: Role, form: StockEntry) => {
-    const both = { sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role), date: form.date?.trim() || null };
+    const both = { sr_series: form.sr_series ?? '', sr_no: form.sr_no.trim() || null, pieces: form.pieces.trim() || null, source_doc: form.source_doc, moved_by: actorId(role), date: form.date?.trim() || null };
     const body = form.direction === 'IN'
       ? { direction: 'IN', lot_id: form.lot_id, grey_meters: form.grey_meters, finished_meters: form.finished_meters, mill_name: form.mill_name, weaver_name: form.weaver_name, location: form.location, quality: form.quality, design: form.design, register_pct: form.register_pct?.trim() || null, loc_code: form.loc_code?.trim() || null, ...both }
       : { direction: 'OUT', lot_id: form.lot_id, meters: form.meters, party: form.party, bill_pct: form.bill_pct?.trim() || null, billed_meters: form.billed_meters?.trim() || null, lot_status_code: form.lot_status_code?.trim() || null, entry_status: form.entry_status ?? 'running', ...both };
-    const sr = form.sr_no.trim() ? `SR ${form.sr_no.trim()} · ` : '';
-    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'no location'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`, 'success', refreshStock);
+    const serial = parseSr(form.sr_no, form.sr_series);
+    const sr = serial.number == null ? '' : `SR ${srLabel(serial.number, serial.series)} · `;
+    return run(() => send('/api/stock', 'POST', body), form.direction === 'IN' ? `${sr}${form.lot_id} received into ${form.location || 'no location'}` : `${sr}${form.meters} m of ${form.lot_id} dispatched to ${form.party}`, 'success', refreshStock, true);
   };
 
   const moveLot = (role: Role, lotId: string, location: string, note: string) =>

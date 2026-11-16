@@ -43,7 +43,7 @@ const shortDate = (iso: string | null) => {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 };
 const daysTo = (iso: string) => Math.round((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${todayLocal()}T00:00:00Z`)) / 86_400_000);
-const m = (n: number | null | undefined) => (n == null ? '—' : `${fmt(n, 1)} m`);
+const m = (n: number | null | undefined) => (n == null ? '—' : `${fmt(n, 2)} m`);
 const rs = (n: number | null | undefined) => (n == null ? '—' : `₹${fmt(n, 2)}/m`);
 const isActive = (o: Order) => o.status === 'open' || o.status === 'partly_dispatched';
 const isLate = (o: Order) => isActive(o) && !!o.promise_date && o.promise_date < todayLocal() && o.dispatched_m < o.meters * 0.98;
@@ -456,7 +456,7 @@ function OrdersList({ ctx, status, setStatus, created, onOpen, party, onClearPar
             {party.name}<Icon name="x" size={13} strokeWidth={2.4} />
           </button>
         )}
-        {status === 'open' && rows.length > 0 && <span className="muted small">{rows.length} open · {m(pending)} to send{late ? ` · ${late} late` : ''}</span>}
+        {owner && status === 'open' && rows.length > 0 && <span className="muted small">{rows.length} open · {m(pending)} to send{late ? ` · ${late} late` : ''}</span>}
       </div>
       {error && <div className="alert bad">{error}</div>}
       <section className="card flush">
@@ -470,7 +470,7 @@ function OrdersList({ ctx, status, setStatus, created, onOpen, party, onClearPar
                 <td data-label="Order" className="num strong">#{o.id}</td>
                 <td data-label="Party">{o.party_name}</td>
                 <td data-label="Quality">{o.quality}{o.design ? <span className="muted small"> · {o.design}</span> : null}</td>
-                <td data-label="Meters" className="r num">{fmt(o.meters, 1)}</td>
+                <td data-label="Meters" className="r num">{fmt(o.meters, 2)}</td>
                 <td data-label="Progress"><Progress o={o} /></td>
                 <td data-label="Promised"><PromiseCell o={o} /></td>
                 <td data-label="Status"><Pill tone={ORDER_STATUS[o.status].tone}>{ORDER_STATUS[o.status].label}</Pill></td>
@@ -735,11 +735,11 @@ function ManualAllocate({ ctx, orderId, need, busy, onDone }: { ctx: Ctx; orderI
             <select value={lot} onChange={(e) => pick(e.target.value)}>
               <option value="">Choose…</option>
               {data.lots.map((l) => (
-                <option key={l.lot_id} value={l.lot_id}>{l.lot_id} · {l.design}{l.design_match ? '' : ' (other design)'} · {fmt(l.free, 1)} m free</option>
+                <option key={l.lot_id} value={l.lot_id}>{l.lot_id} · {l.design}{l.design_match ? '' : ' (other design)'} · {fmt(l.free, 2)} m free</option>
               ))}
             </select>
           </label>
-          <label className="fld">Meters{chosen ? ` (up to ${fmt(Math.min(chosen.free, need), 1)})` : ''}
+          <label className="fld">Meters{chosen ? ` (up to ${fmt(Math.min(chosen.free, need), 2)})` : ''}
             <input className="num" inputMode="decimal" value={meters} onChange={(e) => setMeters(e.target.value)} />
           </label>
           <div className={s.wrap}>

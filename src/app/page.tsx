@@ -9,6 +9,7 @@ import ChatDock from '@/components/ChatDock';
 import { People, Stock } from '@/components/screens/Owner';
 import { Overview } from '@/components/screens/Overview';
 import { Allot, AllotForm, JobCards, StockForm, StockImport } from '@/components/screens/Shared';
+import { SupervisorStock } from '@/components/screens/SupervisorStock';
 import { Floor } from '@/components/screens/Floor';
 import { Capture } from '@/components/screens/Worker';
 import { Orders } from '@/components/screens/Orders';
@@ -93,7 +94,7 @@ function App({ session }: { session: Me }) {
     const l = store.get('tb-lang') as Lang | null;
     // Average ₹/m rate is gone (every party gets its own rate), so forget any saved one.
     store.set('tb-rate', null);
-    // Supervisor screens scope to the signed-in supervisor's sections (screens render after `mounted`).
+    // Retain the signed-in supervisor identity for capture attribution.
     setPreviewSupervisor(role === 'supervisor' ? account.id : null);
     /* eslint-disable react-hooks/set-state-in-effect */
     setTab(t && tabAllowed(role, t) ? t : HOME_TAB[role]);
@@ -151,7 +152,7 @@ function App({ session }: { session: Me }) {
   let screen: React.ReactNode = null;
   switch (safeTab) {
     case 'overview': screen = <Overview ctx={ctx} />; break;
-    case 'stock': screen = <Stock ctx={ctx} />; break;
+    case 'stock': screen = role === 'supervisor' ? <SupervisorStock ctx={ctx} /> : <Stock ctx={ctx} />; break;
     case 'jobs': screen = <JobCards ctx={ctx} />; break;
     case 'people': screen = <People ctx={ctx} />; break;
     case 'firm': screen = <MyFirm ctx={ctx} />; break;
@@ -185,7 +186,7 @@ function App({ session }: { session: Me }) {
         <AllotForm ctx={ctx} onDone={() => setSheet(null)} />
       </Sheet>
 
-      {mounted && <ChatDock ctx={ctx} open={chatOpen} setOpen={setChatOpen} />}
+      {mounted && can(role, 'chat.use') && <ChatDock ctx={ctx} open={chatOpen} setOpen={setChatOpen} />}
 
       {d.toast && (
         <div className={`toast ${d.toast.tone}`} role="status">

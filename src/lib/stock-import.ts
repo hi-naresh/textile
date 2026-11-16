@@ -1,3 +1,4 @@
+import { parseSr, assertSeries, srLabel } from './sr-series';
 // Excel stock import + challan export with SR no. and pieces (taka). Server-side only.
 //   1. validateImport(): read the .xlsx, check the header row against the template and every row — writes nothing.
 //   2. The browser sends the checked rows back in chunks to /api/stock/import/commit (see commitChunk()).
@@ -7,11 +8,11 @@ import { createHash } from 'crypto';
 import type { Writable } from 'node:stream';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { newLedgerMemo, piecesValue, recordIncoming, recordOutgoing, srValue } from './ledger';
+import { newLedgerMemo, piecesValue, recordIncoming, recordOutgoing } from './ledger';
 import { describePlace, marketList } from './location';
 import { challanCode, lotCode, marketRows, metersValue, nameValue, readPlace } from './normalize';
 import type { LedgerRow } from './ledger-query';
-import { CLOSING_LABEL, ENTRY_STATUS_LABEL } from './registers';
+import { billPctValue, resolveBilledMeters, CLOSING_LABEL, ENTRY_STATUS_LABEL } from './registers';
 import {
   checkIncoming, checkOutgoing, commitIncomingRow, commitOutgoingRow, detectRegister, INCOMING_COLUMNS, OUTGOING_COLUMNS,
   type HeaderCell, type RawRow, type RegCheck, type RegCol, type RegInRow, type RegOutRow, type RegWarning, type RegisterFormat,
@@ -23,7 +24,7 @@ export const MAX_IMPORT_ROWS = 20_000;
 export const CHUNK_MAX = 1000;
 
 type Key = 'direction' | 'sr_no' | 'lot_id' | 'challan' | 'quality' | 'design' | 'grey_meters' | 'finished_meters' | 'pieces'
-  | 'mill_name' | 'weaver_name' | 'location' | 'meters' | 'party';
+  | 'mill_name' | 'weaver_name' | 'location' | 'meters' | 'party' | 'bill_pct' | 'billed_meters';
 
 /** Template columns, in order. `aliases`: other headings accepted as the same column (older templates, common words). */
 export const TEMPLATE_COLUMNS: { key: Key; header: string; width: number; aliases: string[] }[] = [
@@ -41,6 +42,8 @@ export const TEMPLATE_COLUMNS: { key: Key; header: string; width: number; aliase
   { key: 'location', header: 'Location (IN)', width: 18, aliases: [] },
   { key: 'meters', header: 'Meters (OUT)', width: 14, aliases: ['Mts', 'Meter'] },
   { key: 'party', header: 'Party (OUT)', width: 24, aliases: ['Party Name', 'Client', 'Customer'] },
+  { key: 'bill_pct', header: 'L (OUT)', width: 12, aliases: [] },
+  { key: 'billed_meters', header: 'NQTY (OUT)', width: 16, aliases: ['Billed meters'] },
 ];
 const LABEL = Object.fromEntries(TEMPLATE_COLUMNS.map((c) => [c.key, c.header])) as Record<Key, string>;
 
@@ -114,7 +117,7 @@ export function importTemplate(wb: ExcelJS.Workbook, markets: { id: number; code
   lists.state = 'hidden';
   const [dir, loc] = [colLetter('direction'), colLetter('location')];
   const meters = (['grey_meters', 'finished_meters', 'meters'] as Key[]).map(colLetter);
-  const whole = (['sr_no', 'pieces'] as Key[]).map(colLetter);
+  const whole = (['pieces'] as Key[]).map(colLetter);
   for (let r = 2; r <= 2001; r++) {
     ws.getCell(`${dir}${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['"IN,OUT"'], showErrorMessage: true, error: 'IN or OUT' };
     // Not strict: pick the market code, then type the shop and pipe after it ("LM 245 · Pipe 3" or "LM 245 3").
@@ -185,6 +188,7 @@ export function registerTemplate(wb: ExcelJS.Workbook, format: RegisterFormat, n
       'One row per lot on a bill (a bill with 3 lots = 3 rows). SR.NO = the lot’s SRNO in the Incoming register: that is how the sale finds its lot. Import the Incoming register first.',
       'Two lots in one row (172+173, SR 146+204) can’t be split by the app: write one row per lot.',
       'No party column: imported sales have no party. QTY (meters) comes out of the lot; L, NQTY and LOT S are kept as written.',
+      'Review all lot statuses before importing. S/R propose Running, E proposes End; blank, A and unknown LOT S need an explicit choice. Only the last sale of a lot in this file can close it.',
       'Importing the same file again does not add anything twice.',
     ];
   general.forEach((w, i) => help.addRow({ c: i === 0 ? 'Notes' : '', w }));
@@ -215,7 +219,7 @@ function wallClock(ts: string): Date {
 
 const CHALLAN_COLUMNS = [
   { header: 'S.No', key: 'sno', width: 7 },
-  { header: 'SR No', key: 'sr', width: 8 },
+  { header: 'SR No', key: 'sr', width: 22 },
   { header: 'Date', key: 'date', width: 12, style: { numFmt: 'dd-mm-yyyy' } },
   { header: 'IN/OUT', key: 'direction', width: 8 },
   { header: 'Challan No', key: 'challan', width: 14 },
@@ -244,7 +248,7 @@ const CHALLAN_COLUMNS = [
 
 function challanValues(r: LedgerRow, index: number) {
   return {
-    sno: index, sr: r.sr_no, date: wallClock(r.ts), direction: r.direction, challan: r.source_doc_id ?? '', lot_id: r.lot_id,
+    sno: index, sr: r.sr_series ? srLabel(r.sr_no, r.sr_series) : r.sr_no, date: wallClock(r.ts), direction: r.direction, challan: r.source_doc_id ?? '', lot_id: r.lot_id,
     quality: r.quality, design: r.design, grey: r.grey_meters, finished: r.finished_meters, meters: r.meters, pieces: r.pieces,
     mill: r.mill_name ?? '', weaver: r.weaver_name ?? '', party: r.direction === 'OUT' ? r.party ?? '' : '', location: r.location ?? '',
     entry: r.capture_event_id ? 'Photo' : r.imported ? 'Excel' : 'Manual',
@@ -306,9 +310,11 @@ export async function streamChallanWorkbook(firmName: string, output: Writable, 
 
 // ---------- validation ----------
 export interface ImportRow {
+  bill_pct?: number | null;
+  billed_meters?: number | null;
   row: number; // Excel row number
   direction: 'IN' | 'OUT';
-  sr_no: number | null;
+  sr_series?: string; sr_no: number | null;
   lot_id: string;
   challan: string | null;
   quality: string | null;
@@ -330,6 +336,7 @@ export const FORMAT_LABEL: Record<ImportFormat, string> = { template: 'app templ
 export interface FixFile { headers: string[]; rows: { row: number; values: unknown[]; reason: string }[] }
 export type AnyImportRow = ImportRow | RegInRow | RegOutRow;
 export interface ValidateResult {
+  reviewId?: string; // outgoing register: server-held file/row snapshot, confirmed before commit
   ok: boolean; // no column problems and no row errors (warnings are allowed)
   batch: string | null;
   sheet: string;
@@ -517,6 +524,7 @@ async function validateRegister(q: Q, ws: ExcelJS.Worksheet, headRow: number, ce
 
 /** (c) The app's own template ("Stock entries"). Rules unchanged: any problem blocks the file. */
 async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Promise<ValidateResult> {
+  const seriesCache = new Map<string, unknown>();
 
   // ----- header row -----
   const headerProblems: HeaderProblem[] = [];
@@ -594,9 +602,11 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
     const direction = d === 'IN' || d === 'OUT' ? d : null;
     if (has('direction') && !direction) add(row, 'direction', d ? `"${String(v.direction).trim()}" is not IN or OUT.` : 'Direction is empty (IN or OUT).');
     const lot = has('lot_id') ? tryField(row, 'lot_id', () => lotCode(v.lot_id)) : null;
+    const serial = tryField(row, 'sr_no', () => parseSr(v.sr_no));
+    if (serial?.series) { try { await assertSeries(q, serial.series, seriesCache); } catch (e) { add(row, 'sr_no', (e as Error).message); } }
     const x: ImportRow = {
       row, direction: direction ?? 'IN', lot_id: lot ?? '',
-      sr_no: tryField(row, 'sr_no', () => srValue(v.sr_no)),
+      sr_no: serial?.number ?? null, sr_series: serial?.series ?? '',
       challan: tryField(row, 'challan', () => challanCode(v.challan)),
       quality: tryField(row, 'quality', () => nameValue(v.quality, 'Quality')),
       design: tryField(row, 'design', () => nameValue(v.design, 'Design')),
@@ -616,6 +626,8 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
     } else if (direction === 'OUT') {
       x.meters = tryField(row, 'meters', () => metersValue(v.meters, 'Meters'));
       x.party = tryField(row, 'party', () => nameValue(v.party, 'Party'));
+      x.bill_pct = tryField(row, 'bill_pct', () => billPctValue(v.bill_pct));
+      x.billed_meters = tryField(row, 'billed_meters', () => resolveBilledMeters(x.meters, x.bill_pct ?? null, v.billed_meters));
       if ((v.meters == null || v.meters === '') && has('meters')) add(row, 'meters', 'Meters are required for OUT.');
       if (!x.party && (v.party == null || v.party === '') && has('party')) add(row, 'party', 'Party (the client receiving the goods) is required for OUT.');
     }
@@ -635,17 +647,17 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
   const srFirst = new Map<string, number>();
   for (const r of parsed) {
     if (r.sr_no == null) continue;
-    const k = `${r.direction}:${r.sr_no}`;
+    const k = `${r.direction}:${srLabel(r.sr_no, r.sr_series)}`;
     const first = srFirst.get(k);
     if (first != null) add(r.row, 'sr_no', `SR no. ${r.sr_no} (${r.direction}) is also on row ${first}.`);
     else srFirst.set(k, r.row);
   }
   const srs = [...new Set(parsed.map((r) => r.sr_no).filter((n): n is number => n != null))];
   if (srs.length) {
-    const used = await q(`SELECT direction, sr_no, lot_id FROM stock_movements WHERE sr_no = ANY($1::int[])`, [srs]);
-    const taken = new Map(used.rows.map((u) => [`${u.direction}:${u.sr_no}`, u.lot_id as string]));
+    const used = await q(`SELECT direction, sr_no, sr_series, lot_id FROM stock_movements WHERE sr_no = ANY($1::int[])`, [srs]);
+    const taken = new Map(used.rows.map((u) => [`${u.direction}:${srLabel(u.sr_no, u.sr_series)}`, u.lot_id as string]));
     for (const r of parsed) {
-      const lotUsing = r.sr_no != null ? taken.get(`${r.direction}:${r.sr_no}`) : undefined;
+      const lotUsing = r.sr_no != null ? taken.get(`${r.direction}:${srLabel(r.sr_no, r.sr_series)}`) : undefined;
       if (lotUsing) add(r.row, 'sr_no', `SR no. ${r.sr_no} is already used on an ${r.direction === 'IN' ? 'incoming' : 'outgoing'} entry (${lotUsing}).`);
     }
   }
@@ -745,13 +757,13 @@ export async function commitChunk(q: Q, batch: string, rows: unknown[], movedBy:
         await recordIncoming(q, {
           lot_id: r.lot_id, quality: r.quality, design: r.design, grey_meters: r.grey_meters, finished_meters: r.finished_meters,
           mill_name: r.mill_name, weaver_name: r.weaver_name, source_doc: r.challan, location: r.location,
-          sr_no: r.sr_no, pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy, add_shops_by: movedBy,
+          sr_no: r.sr_no, sr_series: r.sr_series ?? '', pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy, add_shops_by: movedBy,
         }, { requireLotDetails: true, memo });
         inCount++;
       } else if (r.direction === 'OUT') {
         await recordOutgoing(q, {
-          lot_id: r.lot_id, meters: r.meters, party: r.party, source_doc: r.challan,
-          sr_no: r.sr_no, pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy,
+          lot_id: r.lot_id, meters: r.meters, party: r.party, source_doc: r.challan, bill_pct: r.bill_pct, billed_meters: r.billed_meters,
+          sr_no: r.sr_no, sr_series: r.sr_series ?? '', pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy,
         }, { memo });
         outCount++;
       } else {

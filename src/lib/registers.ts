@@ -62,6 +62,16 @@ export function billedMetersValue(v: unknown): number | null {
   return Math.round(n * 10000) / 10000;
 }
 
+/** Calculated NQTY uses two decimals; an explicit value (including zero) wins. */
+export function calculatedBilledMeters(meters: number | null, pct: number | null): number | null {
+  if (meters == null || pct == null) return null;
+  // Both source fields have at most two decimals. Integer scaling avoids binary half-cent rounding errors.
+  return Math.round(Math.round(meters * 100) * Math.round(pct * 100) / 10000) / 100;
+}
+export function resolveBilledMeters(meters: number | null, pct: number | null, explicit: unknown): number | null {
+  return billedMetersValue(explicit) ?? billedMetersValue(calculatedBilledMeters(meters, pct));
+}
+
 /** LOT S code: 1–5 letters / digits, stored upper-case, or null. */
 export function lotStatusCodeValue(v: unknown): string | null {
   if (blank(v)) return null;
@@ -97,7 +107,7 @@ export function entryStatusValue(v: unknown): EntryStatus | null {
 /** Register serial as text (SR.NO): "102" or a combined "146+204". */
 export function linkedSrValue(v: unknown): string | null {
   if (blank(v)) return null;
-  const s = String(v).replace(/\s+/g, '').trim();
+  const s = String(v).trim().replace(/^([a-z][a-z0-9]{0,9})\s+(\d+)$/i, '$1-$2').replace(/\s+/g, '').toUpperCase();
   if (s.length > 40 || !/^[A-Za-z0-9+\-/.]+$/.test(s)) throw new LedgerError(`SR.NO "${String(v).trim().slice(0, 20)}" is not valid.`);
   return s;
 }

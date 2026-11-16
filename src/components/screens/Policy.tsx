@@ -1,6 +1,6 @@
 'use client';
 
-// My firm → Policy (owner): the firm's rules (flags, auto-saving photo reads, time-saved baseline, whether supervisors may mark entries End),
+// My firm → Policy (owner): the firm's rules (flags, auto-saving photo reads, time-saved baseline, owner confirmation of supervisor captures),
 // stock alerts, WhatsApp switches (reminders, dispatch messages, morning summary) and firm knowledge notes the chat answers from.
 import React, { useCallback, useEffect, useState } from 'react';
 import Icon from '../Icon';
@@ -31,7 +31,6 @@ function Rules({ ctx }: { ctx: Ctx }) {
   const [autoPct, setAutoPct] = useState(String(cfg.rules.aiAutoConfirmPct));
   const [challanMin, setChallanMin] = useState(String(cfg.rules.manualChallanMin));
   const [jobCardMin, setJobCardMin] = useState(String(cfg.rules.manualJobCardMin));
-  const supervisorsCanEnd = !(cfg.accessOff?.supervisor ?? []).includes('stock.end');
   const rulesDirty = shortage !== String(cfg.rules.shortageLimitPct) || efficiency !== String(cfg.rules.efficiencyTargetPct) || autoPct !== String(cfg.rules.aiAutoConfirmPct)
     || challanMin !== String(cfg.rules.manualChallanMin) || jobCardMin !== String(cfg.rules.manualJobCardMin);
   return (
@@ -47,15 +46,9 @@ function Rules({ ctx }: { ctx: Ctx }) {
       </div>
       <span className="muted small" style={{ marginTop: -8 }}>How long entering one by hand takes. Used for the time-saved figure.</span>
       <label className="fld">Auto-confirm photo reads (%)<input className="num" inputMode="decimal" value={autoPct} onChange={(e) => setAutoPct(e.target.value)} />
-        <span className="muted small">Photo reads at or above this confidence are saved without review. Allowed {LIMITS.aiAutoConfirmPct.min}–{LIMITS.aiAutoConfirmPct.max}; 100 = always review.</span></label>
+        <span className="muted small">Owner photo reads at or above this confidence are saved without review. Supervisor reads always wait for owner confirmation. Allowed {LIMITS.aiAutoConfirmPct.min}–{LIMITS.aiAutoConfirmPct.max}; 100 = always review.</span></label>
       <div className="row-8"><button className="btn primary" disabled={!rulesDirty} onClick={() => api.updateFirm({ shortage_limit_pct: shortage, efficiency_target_pct: efficiency, ai_auto_confirm_pct: autoPct, manual_challan_min: challanMin, manual_job_card_min: jobCardMin })}>Save rules</button></div>
-      <div className="wa-row">
-        <div className="stack-2 grow min0">
-          <span className="strong">Supervisors can mark entries End</span>
-          <span className="muted small">End is the last sale from a lot. Turn this off and only you can mark End; supervisors still choose Running.</span>
-        </div>
-        <Toggle on={supervisorsCanEnd} label="Supervisors can mark entries End" onChange={(on) => { void api.updateFirm({ supervisor_can_end: on }); }} />
-      </div>
+      <p className="muted small">Supervisors can view stock and upload challans. Only the owner can confirm their reads or change stock.</p>
     </section>
   );
 }

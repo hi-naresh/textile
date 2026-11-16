@@ -8,8 +8,8 @@ import { OUTGOING_STATUSES, ENTRY_STATUS_HINT, ENTRY_STATUS_LABEL, type EntrySta
 import type { StockStatus } from '@/lib/types';
 
 const TONE: Record<EntryStatus, Tone> = { packed: 'info', running: 'good', end: 'neutral' };
-const STOCK_LABEL: Record<StockStatus, string> = { packed: 'Packed', running: 'Running', hold: 'On hold', end: 'Ended' };
-const STOCK_TONE: Record<StockStatus, Tone> = { packed: 'info', running: 'good', hold: 'warn', end: 'neutral' };
+const STOCK_LABEL: Record<StockStatus, string> = { packed: 'Packed', running: 'Running', hold: 'On hold', other: 'Other', end: 'Ended' };
+const STOCK_TONE: Record<StockStatus, Tone> = { packed: 'info', running: 'good', hold: 'warn', other: 'warn', end: 'neutral' };
 
 /** `unset`: an outgoing entry with no status yet (saved before statuses existed) shows "Not set" instead of nothing. */
 export function EntryStatusPill({ status, unset = false }: { status: EntryStatus | null | undefined; unset?: boolean }) {

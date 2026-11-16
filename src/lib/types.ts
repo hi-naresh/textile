@@ -1,6 +1,8 @@
 // Shared client-side types for API responses
 
 export interface Lot {
+  sr_refs?: string[]; sr_nos?: number[];
+  weavers?: string[];
   lot_id: string;
   quality: string;
   design: string;
@@ -21,7 +23,7 @@ export interface Lot {
   adjustment_m?: number | null;
 }
 
-export type StockStatus = 'packed' | 'running' | 'hold' | 'end';
+export type StockStatus = 'packed' | 'running' | 'hold' | 'other' | 'end';
 
 /** Stock on hand at a glance (GET /api/stock). */
 export interface StockSummary {
@@ -33,6 +35,7 @@ export interface StockSummary {
   running_lots: number;
   on_hold_m: number;
   on_hold_lots: number;
+  other_m?: number; other_lots?: number; ended_balance_count?: number; ended_balances?: { lot_id: string; balance: number }[];
   low_lots: { lot_id: string; quality: string; balance: number }[];
 }
 
@@ -60,6 +63,7 @@ export interface KnownNames {
 }
 
 export interface LedgerEntry {
+  entry_date?: string;
   id: number;
   lot_id: string;
   direction: 'IN' | 'OUT';

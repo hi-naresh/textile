@@ -1,20 +1,24 @@
+import { parseSr, assertSeries, srLabel } from './sr-series';
 // Stock ledger edit mode (owner): PATCH /api/stock/edit applies a batch of cell edits in ONE transaction.
 // Every change is validated first; if any is invalid nothing is saved (422 with one problem per bad cell).
 // Each changed field writes one ledger_edits row (who, when, old → new). No-op changes are skipped.
 // Status of an outgoing entry (Running / End): changing it to End closes the lot (closeLot); taking End off
 // the entry that closed its lot reopens the lot (reopenLot). Both happen in the same transaction as the edit.
+import { trimReservations } from './stock';
+import { refreshOrderStatus } from './orderStatus';
+import { entryDateValue } from './entry-date';
 import { catalogQuality } from './qualities';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
-import { closeLot, piecesValue, reopenLot, srValue } from './ledger';
+import { closeLot, piecesValue, reopenLot } from './ledger';
 import { canonicalLotAttr, canonicalName, challanCode, metersValue, nameValue } from './normalize';
-import { billedMetersValue, billPctValue, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
+import { billedMetersValue, billPctValue, calculatedBilledMeters, resolveBilledMeters, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 import { markAgentsStale } from './agents/stale';
 import { ledgerRowsByIds, type LedgerRow } from './ledger-query';
 
-export const MOVEMENT_FIELDS = ['meters', 'sr_no', 'pieces', 'source_doc_id', 'mill_name', 'weaver_name', 'party', 'quality', 'design',
+export const MOVEMENT_FIELDS = ['date', 'meters', 'grey_meters', 'finished_meters', 'sr_no', 'pieces', 'source_doc_id', 'mill_name', 'weaver_name', 'party', 'quality', 'design',
   'register_pct', 'loc_code', 'bill_pct', 'billed_meters', 'lot_status_code', 'entry_status'] as const;
-const IN_ONLY = ['mill_name', 'weaver_name', 'register_pct', 'loc_code'];
+const IN_ONLY = ['grey_meters', 'finished_meters', 'mill_name', 'weaver_name', 'register_pct', 'loc_code'];
 const OUT_ONLY = ['party', 'bill_pct', 'billed_meters', 'lot_status_code', 'entry_status'];
 export const LOT_FIELDS = ['quality', 'design', 'grade', 'status'] as const;
 export const LOT_STATUSES = ['active', 'completed', 'dispatched', 'hold'] as const;
@@ -34,13 +38,13 @@ export interface EditProblem { target: 'movement' | 'lot'; id: number | string; 
 export class EditProblems extends LedgerError {
   problems: EditProblem[];
   constructor(problems: EditProblem[]) {
-    super(problems.length === 1 ? problems[0].message : `${problems.length} changes need fixing. Nothing was saved.`, 422);
+    super(problems.every((p) => p.message === problems[0].message) ? problems[0].message : `${problems.length} changes need fixing. Nothing was saved.`, 422);
     this.problems = problems;
   }
 }
 
 const FIELD_LABEL: Record<string, string> = {
-  sr_no: 'SR no.', pieces: 'Pieces (taka)', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver',
+  grey_meters: 'Grey meters', finished_meters: 'Finished meters', date: 'Entry date', sr_no: 'SR no.', pieces: 'Pieces (taka)', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver',
   party: 'Party', quality: 'Quality', design: 'Design', grade: 'Grade', status: 'Status',
   register_pct: '%', loc_code: 'Location code', bill_pct: 'L', billed_meters: 'NQTY (billed meters)', lot_status_code: 'LOT S',
   entry_status: 'Status', meters: 'Meters', closing_adjustment: 'Closing adjustment',
@@ -71,6 +75,7 @@ export function parseChanges(body: Record<string, unknown>): EditChange[] {
 }
 
 interface MovementRow {
+  sr_series: string; date: string; grey_meters: number | null; finished_meters: number | null; order_id: number | null; dispatch_id: number | null;
   id: number; lot_id: string; direction: 'IN' | 'OUT'; kind: string; meters: number; sr_no: number | null; pieces: number | null; source_doc_id: string | null; mill_name: string | null; weaver_name: string | null; party: string | null;
   register_pct: number | null; loc_code: string | null; bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null;
   entry_status: string | null;
@@ -104,14 +109,21 @@ function requiredName(v: Value, label: string): string {
  * Apply a batch of edits. Call inside a transaction. `endAllowed`: the editor may mark entries End (stock.end).
  * `reload`: stock or closing rows changed — the caller should reload its lists.
  */
-export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string | null, opts: { endAllowed?: boolean } = {}): Promise<{ saved: number; rows: LedgerRow[]; lots: EditedLot[]; adjustments: RecalculatedAdjustment[]; reload: boolean }> {
+export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string | null, opts: { endAllowed?: boolean; dispatchHeader?: boolean } = {}): Promise<{ saved: number; rows: LedgerRow[]; lots: EditedLot[]; adjustments: RecalculatedAdjustment[]; reload: boolean; warnings: string[] }> {
   const problems: EditProblem[] = [];
   const problem = (c: { target: 'movement' | 'lot'; id: number | string; field: string }, message: string) => {
     if (!problems.some((p) => p.target === c.target && p.id === c.id && p.field === c.field)) problems.push({ target: c.target, id: c.id, field: c.field, message });
   };
 
+  await markAgentsStale(q);
   // 1. Lock the rows (in a fixed order, so two saves can't deadlock).
   const mvIds = [...new Set(changes.filter((c) => c.target === 'movement').map((c) => c.id as number))].sort((a, b) => a - b);
+  // Match dispatch creation's order → dispatch → lot lock order. Invoice creation locks
+  // the dispatch, so a correction and an invoice cannot snapshot different quantities.
+  if (mvIds.length) {
+    await q(`SELECT id FROM orders WHERE id IN (SELECT order_id FROM stock_movements WHERE id = ANY($1::int[])) ORDER BY id FOR UPDATE`, [mvIds]);
+    await q(`SELECT id FROM dispatches WHERE id IN (SELECT dispatch_id FROM stock_movements WHERE id = ANY($1::int[])) ORDER BY id FOR UPDATE`, [mvIds]);
+  }
   const movementLots = mvIds.length
     ? await q(`SELECT DISTINCT lot_id FROM stock_movements WHERE id = ANY($1::int[]) ORDER BY lot_id`, [mvIds])
     : { rows: [] };
@@ -123,12 +135,12 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     await q(`SELECT lot_id FROM lots WHERE lot_id = ANY($1::text[]) ORDER BY lot_id FOR UPDATE`, [lotIdsToLock]);
   }
   const mvRes = mvIds.length
-    ? await q(`SELECT id, lot_id, direction, kind, meters, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code, entry_status
+    ? await q(`SELECT id, lot_id, direction, kind, meters, grey_meters, finished_meters, order_id, dispatch_id, sr_series, to_char(ts, 'YYYY-MM-DD') AS date, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code, entry_status
                  FROM stock_movements WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`, [mvIds])
     : { rows: [] };
   const n = (v: unknown) => (v == null ? null : Number(v));
   const movements = new Map<number, MovementRow>(mvRes.rows.map((r) => [Number(r.id), {
-    ...r, id: Number(r.id), meters: Number(r.meters), sr_no: n(r.sr_no), pieces: n(r.pieces), register_pct: n(r.register_pct), bill_pct: n(r.bill_pct), billed_meters: n(r.billed_meters),
+    ...r, id: Number(r.id), meters: Number(r.meters), grey_meters: n(r.grey_meters), finished_meters: n(r.finished_meters), sr_no: n(r.sr_no), pieces: n(r.pieces), register_pct: n(r.register_pct), bill_pct: n(r.bill_pct), billed_meters: n(r.billed_meters),
   } as MovementRow]));
 
   // Quality / design belong to the lot: a change on a movement row edits its lot.
@@ -156,15 +168,24 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     const { m, field } = c;
     let v: string | number | null;
     try {
-      if (field === 'meters') {
+      if (field === 'date') v = entryDateValue(String(c.value ?? ''));
+      else if (field === 'meters') {
         v = metersValue(c.value, 'Meters');
         if (v == null) throw new LedgerError('Meters are required.');
       }
-      else if (field === 'sr_no') v = srValue(c.value);
+      else if (field === 'sr_no') {
+        const serial = parseSr(c.value);
+        await assertSeries(q, serial.series);
+        v = serial.number;
+        const previous = mvFinal.get(`${m.id}:sr_series`);
+        if (previous && previous.value !== serial.series) throw new LedgerError('SR is changed twice with different prefixes.');
+        mvFinal.set(`${m.id}:sr_series`, { m, field: 'sr_series', value: serial.series, origin: c.origin });
+      }
       else if (field === 'pieces') v = piecesValue(c.value);
       else if (field === 'source_doc_id') v = challanCode(c.value);
       else if (IN_ONLY.includes(field) && m.direction !== 'IN') throw new LedgerError(`${FIELD_LABEL[field]} is only for incoming (IN) entries.`);
       else if (OUT_ONLY.includes(field) && field !== 'party' && m.direction !== 'OUT') throw new LedgerError(`${FIELD_LABEL[field]} is only for outgoing (OUT) entries.`);
+      else if (field === 'grey_meters' || field === 'finished_meters') v = metersValue(c.value, FIELD_LABEL[field]);
       else if (field === 'register_pct') v = registerPctValue(c.value);
       else if (field === 'loc_code') v = locCodeValue(c.value);
       else if (field === 'bill_pct') v = billPctValue(c.value);
@@ -191,6 +212,50 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     mvFinal.set(k, { m, field, value: v, origin: c.origin });
   }
 
+  // IN stock always uses finished meters when known, otherwise grey meters. Direct
+  // stock edits update that same source field; conflicting edits fail together.
+  for (const m of movements.values()) {
+    if (m.direction !== 'IN') continue;
+    const amount = mvFinal.get(`${m.id}:meters`);
+    const g = mvFinal.get(`${m.id}:grey_meters`), f = mvFinal.get(`${m.id}:finished_meters`);
+    if (!amount && !g && !f) continue;
+    const put = (field: string, value: number | null) => mvFinal.set(`${m.id}:${field}`, { m, field, value, origin: { target: 'movement', id: m.id, field, message: '' } });
+    let grey = g ? g.value as number | null : m.grey_meters;
+    let finished = f ? f.value as number | null : m.finished_meters;
+    if (amount && !g && !f) {
+      if (finished != null || grey == null) { finished = Number(amount.value); put('finished_meters', finished); }
+      else { grey = Number(amount.value); put('grey_meters', grey); }
+    }
+    const derived = finished ?? grey;
+    if (derived == null) problem({ target: 'movement', id: m.id, field: 'finished_meters' }, 'Enter grey or finished meters.');
+    else if (amount && Number(amount.value) !== derived) problem(amount.origin, 'Meters must agree with finished meters (grey when finished is empty).');
+    else put('meters', derived);
+    if (grey != null && finished != null && finished > grey * 1.1) problem({ target: 'movement', id: m.id, field: 'finished_meters' }, 'Finished meters cannot be more than 110% of grey meters.');
+    const oldPct = m.grey_meters && m.finished_meters != null ? Math.round((m.grey_meters - m.finished_meters) / m.grey_meters * 10000) / 100 : null;
+    if (!mvFinal.has(`${m.id}:register_pct`) && (m.register_pct == null || m.register_pct === oldPct)) {
+      put('register_pct', grey && finished != null ? Math.round((grey - finished) / grey * 10000) / 100 : null);
+    }
+  }
+
+  // Recalculate untouched/default NQTY after all edits are normalized, independent of request order.
+  for (const m of movements.values()) {
+    if (m.direction !== 'OUT') continue;
+    const amount = mvFinal.get(`${m.id}:meters`);
+    const pct = mvFinal.get(`${m.id}:bill_pct`);
+    const billed = mvFinal.get(`${m.id}:billed_meters`);
+    if (!amount && !pct && !billed) continue;
+    const auto = m.billed_meters == null || m.billed_meters === calculatedBilledMeters(m.meters, m.bill_pct);
+    if (billed ? billed.value != null : !auto) continue;
+    try {
+      const value = resolveBilledMeters(amount ? Number(amount.value) : m.meters, pct ? pct.value as number | null : m.bill_pct, null);
+      mvFinal.set(`${m.id}:billed_meters`, { m, field: 'billed_meters', value,
+        origin: { target: 'movement', id: m.id, field: 'billed_meters', message: '' } });
+    } catch (e) {
+      if (e instanceof LedgerError) problem({ target: 'movement', id: m.id, field: 'billed_meters' }, e.message);
+      else throw e;
+    }
+  }
+
   const lotFinal = new Map<string, { lot: LotRow; field: LotField; value: string; origin: LotChange['origin'] }>();
   for (const c of lotChanges) {
     const lot = lots.get(c.lot);
@@ -213,18 +278,18 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
   }
 
   // 3. SR no. is unique per direction — against the database and between the changes in this batch.
-  const srChanges = [...mvFinal.values()].filter((x) => x.field === 'sr_no' && !same(x.m.sr_no, x.value));
+  const srChanges = [...mvFinal.values()].filter((x) => x.field === 'sr_no' && (!same(x.m.sr_no, x.value) || !same(x.m.sr_series, mvFinal.get(`${x.m.id}:sr_series`)?.value ?? x.m.sr_series)));
   const srMoving = srChanges.map((x) => x.m.id); // their old numbers become free
   for (const dir of ['IN', 'OUT'] as const) {
     const mine = srChanges.filter((x) => x.m.direction === dir && x.value != null);
     if (!mine.length) continue;
     const taken = await q(
-      `SELECT sr_no, lot_id FROM stock_movements WHERE direction = $1 AND sr_no = ANY($2::int[]) AND NOT (id = ANY($3::int[]))`,
+      `SELECT sr_no, sr_series, lot_id FROM stock_movements WHERE direction = $1 AND sr_no = ANY($2::int[]) AND NOT (id = ANY($3::int[]))`,
       [dir, mine.map((x) => x.value), srMoving.length ? srMoving : [0]],
     );
-    const used = new Map<number, string>(taken.rows.map((r) => [Number(r.sr_no), String(r.lot_id)]));
+    const used = new Map<string, string>(taken.rows.map((r) => [srLabel(Number(r.sr_no), r.sr_series), String(r.lot_id)]));
     for (const x of mine) {
-      const sr = x.value as number;
+      const sr = srLabel(x.value as number, String(mvFinal.get(`${x.m.id}:sr_series`)?.value ?? x.m.sr_series));
       const hit = used.get(sr);
       if (hit !== undefined) problem(x.origin, `SR ${sr} is already used by an ${dir} entry (lot ${hit}).`);
       else used.set(sr, x.m.lot_id); // a later change in this batch with the same SR collides with this one
@@ -253,6 +318,23 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     endingLots.add(x.m.lot_id);
   }
 
+  const dates = [...mvFinal.values()].filter((x) => x.field === 'date' && !same(x.m.date, x.value));
+  if (dates.length) {
+    const closed = await q('SELECT lot_id FROM lots WHERE lot_id = ANY($1::text[]) AND closed_at IS NOT NULL', [dates.map((x) => x.m.lot_id)]);
+    const ids = new Set(closed.rows.map((r) => r.lot_id));
+    for (const x of dates) if (ids.has(x.m.lot_id)) problem(x.origin, 'Reopen the lot before changing an entry date.');
+  }
+  const invoiced = mvIds.length ? await q(`SELECT sm.id, i.invoice_no FROM stock_movements sm JOIN invoices i ON i.dispatch_id = sm.dispatch_id AND i.status <> 'cancelled' WHERE sm.id = ANY($1::int[])`, [mvIds]) : { rows: [] };
+  const invoices = new Map(invoiced.rows.map((r) => [Number(r.id), r.invoice_no]));
+  for (const x of mvFinal.values()) {
+    if (same(x.m[x.field as keyof MovementRow], x.value)) continue;
+    if (invoices.has(x.m.id) && ['meters', 'party', 'date', 'bill_pct', 'billed_meters', 'source_doc_id'].includes(x.field)) {
+      problem(x.origin, `Cancel invoice ${invoices.get(x.m.id)} before correcting this dispatch.`);
+    }
+    if (x.m.dispatch_id && !opts.dispatchHeader && ['party', 'date', 'source_doc_id'].includes(x.field)) {
+      problem(x.origin, `Edit dispatch #${x.m.dispatch_id} in Dispatch & documents to keep its header and entries together.`);
+    }
+  }
   if (problems.length) throw new EditProblems(problems);
 
   // 4. Apply (skipping no-ops) and log every changed field.
@@ -279,9 +361,10 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     // Free the old SR numbers first so swaps inside one batch don't trip the unique index.
     const freeing = srChanges.filter((x) => x.m.sr_no != null).map((x) => x.m.id);
     if (freeing.length) await q(`UPDATE stock_movements SET sr_no = NULL WHERE id = ANY($1::int[])`, [freeing]);
-    for (const [id, { sets }] of mvSet) {
+    for (const [id, { sets, m }] of mvSet) {
+      if (freeing.includes(id) && !sets.some(([f]) => f === 'sr_no')) sets.push(['sr_no', m.sr_no]);
       // Column names come from the MOVEMENT_FIELDS whitelist, never from the request text.
-      const cols = sets.map(([f], i) => `${f} = $${i + 2}`).join(', ');
+      const cols = sets.map(([f], i) => f === 'date' ? `ts = ($${i + 2}::date + ts::time)` : `${f} = $${i + 2}`).join(', ');
       await q(`UPDATE stock_movements SET ${cols} WHERE id = $1`, [id, ...sets.map(([, v]) => v)]);
       // The lot keeps the location code of its incoming entry (Lots & balance shows it).
       const loc = sets.find(([f]) => f === 'loc_code');
@@ -299,7 +382,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
   }
 
   // 5. Lots that close or reopen because of a status change (reopen first: an End can move to another entry).
-  let reload = false;
+  let reload = dates.length > 0;
   const reopened = new Set<string>();
   for (const x of unending) {
     const st = lotState.get(x.m.lot_id)!;
@@ -384,12 +467,18 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     reload = true;
   }
 
+  const orderIds = [...new Set([...mvSet.values()].filter(({ m, sets }) => m.order_id && sets.some(([f]) => f === 'meters')).map(({ m }) => m.order_id!))].sort((a, b) => a - b);
+  for (const id of orderIds) await refreshOrderStatus(q, id);
+  for (const lot of meterLots) await trimReservations(q, lot);
+  const negative = meterLots.length ? await q('SELECT lot_id, bal_m FROM lots WHERE lot_id = ANY($1::text[]) AND bal_m < 0', [meterLots]) : { rows: [] };
+  const warnings = negative.rows.map((r) => `Lot ${r.lot_id} has a negative balance of ${Number(r.bal_m).toFixed(2)} m. Check its receipts and dispatches.`);
+  if (meterLots.length) reload = true;
   const rows = await ledgerRowsByIds(q, [...mvSet.keys()]);
   const changedLots = [...lotSet.keys()];
   const lotOut = changedLots.length
     ? (await q(`SELECT lot_id, quality, design, grade, status FROM lots WHERE lot_id = ANY($1::text[]) ORDER BY lot_id`, [changedLots])).rows as EditedLot[]
     : [];
-  return { saved: log.length, rows, lots: lotOut, adjustments, reload };
+  return { saved: log.length, rows, lots: lotOut, adjustments, reload, warnings };
 }
 
 /** Last edits of one movement or lot (newest first), with the editor's name. */

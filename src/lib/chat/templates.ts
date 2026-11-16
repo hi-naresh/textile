@@ -3,7 +3,7 @@
 import { query } from '../db';
 import { readRules } from '../settings';
 import { can } from '../access';
-import { STOCK_STATUS_SQL } from '../lots-query';
+import { STOCK_STATUS_SQL, stockBreakdown } from '../lots-query';
 
 const canManage = (s: Scope) => can(s.role, 'jobs.manage');
 
@@ -19,6 +19,7 @@ export interface TemplateResult {
 }
 
 export interface Params {
+  design?: string | null;
   lot?: string | null;
   party?: string | null;
   mill?: string | null;
@@ -63,7 +64,7 @@ export const TEMPLATES: Template[] = [
       if (!x || (x.closed_on && !can(s.role, 'stock.closed'))) return { answer: `No lot ${p.lot} found.`, rows: [] };
       if (x.closed_on) {
         const how = x.close_reason === 'manual' ? 'closed by hand' : x.close_reason === 'register' ? 'closed from the sales register' : 'closed by its End entry';
-        return { answer: `Lot ${x.lot_id} (${x.quality}) is closed: ${how} on ${x.closed_on}. Its balance is 0. See Stock ledger → Lots & balance → Closed.`, rows: [] };
+        return { answer: `Lot ${x.lot_id} (${x.quality}) is closed: ${how} on ${x.closed_on}. Its balance is ${fmt(x.balance_m)}.${Number(x.balance_m) !== 0 ? ' Alert: this ended lot still has a ledger balance, included in Other.' : ''} See Stock ledger → Lots & balance → Closed.`, rows: [] };
       }
       return {
         answer: `Lot ${x.lot_id} (${x.quality}${x.design && !/unknown/i.test(x.design) ? `, ${x.design}` : ''}): ${fmt(x.balance_m)} m in stock, at ${x.location ?? 'no location yet'}${Number(x.open_cards) ? `, ${x.open_cards} job card${Number(x.open_cards) === 1 ? '' : 's'} open` : ''}.`,
@@ -73,9 +74,13 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: 'stock_summary',
-    describe: 'Stock on hand total in meters split into Packed, Running (open job card), and On hold, with location details',
-    params: [],
+    describe: 'Stock on hand total in meters split into Packed, Running (entry status, otherwise job card), and On hold, with location details',
+    params: ['quality', 'design', 'party'],
     run: async (_p, s) => {
+      if (s.role === 'owner') {
+        const x = await stockBreakdown(query, { q: '', status: '', inStock: false, quality: _p.quality ?? '', design: _p.design ?? '', party: _p.party ?? '' });
+        return { answer: `${fmt(x.on_hand_m)} m in stock. Packed: ${fmt(x.packed_m)} m; Running: ${fmt(x.running_m)} m; On hold: ${fmt(x.on_hold_m)} m; Other: ${fmt(x.other_m)} m.${x.ended_balance_count ? ` Alert: ${x.ended_balance_count} ended lots have nonzero balances, included in Other.` : ''}`, rows: [{ group_name: 'packed', meters: x.packed_m, lots: x.packed_lots }, { group_name: 'running', meters: x.running_m, lots: x.running_lots }, { group_name: 'hold', meters: x.on_hold_m, lots: x.on_hold_lots }, { group_name: 'other', meters: x.other_m, lots: x.other_lots }] };
+      }
       const r = await query(
         `WITH b AS (
            SELECT l.lot_id, l.bal_m AS bal, ${STOCK_STATUS_SQL} AS stock_status,
@@ -116,16 +121,19 @@ export const TEMPLATES: Template[] = [
     id: 'stock_by_quality',
     describe: 'Stock in meters by fabric quality (optionally one quality)',
     params: ['quality'],
-    run: async (p) => {
+    run: async (p, scope) => {
       const r = await query(
-        `SELECT l.quality, SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END) AS meters, COUNT(DISTINCT l.lot_id) AS lots
-         FROM lots l JOIN stock_movements sm ON sm.lot_id = l.lot_id
-         WHERE l.closed_at IS NULL AND ($1::text IS NULL OR lower(l.quality) LIKE '%' || lower($1) || '%')
-         GROUP BY l.quality HAVING SUM(CASE WHEN sm.direction = 'IN' THEN sm.meters ELSE -sm.meters END) > 0 ORDER BY meters DESC LIMIT 20`,
-        [p.quality ?? null],
+        `WITH stock AS MATERIALIZED (SELECT l.lot_id, l.quality, l.bal_m AS balance, ${STOCK_STATUS_SQL} AS state FROM lots l
+          WHERE ($1::text IS NULL OR lower(l.quality) = lower($1))
+            AND ($2::text[] IS NULL OR (l.closed_at IS NULL AND EXISTS (SELECT 1 FROM job_cards jc WHERE jc.lot_id = l.lot_id AND lower(btrim(regexp_replace(jc.process, '\\s*section\\s*$', '', 'i'))) = ANY($2)))))
+         SELECT quality, SUM(balance) AS meters, COUNT(*) AS lots, COUNT(*) FILTER (WHERE state = 'end') AS ended_count FROM stock
+         WHERE (balance > 0 OR (state = 'end' AND balance <> 0)) AND ($2::text[] IS NULL OR state <> 'end')
+         GROUP BY quality ORDER BY meters DESC LIMIT 20`,
+        [p.quality ?? null, scope.role === 'owner' ? null : scope.sections],
       );
       if (!r.rowCount) return { answer: p.quality ? `No stock of ${p.quality}.` : 'No stock on hand.', rows: [] };
-      return { answer: r.rows.slice(0, 6).map((x) => `${x.quality}: ${fmt(x.meters)} m (${x.lots} lots)`).join('; ') + '.', rows: r.rows };
+      const ended = r.rows.reduce((n, x) => n + Number(x.ended_count), 0);
+      return { answer: r.rows.slice(0, 6).map((x) => `${x.quality}: ${fmt(x.meters)} m (${x.lots} lots)`).join('; ') + '.' + (ended ? ` Alert: ${ended} ended lots have nonzero ledger balances included in these totals.` : ''), rows: r.rows };
     },
   },
   {

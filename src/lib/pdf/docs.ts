@@ -1,3 +1,4 @@
+import { srLabel } from '../sr-series';
 // The four documents: delivery challan, packing list, GST tax invoice, party statement.
 // Pure rendering from data already loaded (see /api/docs/*). Challan + packing list carry no money.
 import type { Billing } from '../billing';
@@ -51,7 +52,7 @@ export async function challanPdf(b: Billing, d: DispatchRow, lines: DispatchLine
   pdf.table(
     [{ label: 'S.No', width: 40, align: 'right' }, { label: 'Lot', width: 90 }, { label: 'Quality', width: 170 }, { label: 'Design', width: 120 }, { label: 'Meters', width: 90, align: 'right' }],
     [
-      ...lines.map((l, i) => ({ cells: [String(i + 1), l.lot_id, l.quality, l.design, mtr(l.meters)] })),
+      ...lines.map((l, i) => ({ cells: [String(i + 1), l.sr_no == null ? l.lot_id : `${l.lot_id} / SR ${srLabel(l.sr_no, l.sr_series)}`, l.quality, l.design, mtr(l.meters)] })),
       { cells: ['', '', `Total (${lines.length} lot${lines.length === 1 ? '' : 's'})`, '', mtr(total)], bold: true, fill: FILL },
     ],
   );
@@ -77,7 +78,7 @@ export async function packingListPdf(b: Billing, d: DispatchRow, lines: Dispatch
   pdf.table(
     [{ label: 'Pkg', width: 45, align: 'center' }, { label: 'Lot', width: 90 }, { label: 'Quality', width: 160 }, { label: 'Design', width: 110 }, { label: 'Meters', width: 90, align: 'right' }, { label: 'Checked', width: 60, align: 'center' }],
     [
-      ...lines.map((l, i) => ({ cells: [numbered ? String(i + 1) : '', l.lot_id, l.quality, l.design, mtr(l.meters), ''] })),
+      ...lines.map((l, i) => ({ cells: [numbered ? String(i + 1) : '', l.sr_no == null ? l.lot_id : `${l.lot_id} / SR ${srLabel(l.sr_no, l.sr_series)}`, l.quality, l.design, mtr(l.meters), ''] })),
       { cells: ['', '', 'Total', '', mtr(total), ''], bold: true, fill: FILL },
     ],
   );

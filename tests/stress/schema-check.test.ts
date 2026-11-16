@@ -21,3 +21,12 @@ test('deployment preflight accepts the migrated schema and detects missing migra
     client.release();
   }
 });
+
+test('deployment preflight detects a missing SR uniqueness index despite recorded migrations', async () => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DROP INDEX stock_movements_sr_unique');
+    await assert.rejects(verifySchema(client), /unique \(direction, sr_series, sr_no\) index/);
+  } finally { await client.query('ROLLBACK'); client.release(); }
+});

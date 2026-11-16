@@ -61,10 +61,11 @@ export function Overview({ ctx }: { ctx: Ctx }) {
         </div>
       </div>
 
+      {!!stock?.ended_balance_count && <div role="alert" className="alert warn">{stock.ended_balance_count} ended lots still have ledger balances, included in Other. Review them in Stock → Lots & balance → Closed.</div>}
       <div className="grid-kpi ov-figs">
         <Figure label="Stock on hand" to="stock" go={go}
           value={stock ? fmtMeters(stock.on_hand_m) : '—'}
-          sub={stock ? <><span className="ov-exact num strong">{fmt(stock.on_hand_m, 2)} m exact</span><br />{`Packed ${fmtMeters(stock.packed_m)} · Running ${fmtMeters(stock.running_m)} · On hold ${fmtMeters(stock.on_hold_m)}`}</> : 'Open the stock ledger'}
+          sub={stock ? <><span className="ov-exact num strong">{fmt(stock.on_hand_m, 2)} m exact</span><br />{`Packed ${fmtMeters(stock.packed_m)} · Running ${fmtMeters(stock.running_m)} · On hold ${fmtMeters(stock.on_hold_m)} · Other ${fmtMeters(stock.other_m ?? 0)}`}</> : 'Open the stock ledger'}
           />
         <Figure label="Sent out today" to="stock" go={go}
           value={d.today ? fmtMeters(d.today.out_m) : '—'}

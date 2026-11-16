@@ -1,3 +1,4 @@
+import { serverTiming } from '@/lib/server-timing';
 import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap } from '@/lib/apiAuth';
 import { can } from '@/lib/access';
@@ -17,11 +18,14 @@ import { EditProblems, applyLedgerEdits, editHistory, parseChanges } from '@/lib
 // All-or-nothing, one transaction. → { saved, rows: LedgerRow[] (edited movements), lots, adjustments: [{ lot_id, adjustment_m }], reload }
 // Invalid values → 422 { error, problems: [{ target, id, field, message }] }. Malformed body / unknown field → 400.
 export async function PATCH(req: NextRequest) {
+  const timing = serverTiming();
   try {
     const a = await requireCap(req, 'ledger.edit');
+    timing.mark('auth');
     const changes = parseChanges(await readObject(req));
     const out = await withTransaction((q) => applyLedgerEdits(q, changes, a.by, { endAllowed: can(a.role, 'stock.end') }));
-    return NextResponse.json(out);
+    timing.mark('write');
+    return NextResponse.json(out, { headers: timing.headers() });
   } catch (error) {
     if (error instanceof EditProblems) return NextResponse.json({ error: error.message, problems: error.problems }, { status: 422 });
     const { status, body } = errorResponseBody(error);

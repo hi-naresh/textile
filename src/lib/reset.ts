@@ -146,7 +146,7 @@ export async function runReset(q: Q, parts: ResetPart[], by: string): Promise<Re
     // Whole stock in one go. TRUNCATE is instant even with millions of rows; it skips the row triggers,
     // so the derived lists (names, quality / design pairs) are emptied here too and the stock version is bumped.
     const n = await q(`SELECT (SELECT count(*) FROM lots) + (SELECT count(*) FROM stock_movements) + (SELECT count(*) FROM lot_closures) + (SELECT count(*) FROM capture_events) + (SELECT count(*) FROM job_cards) AS n`);
-    await q(`TRUNCATE allocations, allotments, capture_events, job_cards, known_names, ledger_edits, lot_closures, lot_facets, lot_locations, lots, stock_movements`);
+    await q(`TRUNCATE stock_import_reviews, allocations, allotments, capture_events, job_cards, known_names, ledger_edits, lot_closures, lot_facets, lot_locations, lots, stock_movements`);
     await q(`DELETE FROM efficiency_daily`);
     await q(`DELETE FROM cctv_activity`);
     await q(`SELECT nextval('stock_rev')`);

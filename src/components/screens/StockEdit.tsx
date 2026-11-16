@@ -3,13 +3,16 @@
 // Stock ledger edit mode (owner): cells turn into inputs in place, like a spreadsheet.
 // Drafts live in the Stock screen; each table row is memoised and only gets its own drafts,
 // so typing in one cell doesn't re-render the other rows. Saved via PATCH /api/stock/edit.
+import { parseSr } from '@/lib/sr-series';
 import React from 'react';
 import Icon from '../Icon';
+import { EntryDateInput } from '../EntryDateInput';
+import { entryDateError } from '@/lib/entry-date';
 import { dayTime } from '../ui';
 import './StockEdit.css';
 
 // ---------- drafts ----------
-export type MvField = 'meters' | 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party'
+export type MvField = 'date' | 'meters' | 'grey_meters' | 'finished_meters' | 'sr_no' | 'pieces' | 'source_doc_id' | 'mill_name' | 'weaver_name' | 'party'
   | 'register_pct' | 'loc_code' | 'bill_pct' | 'billed_meters' | 'lot_status_code';
 export type LotField = 'quality' | 'design' | 'grade' | 'status';
 export type RowDraft = Partial<Record<string, string>>;
@@ -41,7 +44,7 @@ export const str = (v: unknown) => (v == null ? '' : String(v));
 // ---------- validation (same rules as the server, so mistakes show before saving) ----------
 const NAME_RE = /[\p{L}\p{N}]/u;
 export const FIELD_LABEL: Record<string, string> = {
-  meters: 'Meters', sr_no: 'SR no.', pieces: 'Taka', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver', party: 'Party',
+  date: 'Entry date', meters: 'Meters', sr_no: 'SR no.', pieces: 'Taka', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver', party: 'Party',
   quality: 'Quality', design: 'Design', grade: 'Grade', status: 'Status',
   register_pct: '%', loc_code: 'Location code', bill_pct: 'L', billed_meters: 'NQTY', lot_status_code: 'LOT S',
 };
@@ -49,14 +52,15 @@ const numText = (v: string) => Number(v.replace(/,/g, '').replace(/%$/, ''));
 export function checkCell(field: string, raw: string): string | null {
   const v = raw.replace(/\s+/g, ' ').trim();
   switch (field) {
+    case 'date': return entryDateError(v);
+    case 'grey_meters': case 'finished_meters':
+      if (!v) return null;
+      return Number.isFinite(numText(v)) && numText(v) > 0 && numText(v) <= 1_000_000 ? null : 'Enter a positive number up to 1,000,000.';
     case 'meters':
       if (!v) return 'Meters are required.';
       return Number.isFinite(numText(v)) && numText(v) > 0 && numText(v) <= 1_000_000 ? null : 'Enter a positive number up to 1,000,000.';
     case 'sr_no':
-      if (!v) return null;
-      if (!/^\d+$/.test(v.replace(/,/g, '')) || Number(v.replace(/,/g, '')) <= 0) return 'SR must be a whole number above 0.';
-      if (Number(v.replace(/,/g, '')) > 2_000_000_000) return 'SR is too large.';
-      return null;
+      try { parseSr(v); return null; } catch (e) { return (e as Error).message; }
     case 'pieces':
       if (!v) return null;
       if (!/^\d+$/.test(v.replace(/,/g, ''))) return 'Taka must be a whole number, 0 or more.';
@@ -151,7 +155,7 @@ export const EditCell = React.memo(function EditCell({ kind, id, field, orig, dr
   };
   return (
     <span className="se-cell" title={hint}>
-      {options ? (
+      {field === 'date' ? <EntryDateInput className={cls} data-c={field} aria-label={label} value={value} onChange={(v) => onEdit(kind, id, field, v, orig)} onKeyDown={onKeyDown} /> : options ? (
         <select className={cls} data-c={field} aria-label={label} aria-invalid={!!err} aria-describedby={errId} value={value}
           onChange={(e) => onEdit(kind, id, field, e.target.value, orig)} onKeyDown={onKeyDown}>
           {options.map((o) => <option key={o} value={o}>{optionLabels?.[o] ?? o}</option>)}

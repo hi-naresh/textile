@@ -18,8 +18,9 @@ export async function GET(req: NextRequest) {
     const f = lotFiltersFrom(sp);
     const a = await requireCap(req, 'stock.quantity');
     if (f.closed && !can(a.role, 'stock.closed')) throw new LedgerError('Closed lots are only for the owner.', 403);
-    f.scopeUserId = a.role === 'supervisor' ? a.userId : null;
-    return NextResponse.json(await lotsPage((text, params) => query(text, params), f, { limit, cursor }), { headers: { 'Cache-Control': 'no-store' } });
+    const page = await lotsPage((text, params) => query(text, params), f, { limit, cursor });
+    const data = can(a.role, 'stock.summary') ? page : { rows: page.rows, next: page.next };
+    return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

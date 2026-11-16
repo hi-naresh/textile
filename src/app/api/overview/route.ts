@@ -8,10 +8,10 @@ import { todayIST } from '@/lib/sales/util';
 
 // GET → the few figures the owner's home screen shows that no other request already gives (one small request).
 // { orders: { open, open_m, late, due_today, due_week }, money: { outstanding, overdue, parties_overdue } | null }
-// money (₹) is only sent to the owner with finance access; supervisors get null.
+// Owner only: supervisors cannot request summary figures.
 export async function GET(req: NextRequest) {
   return respond(async () => {
-    const actor = await requireCap(req, 'orders.view');
+    const actor = await requireCap(req, 'stock.summary');
     const today = todayIST();
     const o = await query(
       `SELECT COUNT(*)::int AS open,

@@ -4,8 +4,10 @@ import { errorResponseBody } from '@/lib/ledger';
 import { ImportFileError, validateImport } from '@/lib/stock-import';
 import { requireCap } from '@/lib/apiAuth';
 import { enforceApiRateLimit, rateLimitResponse } from '@/lib/apiRateLimit';
+import { createImportReview } from '@/lib/stock-import-review';
 
-// Step 1 of the Excel import (owner). POST multipart { file: .xlsx } → checks only, writes nothing.
+// Step 1 of the Excel import (owner). POST multipart { file: .xlsx } → stock is unchanged.
+// Sales registers retain review metadata for one day, binding confirmation to this exact file and row set.
 // Three formats, told apart by the heading row: the firm's Incoming register, its Outgoing (sales) register, or the
 // app template (src/lib/stock-import.ts, src/lib/register-import.ts). → also { format, detected, warnings[{row,field,message,skip}],
 // warningCount, skipCount, fix } — `rows` leaves out skipped rows; errors (problems) block the file.
@@ -22,8 +24,10 @@ export async function POST(req: NextRequest) {
     if (!(file instanceof File)) return NextResponse.json({ error: 'Choose the Excel file to import.' }, { status: 400 });
     if (!/\.xlsx$/i.test(file.name)) return NextResponse.json({ error: 'Use an .xlsx file (Excel). Older .xls or .csv files: open in Excel and "Save as" .xlsx.' }, { status: 400 });
     if (file.size > MAX_BYTES) return NextResponse.json({ error: 'File is larger than 8 MB. Split it into smaller files.' }, { status: 400 });
-    const result = await validateImport((text, params) => query(text, params), Buffer.from(await file.arrayBuffer()));
-    return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const result = await validateImport(query, bytes);
+    const reviewId = await createImportReview(query, actor.userId, bytes, result);
+    return NextResponse.json({ ...result, reviewId }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const limited = rateLimitResponse(error);
     if (limited) return limited;

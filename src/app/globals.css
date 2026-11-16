@@ -1189,3 +1189,6 @@ tr.mv-adj .strong { font-weight: 500; }
 .mlp-pipe input { flex: 1; min-width: 0; }
 .qc-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 640px) { .sc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sc-value { font-size: 16px; } }
+
+/* Give long names their full row in manual stock entry. */
+@media (min-width: 761px) { .sheet:has(.stock-entry-form) { width: min(520px, 100%); } }

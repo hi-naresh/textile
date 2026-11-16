@@ -5,6 +5,7 @@
 // Tally invoices, Tally export, party statements (₹). Supervisors never see ₹ here.
 import React, { useEffect, useState } from 'react';
 import Icon from '../Icon';
+import { DispatchEdit } from './DispatchEdit';
 import { Empty, PageHead, Pill, Segmented, Sheet, dayTime, fmt, type Tone } from '../ui';
 import type { Ctx } from '../ctx';
 import { can } from '@/lib/access';
@@ -96,6 +97,7 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
   const rows = data?.dispatches ?? [];
   const q = who(ctx.role, actor);
 
+  const [editId, setEditId] = useState<number | null>(null);
   const [invFor, setInvFor] = useState<DispatchRow | null>(null);
   // WhatsApp column: when connected, or when a message was sent earlier.
   const waOn = !!ctx.d.status?.whatsapp;
@@ -151,7 +153,7 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
                   <td data-label="Date" className="num t2">{dayTime(d.dispatched_at)}</td>
                   <td data-label="Party" className="strong">{d.party_name ?? '—'}{d.order_id ? <div className="muted small">Order #{d.order_id}</div> : null}</td>
                   <td data-label="Lots"><div className="num">{d.lots.slice(0, 3).join(', ')}{d.lots.length > 3 ? ` +${d.lots.length - 3}` : ''}</div></td>
-                  <td data-label="Meters" className="r num strong">{fmt(d.meters, 1)}</td>
+                  <td data-label="Meters" className="r num strong">{fmt(d.meters, 2)}</td>
                   <td data-label="Challan" className="num">{d.challan_no ?? '—'}</td>
                   <td data-label="Transport" className="t2 d">
                     <div>{d.transporter ?? '—'}</div>
@@ -173,6 +175,7 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
                   )}
                   <td data-label="Documents" className="r">
                     <div className={s.docs}>
+                      {owner && <button className="btn sm" onClick={() => setEditId(d.id)}>Edit</button>}
                       <a className="btn sm" href={`/api/docs/challan?dispatch_id=${d.id}&${q}`} target="_blank" rel="noopener">Challan</a>
                       <a className="btn sm" href={`/api/docs/packing-list?dispatch_id=${d.id}&${q}`} target="_blank" rel="noopener">Packing</a>
                       {owner && d.invoice_id && <a className="btn sm" href={`/api/docs/invoice?id=${d.invoice_id}&${q}`} target="_blank" rel="noopener">Invoice</a>}
@@ -184,6 +187,9 @@ function DispatchList({ ctx, tick, onChanged, focus = null }: { ctx: Ctx; tick: 
           </table>
         </section>
       )}
+      <Sheet open={editId != null} title="Edit dispatch" onClose={() => setEditId(null)}>
+        {editId != null && <DispatchEdit id={editId} ctx={ctx} onDone={() => { setEditId(null); onChanged(); }} />}
+      </Sheet>
       <Sheet open={invFor != null} title={invFor ? `Invoice for ${invFor.party_name ?? 'dispatch'}` : ''} onClose={() => setInvFor(null)}>
         {invFor && <InvoiceRates ctx={ctx} dispatch={invFor} busy={busy === invFor.id} onCreate={(rates) => createInvoice(invFor, rates)} />}
       </Sheet>
@@ -207,7 +213,7 @@ function InvoiceRates({ ctx, dispatch, busy, onCreate }: { ctx: Ctx; dispatch: D
   };
   return (
     <form className="stack-16" onSubmit={submit}>
-      <span className="muted small">{fmt(dispatch.meters, 1)} m · challan {dispatch.challan_no ?? '—'}{dispatch.order_id ? ` · order #${dispatch.order_id}` : ''}</span>
+      <span className="muted small">{fmt(dispatch.meters, 2)} m · challan {dispatch.challan_no ?? '—'}{dispatch.order_id ? ` · order #${dispatch.order_id}` : ''}</span>
       <span className="muted small hint">Type the ₹/m rate for this party. Leave blank to use the order’s rate.</span>
       <div className={s.rates}>
         {qualities.map((ql) => (
@@ -298,7 +304,7 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
         party: party.trim(), order_id: order?.id ?? null, lines: ls.map((l) => ({ lot_id: l.lot_id, meters: parseFloat(l.meters), entry_status: l.status })),
         ...f, packages: f.packages === '' ? null : Number(f.packages), create_invoice: owner && invoice, rates: owner && invoice ? rateMap : undefined, role, actor,
       });
-      d.showToast(`Dispatched ${fmt(r.dispatch.meters, 1)} m · challan ${r.dispatch.challan_no}${r.invoice ? ` · invoice ${r.invoice.invoice_no}` : ''}${r.whatsapp?.queued ? ' · WhatsApp to the party on its way' : ''}`);
+      d.showToast(`Dispatched ${fmt(r.dispatch.meters, 2)} m · challan ${r.dispatch.challan_no}${r.invoice ? ` · invoice ${r.invoice.invoice_no}` : ''}${r.whatsapp?.queued ? ' · WhatsApp to the party on its way' : ''}`);
       if (r.note) d.showToast(r.note, 'warning');
       d.refresh();
       onDone();
@@ -360,8 +366,8 @@ function DispatchForm({ ctx, onDone }: { ctx: Ctx; onDone: () => void }) {
                 <button type="button" className="btn icon-only" aria-label="Remove line" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : [{ ...EMPTY_LINE }]))}><Icon name="x" size={16} /></button>
                 {lot && (
                   <span className={`small ${s.sub} ${over ? s.warnText : 'muted'}`}>
-                    {lot.quality} · {lot.design} · {fmt(lot.balance, 1)} m in stock{lot.location ? ` · ${lot.location}` : ''}
-                    {over && <> · <span className={s.warnText}>+{fmt(excess, 1)} m fold excess</span></>}
+                    {lot.quality} · {lot.design} · {fmt(lot.balance, 2)} m in stock{lot.location ? ` · ${lot.location}` : ''}
+                    {over && <> · <span className={s.warnText}>+{fmt(excess, 2)} m fold excess</span></>}
                     {!over && lot.balance > 0 && <> · <button type="button" className="linkbtn" onClick={() => setLine(i, { meters: String(lot.balance) })}>all</button></>}
                     {canEnd && l.status !== 'end' && mtr > 0 && mtr >= lot.balance - 0.005 && <> · <button type="button" className="linkbtn" onClick={() => setLine(i, { status: 'end' })}>last of this lot? Mark End</button></>}
                   </span>

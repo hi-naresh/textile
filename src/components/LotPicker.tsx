@@ -28,7 +28,7 @@ export function matchLots<T extends PickLot>(lots: T[], text: string, max = MAX)
 }
 
 export const lotLabel = (l: PickLot) =>
-  [l.lot_id, l.quality, l.balance != null ? `${fmt(l.balance, 1)} m` : null, l.location].filter(Boolean).join(' · ');
+  [l.lot_id, l.quality, l.balance != null ? `${fmt(l.balance, 2)} m` : null, l.location].filter(Boolean).join(' · ');
 
 /**
  * `inStock` (default true): only lots with a balance. `quality`: only that quality.

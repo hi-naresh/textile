@@ -1,7 +1,9 @@
 'use client';
+import { useApi } from '@/lib/useApi';
 
 import { useQualityCatalog } from './QualityCatalog';
 import { FinalMetersField } from '../FinalMeters';
+import { parseSr } from '@/lib/sr-series';
 import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../Icon';
 import { Empty, PageHead, Pill, Segmented, Track, dayTime, fmt, inr } from '../ui';
@@ -9,14 +11,20 @@ import type { Ctx } from '../ctx';
 import { can, captureInScope, inSupervisorScope, jobInScope, sectionName, activeSupervisor, rules, sectionNames, markets } from '@/lib/access';
 import { describeLocation } from '@/lib/location';
 import { LocationPill, MarketLocationPicker } from '../MarketLocationPicker';
-import { checkImportFile, commitImport, downloadFixFile, type ImportOutcome, type ImportProgress, type ValidateResult } from '@/lib/stockImportClient';
+import { checkImportFile, confirmImportFile, commitImport, downloadFixFile, type ImportOutcome, type ImportProgress, type ValidateResult } from '@/lib/stockImportClient';
 import { CAPTURE_LABEL, ENGINE_LABEL, FIELDS_FOR, FIELD_LABEL, NUMERIC_FIELDS, OPTIONAL_FIELDS, STAGE_LABEL, STATUS_LABEL, STATUS_TONE, locationTone, shortTone } from '@/lib/derive';
 import type { StockEntry } from '@/lib/useTextileData';
 import { LotPicker } from '../LotPicker';
 import { useLotSearch, type PickLot } from '@/lib/useLots';
 import type { CaptureEvent, JobCard, Lot, LotLocationEntry } from '@/lib/types';
-import { ENTRY_STATUS_HINT, LOT_S_GUESS } from '@/lib/registers';
+import { calculatedBilledMeters, ENTRY_STATUS_HINT, LOT_S_GUESS } from '@/lib/registers';
 import { EntryStatusPicker, EntryStatusPill } from '../EntryStatus';
+import { EntryDateInput } from '../EntryDateInput';
+import { entryDateValue, entryDateError } from '@/lib/entry-date';
+import { LotClosureCard } from '../LotClosureCard';
+import { ImportStatusReview } from '../ImportStatusReview';
+import { reviewStatuses, type StatusChoices } from '@/lib/import-status-review';
+import type { RegOutRow } from '@/lib/register-import';
 
 // ---------------- Job cards ----------------
 export function JobCards({ ctx }: { ctx: Ctx }) {
@@ -316,7 +324,7 @@ export function Allot({ ctx }: { ctx: Ctx }) {
 
 // ---------------- Manual stock entry (owner) ----------------
 const todayDateIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-const EMPTY_ENTRY: StockEntry = { direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', entry_status: 'running', date: '', final_meters: '' };
+const EMPTY_ENTRY: StockEntry = { sr_series: '', direction: 'IN', lot_id: '', grey_meters: '', finished_meters: '', mill_name: '', weaver_name: '', location: '', quality: '', design: '', meters: '', party: '', source_doc: '', sr_no: '', pieces: '', register_pct: '', loc_code: '', bill_pct: '', billed_meters: '', lot_status_code: '', entry_status: 'running', date: '', final_meters: '' };
 
 interface SrInfo { next: number; taken?: { lot_id: string; ts: string } | null; sr?: number }
 
@@ -324,6 +332,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const { d, role } = ctx;
   const [f, setF] = useState<StockEntry>({ ...EMPTY_ENTRY, direction: initialDirection, date: todayDateIso() });
   const [sameAsMill, setSameAsMill] = useState(false);
+  const [billedAuto, setBilledAuto] = useState(true);
   const [busy, setBusy] = useState(false);
   const [srTouched, setSrTouched] = useState(false);
   const [sr, setSr] = useState<SrInfo | null>(null);
@@ -345,10 +354,11 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const qualityHit = catalog?.find((x) => x.toLowerCase() === qualityTyped.toLowerCase()) ?? null;
   const qualityBad = !!qualityTyped && catalog != null && !qualityHit;
 
+  const seriesApi = useApi<{ series: { prefix: string; name: string; active: boolean }[] }>('/api/stock/series');
   // Suggest the next SR no. (last + 1) for this direction; the person can still type another.
   useEffect(() => {
     let alive = true;
-    fetch(`/api/stock/next-sr?direction=${f.direction}`, { cache: 'no-store' })
+    fetch(`/api/stock/next-sr?direction=${f.direction}&series=${encodeURIComponent(f.sr_series ?? '')}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((x: SrInfo | null) => {
         if (!alive || !x) return;
@@ -358,23 +368,25 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
       .catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on direction change / after a save
-  }, [f.direction, round]);
+  }, [f.direction, f.sr_series, round]);
 
   // Typed SR no.: check it is free (debounced).
   const srText = f.sr_no.trim();
   useEffect(() => {
-    if (!srTouched || !/^\d{1,9}$/.test(srText)) return;
+    if (!srTouched) return;
+    try { parseSr(srText, f.sr_series); } catch { return; }
     let alive = true;
     const t = setTimeout(() => {
-      fetch(`/api/stock/next-sr?direction=${f.direction}&sr=${srText}`, { cache: 'no-store' })
+      fetch(`/api/stock/next-sr?direction=${f.direction}&series=${encodeURIComponent(f.sr_series ?? '')}&sr=${encodeURIComponent(srText)}`, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((x: SrInfo | null) => { if (alive && x) setSr(x); })
         .catch(() => {});
     }, 350);
     return () => { alive = false; clearTimeout(t); };
-  }, [srText, srTouched, f.direction]);
-  const srTaken = sr?.taken && String(sr.sr) === srText ? sr.taken : null;
-  const srBad = srText !== '' && !/^\d{1,9}$/.test(srText);
+  }, [srText, srTouched, f.direction, f.sr_series]);
+  let srNumber: number | null = null, srBad = false;
+  try { srNumber = parseSr(srText, f.sr_series).number; } catch { srBad = true; }
+  const srTaken = sr?.taken && sr.sr === srNumber ? sr.taken : null;
   const piecesBad = f.pieces.trim() !== '' && !/^\d{1,7}$/.test(f.pieces.trim());
   const numOk = (v: string | undefined, min: number, max: number, minOpen = false) => { const t = (v ?? '').trim(); if (!t) return true; const n = Number(t); return Number.isFinite(n) && (minOpen ? n > min : n >= min) && n <= max; };
   const moreBad = isIn
@@ -382,7 +394,8 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     : (!numOk(f.bill_pct, 0, 1000, true) ? 'L must be a number above 0.' : !numOk(f.billed_meters, 0, 10_000_000) ? 'NQTY must be a number, 0 or more.' : null);
   const lotQty = parseFloat(f.meters);
   const lPct = parseFloat(f.bill_pct ?? '');
-  const nqtyHint = !isIn && Number.isFinite(lotQty) && Number.isFinite(lPct) ? Math.round(lotQty * lPct) / 100 : null;
+  const nqtyHint = !isIn && Number.isFinite(lotQty) && Number.isFinite(lPct) ? calculatedBilledMeters(lotQty, lPct) : null;
+  const billedText = billedAuto ? (nqtyHint == null ? '' : String(nqtyHint)) : f.billed_meters ?? '';
 
   // Outgoing: End needs stock.end. Suggest End when the meters take everything left in a known lot.
   const canEnd = can(role, 'stock.end');
@@ -392,7 +405,8 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const entry = { ...f, lot_id: f.lot_id.trim(), weaver_name: sameAsMill ? f.mill_name : f.weaver_name, date: f.date?.trim() || todayDateIso() };
+    if (entryDateError(f.date || todayDateIso())) return d.showToast(entryDateError(f.date || todayDateIso())!, 'warning');
+    const entry = { ...f, billed_meters: billedText, lot_id: f.lot_id.trim(), weaver_name: sameAsMill ? f.mill_name : f.weaver_name, date: entryDateValue(f.date || todayDateIso()) };
     if (!entry.lot_id) return d.showToast('Lot number is required.', 'warning');
     if (srBad || entry.sr_no.trim() === '0') return d.showToast('SR no. must be a whole number above 0.', 'warning');
     if (srTaken) return d.showToast(`SR no. ${srText} is already used. Next free: ${sr?.next}.`, 'warning');
@@ -409,15 +423,15 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     setBusy(true);
     const ok = await d.addStock(role, entry);
     setBusy(false);
-    if (ok) { setF({ ...EMPTY_ENTRY, direction: f.direction, date: f.date || todayDateIso() }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
+    if (ok) { setBilledAuto(true); setF({ ...EMPTY_ENTRY, direction: f.direction, sr_series: f.sr_series, date: f.date || todayDateIso() }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
     else setRound((r) => r + (srTouched ? 0 : 1)); // e.g. someone else took the SR no. meanwhile: suggest a fresh one
   };
 
   const srField = (
     <label className="fld">SR no.
-      <input className="num" inputMode="numeric" value={f.sr_no} aria-invalid={srBad || !!srTaken}
+      <input className="num" value={f.sr_no} aria-invalid={srBad || !!srTaken}
         onChange={(e) => { setSrTouched(true); setF({ ...f, sr_no: e.target.value }); }} placeholder={sr ? String(sr.next) : ''} />
-      {srBad ? <span className="err small">Whole number only, e.g. 1542.</span> : srTaken ? (
+      {srBad ? <span className="err small">Enter a number or prefix-number, e.g. RS-104.</span> : srTaken ? (
         <span className="sr-note bad">Used on {srTaken.lot_id} ({srTaken.ts}). <button type="button" className="linkbtn" onClick={() => { setSrTouched(false); setF({ ...f, sr_no: String(sr!.next) }); }}>Use {sr!.next}</button></span>
       ) : (
         <span className="sr-note">{srTouched && sr && srText !== String(sr.next) ? <>Next in register: {sr.next}</> : 'From your paper register'}</span>
@@ -429,14 +443,16 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   );
 
   return (
-    <form className="stack-16" onSubmit={submit}>
+    <form className="stack-16 stock-entry-form" onSubmit={submit}>
       <div className="fld">Direction
         <Segmented label="Direction" value={f.direction} onChange={switchDirection} className="fit" options={[{ value: 'IN', label: 'Incoming (IN)' }, { value: 'OUT', label: 'Outgoing (OUT)' }]} />
       </div>
+      <label className="fld">SR series<select value={f.sr_series ?? ''} onChange={(e) => { setSrTouched(false); setSr(null); setF({ ...f, sr_series: e.target.value, sr_no: '' }); }}><option value="">Main</option>{seriesApi.data?.series.filter((s) => s.active && s.prefix).map((s) => <option key={s.prefix} value={s.prefix}>{s.prefix} · {s.name}</option>)}</select><span className="muted small">Manage prefixes in My firm → SR series. IN and OUT count separately.</span></label>
       <div className="two-col sr-row">
         {srField}
         <label className="fld">Entry date
-          <input className="num" type="date" value={f.date || todayDateIso()} max={todayDateIso()} onChange={set('date')} aria-label="Date of entry" />
+          <EntryDateInput className="num" required value={f.date ?? ''} onChange={(date) => setF({ ...f, date })} aria-label="Date of entry" />
+          {f.date && entryDateError(f.date) && <span className="err small">{entryDateError(f.date)}</span>}
           <span className="sr-note">Back-date entry</span>
         </label>
       </div>
@@ -444,7 +460,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
         <input className="num" list="lot-list" value={f.lot_id} onChange={set('lot_id')} placeholder="e.g. LOT-5030" autoComplete="off" />
         <datalist id="lot-list">{lotMatches.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.quality}</option>)}</datalist>
       </label>
-      {known && <span className="muted small hint">{known.lot_id}: {known.quality} · balance {fmt(known.balance ?? 0, 1)} m{known.location ? ` · at ${known.location}` : ''}</span>}
+      {known && <span className="muted small hint">{known.lot_id}: {known.quality} · balance {fmt(known.balance ?? 0, 2)} m{known.location ? ` · at ${known.location}` : ''}</span>}
 
       {isIn ? (
         <>
@@ -473,7 +489,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <MarketLocationPicker key={round} ctx={ctx} value={f.location} onChange={(v) => setF((cur) => ({ ...cur, location: v }))} />
           </div>
           {!known && f.lot_id.trim() && lotChecked && (
-            <div className="two-col">
+            <div className="stack-16">
               <label className="fld">Quality (new lot)<input name="quality" list="quality-catalog" value={f.quality} onChange={set('quality')} autoComplete="off" aria-invalid={qualityBad} placeholder="Type the first letter" />
                 <datalist id="quality-catalog">{(catalog ?? []).map((x) => <option key={x} value={x} />)}</datalist>
                 {qualityBad && <span className="err small">Not in the quality catalog. Pick from the list{role === 'owner' || role === 'supervisor' ? ' or add it in Stock ledger → Quality catalog' : ''}.</span>}
@@ -506,7 +522,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <summary>More fields (optional)</summary>
             <div className="two-col">
               <label className="fld">L<input className="num" inputMode="decimal" value={f.bill_pct ?? ''} onChange={set('bill_pct')} placeholder="e.g. 100" /></label>
-              <label className="fld">NQTY (billed m)<input className="num" inputMode="decimal" value={f.billed_meters ?? ''} onChange={set('billed_meters')} placeholder={nqtyHint != null ? String(nqtyHint) : ''} /></label>
+              <label className="fld">NQTY (billed m)<input className="num" inputMode="decimal" value={billedText} onChange={(e) => { setBilledAuto(!e.target.value.trim()); setF({ ...f, billed_meters: e.target.value }); }} /></label>
             </div>
             <label className="fld">LOT S
               <select value={f.lot_status_code ?? ''} onChange={(e) => setF({ ...f, lot_status_code: e.target.value })}>
@@ -554,13 +570,18 @@ export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: stri
 
   return (
     <div className="stack-16">
+      {lot?.closed_at && <LotClosureCard key={lot.lot_id} lot={lot} canReopen={role === 'owner'} onError={(message) => d.showToast(message, 'danger')} onReopened={async () => {
+        d.showToast(`Lot ${lotId} reopened`);
+        await d.refreshStock();
+        const info = await d.lotInfo(lotId); setLot(info.lot); setHistory(info.history);
+      }} />}
       <div className="card pad stack-6 flat">
         <span className="muted small">Now at</span>
         <span className="loc-now"><LocationPill location={lot?.location} className="tall" />{lot?.location_ts && <span className="muted small">since {dayTime(lot.location_ts)}</span>}</span>
         {lot?.location && describeLocation(lot.location, markets()) && <span className="t2 small">{describeLocation(lot.location, markets())}</span>}
-        {lot && <span className="muted small">{lot.quality} · {fmt(lot.balance, 1)} m in stock</span>}
+        {lot && <span className="muted small">{lot.quality} · {fmt(lot.balance, 2)} m in stock</span>}
       </div>
-      {canMove && lot?.location !== 'Dispatched' && (
+      {canMove && lot && !lot.closed_at && lot.location !== 'Dispatched' && (
         <form className="stack-12" onSubmit={submit}>
           <span className="fld">Move to</span>
           <MarketLocationPicker ctx={ctx} value={loc} onChange={setLoc} exclude={lot?.location} />
@@ -614,16 +635,25 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
   const stop = React.useRef(false);
   const [csvUrl, setCsvUrl] = useState<string | null>(null);
   const [fixBusy, setFixBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [choices, setChoices] = useState<StatusChoices>({});
+  const selectedFile = React.useRef<File | null>(null);
+  const checkVersion = React.useRef(0);
   useEffect(() => () => { if (csvUrl) URL.revokeObjectURL(csvUrl); }, [csvUrl]);
 
   const check = async (file: File | null) => {
-    if (!file) return;
+    const version = ++checkVersion.current;
+    selectedFile.current = file;
+    setChoices({});
+    if (!file) { setPh({ k: 'pick' }); return; }
     setPh({ k: 'checking', name: file.name });
     try {
       const r = await checkImportFile(file);
+      if (version !== checkVersion.current) return;
       setCsvUrl(r.ok ? null : problemsCsv(r));
       setPh({ k: 'checked', name: file.name, r });
     } catch (e) {
+      if (version !== checkVersion.current) return;
       d.showToast(e instanceof Error ? e.message : 'Could not check the file.', 'danger');
       setPh({ k: 'pick' });
       setInputKey((k) => k + 1);
@@ -631,10 +661,23 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
   };
 
   const start = async () => {
-    if (ph.k !== 'checked' || !ph.r.ok || !ph.r.batch || !ph.r.rows?.length) return;
+    if (ph.k !== 'checked' || !ph.r.ok || !ph.r.batch || !ph.r.rows?.length || confirming) return;
     const { name, r } = ph;
+    let rows = r.rows!;
+    if (r.format === 'outgoing') {
+      if (!selectedFile.current || !r.reviewId || reviewStatuses(rows as RegOutRow[], choices).some((x) => !x.status)) return;
+      setConfirming(true);
+      try {
+        const confirmed = await confirmImportFile(selectedFile.current, r.reviewId, choices);
+        if (confirmed.batch !== r.batch) throw new Error('The file changed. Check it again.');
+        rows = confirmed.rows;
+      } catch (e) {
+        d.showToast(e instanceof Error ? e.message : 'Could not confirm the file.', 'danger');
+        return;
+      } finally { setConfirming(false); }
+    }
     stop.current = false;
-    const out = await commitImport(r.batch!, r.rows!, (p) => setPh({ k: 'importing', name, r, p }), () => stop.current);
+    const out = await commitImport(r.batch!, rows, (p) => setPh({ k: 'importing', name, r, p }), () => stop.current, r.reviewId);
     setPh({ k: 'done', name, r, out });
     if (out.saved > 0) await d.afterImport(out.saved);
   };
@@ -645,8 +688,9 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
     try { await downloadFixFile(name, r.fix); } catch (e) { d.showToast(e instanceof Error ? e.message : 'Could not make the file.', 'danger'); } finally { setFixBusy(false); }
   };
 
-  const again = () => { setPh({ k: 'pick' }); setInputKey((k) => k + 1); };
-  const busy = ph.k === 'checking' || ph.k === 'importing';
+  const again = () => { checkVersion.current++; selectedFile.current = null; setChoices({}); setPh({ k: 'pick' }); setInputKey((k) => k + 1); };
+  const busy = confirming || ph.k === 'checking' || ph.k === 'importing';
+  const needsStatus = ph.k === 'checked' && ph.r.format === 'outgoing' && (!ph.r.reviewId || reviewStatuses((ph.r.rows ?? []) as RegOutRow[], choices).some((x) => !x.status));
   const isReg = (r: ValidateResult) => r.format !== 'template';
   const unit = (r: ValidateResult, n: number) => (r.format === 'incoming' ? (n === 1 ? 'lot' : 'lots') : n === 1 ? 'row' : 'rows');
 
@@ -704,6 +748,8 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
 
       {ph.k === 'checked' && ph.r.ok && ph.r.warningCount > 0 && <ImportWarnings r={ph.r} />}
 
+      {ph.k === 'checked' && ph.r.ok && ph.r.format === 'outgoing' && !!ph.r.rows?.length && <fieldset disabled={confirming} className="stack-8"><ImportStatusReview key={ph.r.reviewId} rows={ph.r.rows as RegOutRow[]} choices={choices} onChange={setChoices} /></fieldset>}
+
       {ph.k === 'checked' && ph.r.ok && (
         <div className={`imp-box stack-8 ${ph.r.rows!.length ? 'good' : ''}`}>
           {ph.r.rows!.length ? (
@@ -715,11 +761,12 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
                   : <>{n0(ph.r.counts.in)} incoming · {n0(ph.r.counts.out)} outgoing{ph.r.counts.newLots ? ` · ${n0(ph.r.counts.newLots)} new lots` : ''}</>}
               </span>
               <div className="imp-actions">
-                <button type="button" className="btn primary" onClick={start}>
+                <button type="button" className="btn primary" disabled={!!needsStatus || confirming} onClick={start}>
+                  {ph.r.format === 'outgoing' ? (confirming ? 'Confirming… ' : 'Confirm statuses and ') : ''}
                   {ph.r.skipCount ? `Import ${n0(ph.r.rows!.length)}, skip ${n0(ph.r.skipCount)}` : `Import ${n0(ph.r.rows!.length)} ${unit(ph.r, ph.r.rows!.length)}`}
                 </button>
                 {ph.r.fix && <button type="button" className="btn" disabled={fixBusy} onClick={() => fixFile(ph.name, ph.r)}><Icon name="download" size={14} />Rows to fix (.xlsx)</button>}
-                <button type="button" className="btn" onClick={again}>Cancel</button>
+                <button type="button" className="btn" disabled={confirming} onClick={again}>Cancel</button>
               </div>
             </>
           ) : (

@@ -294,6 +294,14 @@ function InventorySection({ inv, error, allQ, setAllQ }: { inv: InventorySnapsho
           {inv.totals.low > 0 && <Pill tone="warn">{inv.totals.low} low</Pill>}
           <span className="muted small num">{m(inv.totals.free)} free</span>
         </div>
+        <div className="kpis">
+          <Stat label="Stock on hand" value={m(inv.stock.on_hand_m)} total />
+          <Stat label="Packed" value={m(inv.stock.packed_m)} />
+          <Stat label="Running" value={m(inv.stock.running_m)} />
+          <Stat label="On hold" value={m(inv.stock.on_hold_m)} />
+          <Stat label="Other" value={m(inv.stock.other_m)} />
+        </div>
+        {inv.stock.ended_balance_count > 0 && <div className="alert warn">{inv.stock.ended_balance_count} ended lots still have a ledger balance, included in Other: {inv.stock.ended_balances.map((l) => `${l.lot_id} (${m(l.balance)})`).join(', ')}. Review them in Stock → Closed lots.</div>}
         {inv.qualities.length === 0 ? <div className="card-head pad-x"><span className="muted small">No stock yet.</span></div> : (
           <table className="tbl rtbl">
             <thead><tr><th>Quality</th><th>Free</th><th>Sells a day</th><th>Days of cover</th><th>Open orders</th><th>Status</th></tr></thead>

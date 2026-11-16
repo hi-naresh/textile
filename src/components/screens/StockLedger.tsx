@@ -93,7 +93,7 @@ export interface LedgerSummary {
   in_count: number; in_m: number; in_pieces: number; grey_m: number; finished_m: number; shortage_m: number; shortage_pct: number | null;
   out_count: number; out_m: number; out_pieces: number; adjust_m: number; net_m: number; on_hand_m: number;
 }
-export interface LotsSummary { lots: number; in_stock_lots: number; on_hand_m: number; in_m: number; out_m: number; qualities: number; packed_lots: number; running_lots: number; final_m: number }
+export interface LotsSummary { lots: number; in_stock_lots: number; on_hand_m: number; in_m: number; out_m: number; qualities: number; packed_lots: number; running_lots: number; final_m: number; packed_m?: number; running_m?: number; on_hold_m?: number; other_m?: number; ended_balance_count?: number; ended_balances?: { lot_id: string; balance: number }[]; }
 
 /** Totals for exactly what the filters match (GET `url`?params); reloads with the filters and on stock changes. */
 export function useSummary<T>(url: string, params: string, refreshKey: unknown, enabled = true) {
@@ -148,10 +148,15 @@ export function LotsSummaryCards({ s, filtered, loading }: { s: LotsSummary | nu
       <div className="sc-head small t2">{filtered ? 'Totals for the filtered lots' : 'Totals for all lots'}</div>
       <div className="sc-grid">
         <Comp label="Stock on hand" value={s ? m(s.on_hand_m) : '—'} sub={s ? `${fmtExact(s.in_stock_lots, 0)} lots with stock` : ' '} />
+        <Comp label="Packed" value={s ? m(s.packed_m ?? 0) : '—'} />
+        <Comp label="Running" value={s ? m(s.running_m ?? 0) : '—'} />
+        <Comp label="On hold" value={s ? m(s.on_hold_m ?? 0) : '—'} />
+        <Comp label="Other" value={s ? m(s.other_m ?? 0) : '—'} sub="Includes ended-balance exceptions" />
         <Comp label="Lots" value={s ? fmtExact(s.lots, 0) : '—'} sub={s ? `${fmtExact(s.packed_lots, 0)} packed · ${fmtExact(s.running_lots, 0)} running` : ' '} />
         <Comp label="Received (all time)" value={s ? m(s.in_m) : '—'} sub={s ? `${fmtExact(s.qualities, 0)} qualities` : ' '} />
         <Comp label="Dispatched (all time)" value={s ? m(s.out_m) : '—'} sub=" " />
       </div>
+      {!!s?.ended_balance_count && <div role="alert" className="alert warn">{s.ended_balance_count} ended lots still have a balance. Included in Other: {s.ended_balances?.map((l) => `${l.lot_id}: ${m(l.balance)}`).join('; ')}. Review their closing adjustments.</div>}
     </section>
   );
 }

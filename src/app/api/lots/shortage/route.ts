@@ -8,7 +8,7 @@ import { errorResponseBody, finalShortage, LedgerError } from '@/lib/ledger';
 // Used when a lot ends (End entry, Close lot) to ask for the final meters with the numbers in front of the person.
 export async function GET(req: NextRequest) {
   try {
-    await requireCap(req, 'stock.quantity');
+    await requireCap(req, 'stock.end');
     const raw = (req.nextUrl.searchParams.get('lot_id') ?? '').trim();
     if (!raw || raw.length > 50) throw new LedgerError('Which lot? Send its lot number.');
     const lotId = lotCode(raw)!;

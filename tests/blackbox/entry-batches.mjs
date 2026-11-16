@@ -1,0 +1,105 @@
+import { moduleUrl, artifact, chromeOptions } from './browser-env.mjs';
+// Build first. Requires local _test DATABASE_URL, Playwright, installed Chrome and free port 3157.
+// Uses a fresh database and removes it after the browser/server have stopped.
+import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
+import assert from 'node:assert/strict';
+const root = process.cwd();
+async function main() {
+  const { createDisposableDatabase } = await import(moduleUrl('scripts/stress/disposable-database.ts'));
+  const isolated = await createDisposableDatabase('browserbatches');
+  process.env.DATABASE_URL = isolated.url; process.env.DB_QUIET = '1';
+  const db = await import(moduleUrl('src/lib/db.ts'));
+  const { recordIncoming, recordOutgoing } = await import(moduleUrl('src/lib/ledger.ts'));
+  const { createSession } = await import(moduleUrl('src/lib/auth/session.ts'));
+  const { NextRequest } = createRequire(root + '/package.json')('next/server');
+  const { chromium } = createRequire(process.env.PLAYWRIGHT_PACKAGE_JSON || root + '/package.json')('playwright');
+  let server, browser;
+  const log = createWriteStream(artifact('textile-five-browser-server.log'));
+  try {
+    await db.query("INSERT INTO users (id, name, role) VALUES ('browser-owner', 'Browser Owner', 'owner')");
+    for (const lot_id of ['9028', 'FP-K-91']) await db.withTransaction(q => recordIncoming(q, { lot_id, quality: 'Browser cotton', design: 'Plain', finished_meters: lot_id === '9028' ? 10000 : 1500, mill_name: 'Browser mill', weaver_name: 'Weaver Acceptance', sr_no: lot_id === '9028' ? 902801 : 902802 }, { requireLotDetails: true }));
+    const movement = await db.withTransaction(q => recordOutgoing(q, { lot_id: '9028', meters: 1999.25, party: 'Browser client', sr_no: 10, bill_pct: 99, date: '2026-10-29' }));
+    await db.withTransaction(q => recordOutgoing(q, { lot_id: 'FP-K-91', meters: 1401.5, party: 'Browser client', entry_status: 'end', moved_by: 'browser-owner' }, { endAllowed: true }));
+    const session = await createSession(db.query, 'browser-owner', 'client', new NextRequest('http://127.0.0.1:3157/'));
+    server = spawn(process.execPath, [root + '/node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', '3157'], { cwd: root, env: { ...process.env, DATABASE_URL: isolated.url, NODE_ENV: 'production', GEMINI_API_KEY: '', GOOGLE_API_KEY: '', OPENAI_API_KEY: '', DB_QUIET: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    server.stdout.pipe(log); server.stderr.pipe(log);
+    for (let i=0; i<60; i++) { try { const r=await fetch('http://127.0.0.1:3157/login'); if(r.ok) break; } catch {} await new Promise(r=>setTimeout(r,250)); }
+    browser = await chromium.launch(chromeOptions());
+    const context = await browser.newContext({ viewport: { width:1366, height:768 }, locale: 'en-IN', timezoneId: 'Asia/Kolkata' });
+    await context.addCookies([{ name:'tb_at', value:session.tokens.access, url:'http://127.0.0.1:3157', httpOnly:true, sameSite:'Lax' }]);
+    await context.addInitScript(() => { if (!localStorage.getItem('tb-tab')) localStorage.setItem('tb-tab', 'stock'); });
+    const page = await context.newPage(); page.setDefaultTimeout(10000);
+    await page.goto('http://127.0.0.1:3157/#stock');
+    await page.getByRole('button', { name:'Manual entry', exact:true }).waitFor();
+    console.log(JSON.stringify({ platform: process.platform, browser: await browser.version(), locale: 'en-IN', timezone: 'Asia/Kolkata' }));
+    console.log('app loaded');
+    await page.getByRole('button', { name:'Lots & balance', exact:true }).click();
+    await page.locator('tr[data-lot="9028"]').waitFor();
+    const lotRow = page.locator('tr[data-lot="9028"]');
+    assert.match(await lotRow.innerText(), /902801/); assert.match(await lotRow.innerText(), /Weaver Acceptance/);
+    assert.equal(await page.getByRole('columnheader', { name:'S.No', exact:true }).count(),0);
+    await page.getByRole('searchbox', { name:'Search lots' }).fill('902801');
+    await page.waitForTimeout(600); assert.equal(await page.locator('tbody tr[data-lot]').count(),1);
+    await page.getByRole('searchbox', { name:'Search lots' }).fill('Weaver Acceptance'); await page.waitForTimeout(600);
+    await page.setViewportSize({ width:390, height:844 });
+    assert.match(await lotRow.innerText(), /Weaver Acceptance/); assert.ok(await lotRow.locator('[data-label="SR no."]').isVisible());
+    await page.screenshot({ path:artifact('textile-five-mobile.png'), fullPage:true });
+    await page.setViewportSize({ width:1366, height:768 });
+    await page.getByRole('searchbox', { name:'Search lots' }).fill('');
+    await page.getByRole('button', { name:'Closed', exact:true }).click();
+    const closedRow=page.locator('tr[data-lot="FP-K-91"]'); await closedRow.waitFor();
+    const box=await closedRow.getByRole('button',{name:'Reopen',exact:true}).boundingBox(); assert.ok(box && box.x>=0 && box.x+box.width<=1366);
+    await closedRow.getByRole('button',{name:'History',exact:true}).click();
+    const closure=page.getByRole('region',{name:'Lot closure'}); await closure.waitFor();
+    assert.match(await closure.innerText(), /98.5/);
+    await closure.getByRole('button',{name:'Reopen',exact:true}).click();
+    await closure.getByRole('button',{name:'Confirm reopen',exact:true}).click();
+    await closure.waitFor({state:'detached'});
+    assert.equal(Number((await db.query("SELECT bal_m FROM lots WHERE lot_id='FP-K-91'")).rows[0].bal_m),98.5);
+    console.log('lots: desktop/mobile SR + weaver search; history Reopen: passed');
+    await page.reload();
+    await page.getByRole('button',{name:'Manual entry',exact:true}).click();
+    await page.getByRole('button',{name:'Outgoing (OUT)',exact:true}).click();
+    const date=page.getByRole('textbox',{name:'Date of entry',exact:true});
+    await date.fill(''); await date.pressSequentially('29102026'); await date.press('Tab'); assert.equal(await date.inputValue(),'29-10-2026');
+    await date.fill('31022026'); await date.press('Tab'); assert.equal(await date.evaluate(e=>e.checkValidity()),false);
+    await date.fill('29-10-2026');
+    await page.locator('input[list="lot-list"]').fill('9028');
+    await page.getByLabel('Meters',{exact:true}).fill('1433');
+    await page.locator('input[list="party-list"]').fill('Browser client');
+    await page.getByText('More fields (optional)',{exact:true}).click();
+    await page.getByLabel('L',{exact:true}).fill('98');
+    assert.equal(await page.getByLabel('NQTY (billed m)',{exact:true}).inputValue(),'1404.34');
+    await page.getByLabel('Meters',{exact:true}).fill('1000');
+    assert.equal(await page.getByLabel('NQTY (billed m)',{exact:true}).inputValue(),'980');
+    await page.getByLabel('NQTY (billed m)',{exact:true}).fill('970');
+    await page.getByLabel('Meters',{exact:true}).fill('1433');
+    assert.equal(await page.getByLabel('NQTY (billed m)',{exact:true}).inputValue(),'970');
+    await page.getByLabel('NQTY (billed m)',{exact:true}).fill('');
+    assert.equal(await page.getByLabel('NQTY (billed m)',{exact:true}).inputValue(),'1404.34');
+    const saved=page.waitForResponse(r=>r.url().endsWith('/api/stock')&&r.request().method()==='POST');
+    await page.getByRole('button',{name:'Record dispatch',exact:true}).click(); assert.equal((await saved).status(),200);
+    const actual=(await db.query("SELECT billed_meters, to_char(ts,'YYYY-MM-DD') AS date FROM stock_movements WHERE lot_id='9028' AND meters=1433")).rows[0];
+    assert.equal(Number(actual.billed_meters),1404.34); assert.equal(actual.date,'2026-10-29');
+    await page.locator(`tr[data-mv="${movement.id}"]`).waitFor();
+    assert.match(await page.locator(`tr[data-mv="${movement.id}"] [data-label="Meters"]`).innerText(), /1,999.25/);
+    await page.getByRole('button',{name:'Edit',exact:true}).click();
+    const editRow=page.locator(`tr[data-mv="${movement.id}"]`);
+    const editDate=editRow.locator('input[data-c="date"]'); await editDate.fill('28102026'); await editDate.press('Tab');
+    await editRow.locator('input[data-c="bill_pct"]').fill('98');
+    assert.equal(await editRow.locator('input[data-c="billed_meters"]').inputValue(),'1959.27');
+    await page.getByRole('button',{name:'Save',exact:true}).click();
+    await page.waitForTimeout(700);
+    const edited=(await db.query("SELECT billed_meters, to_char(ts,'YYYY-MM-DD') AS date FROM stock_movements WHERE id=$1",[movement.id])).rows[0];
+    assert.equal(edited.date,'2026-10-28'); assert.equal(Number(edited.billed_meters),1959.27);
+    console.log('manual entry + edit: keyboard date, invalid date, auto/custom NQTY, hundredths: passed');
+    await page.screenshot({ path:artifact('textile-five-desktop.png'), fullPage:true });
+  } finally {
+    if(browser) await browser.close();
+    if(server) { server.kill('SIGTERM'); await new Promise(r=>server.once('exit',r)); }
+    log.end(); await db.default.end(); await isolated.cleanup();
+  }
+}
+main().catch(e=>{console.error(e);process.exitCode=1;});

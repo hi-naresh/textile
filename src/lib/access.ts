@@ -38,8 +38,8 @@ export function rules() { return current.rules; }
 export function markets() { return current.markets ?? []; }
 /** Markets a person can pick a location in. */
 export function activeMarkets() { return (current.markets ?? []).filter((m) => m.active); }
-/** Owner and supervisors may add a shop no. to a market while picking a location; only the owner adds / changes markets. */
-export function canAddShops(role: Role) { return role === 'owner' || role === 'supervisor'; }
+/** Only owners manage shops and markets. Supervisors can view locations. */
+export function canAddShops(role: Role) { return role === 'owner'; }
 export function canManageMarkets(role: Role) { return can(role, 'settings.manage'); }
 export function activeSupervisors() { return current.supervisors.filter((s) => s.active); }
 export function sectionNames(): string[] { return current.sections.filter((s) => s.active).map((s) => s.name); }
@@ -86,11 +86,11 @@ export function inSupervisorScope(section: string): boolean {
 
 export function jobInScope(role: Role, jc: JobCard, workerId?: string): boolean {
   if (role === 'owner') return true;
-  if (role === 'supervisor') return inSupervisorScope(jc.process) || inSupervisorScope(jc.worker_section);
+  if (role === 'supervisor') return true;
   return jc.worker_id === workerId;
 }
 
-/** Review queue scope: supervisors review the challans they capture + job card reads from their sections. */
+/** Legacy capture-list scope; confirmation is separately guarded by capture.confirm. */
 export function captureInScope(role: Role, type: CaptureType): boolean {
   if (role === 'owner') return true;
   if (role === 'supervisor') return canCapture('supervisor', type) || inSupervisorScope(captureSection(type));
@@ -100,6 +100,7 @@ export function captureInScope(role: Role, type: CaptureType): boolean {
 // ---------- Capabilities ----------
 export type Capability =
   | 'stock.quantity'
+  | 'stock.summary'
   | 'stock.value'
   | 'jobs.view'
   | 'efficiency.view'
@@ -128,29 +129,30 @@ export type Capability =
 type Level = 'Full' | 'View' | 'Full + override' | 'Via job cards' | 'Section' | 'Section lots' | 'Section crew' | 'Meters only' | 'In + out challans' | 'Job card (cut)' | 'Own cards' | 'Own only' | '—';
 
 export const MATRIX: { layer: 'Data' | 'Control'; cap: Capability; label: string; owner: Level; supervisor: Level; worker: Level }[] = [
-  { layer: 'Data', cap: 'stock.quantity', label: 'Stock quantities (meters)', owner: 'Full', supervisor: 'Section lots', worker: '—' },
+  { layer: 'Data', cap: 'stock.quantity', label: 'Stock quantities (meters)', owner: 'Full', supervisor: 'View', worker: '—' },
+  { layer: 'Data', cap: 'stock.summary', label: 'Stock totals and summaries', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Data', cap: 'stock.value', label: 'Money figures (₹)', owner: 'Full', supervisor: '—', worker: '—' },
-  { layer: 'Data', cap: 'jobs.view', label: 'Job cards & shortage', owner: 'Full', supervisor: 'Section', worker: '—' },
-  { layer: 'Data', cap: 'efficiency.view', label: 'Worker efficiency', owner: 'Full', supervisor: 'Section crew', worker: '—' },
-  { layer: 'Data', cap: 'cctv.view', label: 'CCTV activity', owner: 'Full', supervisor: 'Section crew', worker: '—' },
-  { layer: 'Data', cap: 'chat.use', label: 'Chat', owner: 'Full', supervisor: 'Meters only', worker: '—' },
+  { layer: 'Data', cap: 'jobs.view', label: 'Job cards & shortage', owner: 'Full', supervisor: 'View', worker: '—' },
+  { layer: 'Data', cap: 'efficiency.view', label: 'Worker efficiency', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Data', cap: 'cctv.view', label: 'CCTV activity', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Data', cap: 'chat.use', label: 'Chat', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'capture.create', label: 'Capture photos', owner: 'Full', supervisor: 'In + out challans', worker: 'Job card (cut)' },
-  { layer: 'Control', cap: 'capture.confirm', label: 'Confirm AI reads to ledger', owner: 'Full + override', supervisor: 'Section', worker: '—' },
-  { layer: 'Control', cap: 'jobs.manage', label: 'Create / close job cards', owner: 'Full', supervisor: 'Section', worker: '—' },
-  { layer: 'Control', cap: 'work.allot', label: 'Allot work', owner: 'Full', supervisor: 'Section crew', worker: '—' },
-  { layer: 'Control', cap: 'lots.move', label: 'Move lots (market / shop / pipe)', owner: 'Full', supervisor: 'Via job cards', worker: '—' },
+  { layer: 'Control', cap: 'capture.confirm', label: 'Confirm AI reads to ledger', owner: 'Full + override', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'jobs.manage', label: 'Create / close job cards', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'work.allot', label: 'Allot work', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'lots.move', label: 'Move lots (market / shop / pipe)', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'ledger.edit', label: 'Manual ledger entries', owner: 'Full', supervisor: '—', worker: '—' },
-  { layer: 'Control', cap: 'stock.end', label: 'Mark entries End (closes the lot)', owner: 'Full', supervisor: 'Full', worker: '—' },
+  { layer: 'Control', cap: 'stock.end', label: 'Mark entries End (closes the lot)', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Data', cap: 'stock.closed', label: 'Closed lots & closing adjustments', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'settings.manage', label: 'Firm settings & rules', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'users.manage', label: 'Users, roles & sections', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Data', cap: 'orders.view', label: 'Orders & allocations', owner: 'Full', supervisor: 'Meters only', worker: '—' },
   { layer: 'Data', cap: 'finance.view', label: 'Invoices, payments, credit, margin (₹)', owner: 'Full', supervisor: '—', worker: '—' },
-  { layer: 'Data', cap: 'reports.view', label: 'Reports', owner: 'Full', supervisor: 'Meters only', worker: '—' },
-  { layer: 'Control', cap: 'inquiry.handle', label: 'Log inquiries, draft replies', owner: 'Full', supervisor: 'Full', worker: '—' },
-  { layer: 'Control', cap: 'orders.allocate', label: 'Reserve / release lots for orders', owner: 'Full', supervisor: 'Meters only', worker: '—' },
+  { layer: 'Data', cap: 'reports.view', label: 'Reports', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'inquiry.handle', label: 'Log inquiries, draft replies', owner: 'Full', supervisor: '—', worker: '—' },
+  { layer: 'Control', cap: 'orders.allocate', label: 'Reserve / release lots for orders', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'orders.manage', label: 'Create orders, set rates', owner: 'Full', supervisor: '—', worker: '—' },
-  { layer: 'Control', cap: 'dispatch.manage', label: 'Record dispatches, print challans', owner: 'Full', supervisor: 'Full', worker: '—' },
+  { layer: 'Control', cap: 'dispatch.manage', label: 'Record dispatches, print challans', owner: 'Full', supervisor: '—', worker: '—' },
   { layer: 'Control', cap: 'master.manage', label: 'Parties, billing & GST', owner: 'Full', supervisor: '—', worker: '—' },
 ];
 
@@ -210,12 +212,10 @@ export const NAV: Record<Role, NavItem[]> = {
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Admin' },
   ],
   supervisor: [
-    { tab: 'floor', label: 'Floor today', short: 'Floor', icon: 'factory', group: 'My sections' },
-    { tab: 'capture', label: 'Capture challan', short: 'Capture', icon: 'camera', group: 'My sections', cap: 'capture.create' },
-    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'My sections', cap: 'jobs.view' },
-    { tab: 'allot', label: 'Allot work', short: 'Allot', icon: 'userPlus', group: 'My sections', cap: 'work.allot' },
-    { tab: 'orders', label: 'Orders & inquiries', short: 'Orders', icon: 'cart', group: 'Sales', cap: ['orders.view', 'inquiry.handle'] },
-    { tab: 'dispatch', label: 'Dispatch', short: 'Dispatch', icon: 'truck', group: 'Sales', cap: 'dispatch.manage' },
+    { tab: 'stock', label: 'Available stock', short: 'Stock', icon: 'box', group: 'Stock', cap: 'stock.quantity' },
+    { tab: 'capture', label: 'Capture challan', short: 'Capture', icon: 'camera', group: 'Stock', cap: 'capture.create' },
+    { tab: 'jobs', label: 'Job cards', short: 'Cards', icon: 'card', group: 'Work', cap: 'jobs.view' },
+    { tab: 'orders', label: 'Orders', short: 'Orders', icon: 'cart', group: 'Work', cap: 'orders.view' },
     { tab: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', group: 'Me' },
   ],
   worker: [
@@ -227,11 +227,11 @@ export const NAV: Record<Role, NavItem[]> = {
 // Bottom bar on phones: these tabs, the rest go in "More".
 export const MOBILE_PRIMARY: Record<Role, Tab[]> = {
   owner: ['overview', 'stock', 'capture', 'orders'],
-  supervisor: ['floor', 'capture', 'jobs', 'allot'],
+  supervisor: ['stock', 'capture', 'jobs', 'orders'],
   worker: ['capture', 'settings'],
 };
 
-export const HOME_TAB: Record<Role, Tab> = { owner: 'overview', supervisor: 'floor', worker: 'capture' };
+export const HOME_TAB: Record<Role, Tab> = { owner: 'overview', supervisor: 'stock', worker: 'capture' };
 
 /** Menu for a role: its NAV minus anything the developer switched off. */
 export function navFor(role: Role): NavItem[] {
