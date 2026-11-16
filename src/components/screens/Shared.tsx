@@ -9,7 +9,7 @@ import type { Ctx } from '../ctx';
 import { can, captureInScope, inSupervisorScope, jobInScope, sectionName, activeSupervisor, rules, sectionNames, markets } from '@/lib/access';
 import { describeLocation } from '@/lib/location';
 import { LocationPill, MarketLocationPicker } from '../MarketLocationPicker';
-import { checkImportFile, commitImport, downloadFixFile, type ImportOutcome, type ImportProgress, type ValidateResult } from '@/lib/stockImportClient';
+import { checkImportFile, confirmImportFile, commitImport, downloadFixFile, type ImportOutcome, type ImportProgress, type ValidateResult } from '@/lib/stockImportClient';
 import { CAPTURE_LABEL, ENGINE_LABEL, FIELDS_FOR, FIELD_LABEL, NUMERIC_FIELDS, OPTIONAL_FIELDS, STAGE_LABEL, STATUS_LABEL, STATUS_TONE, locationTone, shortTone } from '@/lib/derive';
 import type { StockEntry } from '@/lib/useTextileData';
 import { LotPicker } from '../LotPicker';
@@ -17,6 +17,9 @@ import { useLotSearch, type PickLot } from '@/lib/useLots';
 import type { CaptureEvent, JobCard, Lot, LotLocationEntry } from '@/lib/types';
 import { ENTRY_STATUS_HINT, LOT_S_GUESS } from '@/lib/registers';
 import { EntryStatusPicker, EntryStatusPill } from '../EntryStatus';
+import { ImportStatusReview } from '../ImportStatusReview';
+import { reviewStatuses, type StatusChoices } from '@/lib/import-status-review';
+import type { RegOutRow } from '@/lib/register-import';
 
 // ---------------- Job cards ----------------
 export function JobCards({ ctx }: { ctx: Ctx }) {
@@ -614,16 +617,25 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
   const stop = React.useRef(false);
   const [csvUrl, setCsvUrl] = useState<string | null>(null);
   const [fixBusy, setFixBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [choices, setChoices] = useState<StatusChoices>({});
+  const selectedFile = React.useRef<File | null>(null);
+  const checkVersion = React.useRef(0);
   useEffect(() => () => { if (csvUrl) URL.revokeObjectURL(csvUrl); }, [csvUrl]);
 
   const check = async (file: File | null) => {
-    if (!file) return;
+    const version = ++checkVersion.current;
+    selectedFile.current = file;
+    setChoices({});
+    if (!file) { setPh({ k: 'pick' }); return; }
     setPh({ k: 'checking', name: file.name });
     try {
       const r = await checkImportFile(file);
+      if (version !== checkVersion.current) return;
       setCsvUrl(r.ok ? null : problemsCsv(r));
       setPh({ k: 'checked', name: file.name, r });
     } catch (e) {
+      if (version !== checkVersion.current) return;
       d.showToast(e instanceof Error ? e.message : 'Could not check the file.', 'danger');
       setPh({ k: 'pick' });
       setInputKey((k) => k + 1);
@@ -631,10 +643,23 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
   };
 
   const start = async () => {
-    if (ph.k !== 'checked' || !ph.r.ok || !ph.r.batch || !ph.r.rows?.length) return;
+    if (ph.k !== 'checked' || !ph.r.ok || !ph.r.batch || !ph.r.rows?.length || confirming) return;
     const { name, r } = ph;
+    let rows = r.rows!;
+    if (r.format === 'outgoing') {
+      if (!selectedFile.current || !r.reviewId || reviewStatuses(rows as RegOutRow[], choices).some((x) => !x.status)) return;
+      setConfirming(true);
+      try {
+        const confirmed = await confirmImportFile(selectedFile.current, r.reviewId, choices);
+        if (confirmed.batch !== r.batch) throw new Error('The file changed. Check it again.');
+        rows = confirmed.rows;
+      } catch (e) {
+        d.showToast(e instanceof Error ? e.message : 'Could not confirm the file.', 'danger');
+        return;
+      } finally { setConfirming(false); }
+    }
     stop.current = false;
-    const out = await commitImport(r.batch!, r.rows!, (p) => setPh({ k: 'importing', name, r, p }), () => stop.current);
+    const out = await commitImport(r.batch!, rows, (p) => setPh({ k: 'importing', name, r, p }), () => stop.current, r.reviewId);
     setPh({ k: 'done', name, r, out });
     if (out.saved > 0) await d.afterImport(out.saved);
   };
@@ -645,8 +670,9 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
     try { await downloadFixFile(name, r.fix); } catch (e) { d.showToast(e instanceof Error ? e.message : 'Could not make the file.', 'danger'); } finally { setFixBusy(false); }
   };
 
-  const again = () => { setPh({ k: 'pick' }); setInputKey((k) => k + 1); };
-  const busy = ph.k === 'checking' || ph.k === 'importing';
+  const again = () => { checkVersion.current++; selectedFile.current = null; setChoices({}); setPh({ k: 'pick' }); setInputKey((k) => k + 1); };
+  const busy = confirming || ph.k === 'checking' || ph.k === 'importing';
+  const needsStatus = ph.k === 'checked' && ph.r.format === 'outgoing' && (!ph.r.reviewId || reviewStatuses((ph.r.rows ?? []) as RegOutRow[], choices).some((x) => !x.status));
   const isReg = (r: ValidateResult) => r.format !== 'template';
   const unit = (r: ValidateResult, n: number) => (r.format === 'incoming' ? (n === 1 ? 'lot' : 'lots') : n === 1 ? 'row' : 'rows');
 
@@ -704,6 +730,8 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
 
       {ph.k === 'checked' && ph.r.ok && ph.r.warningCount > 0 && <ImportWarnings r={ph.r} />}
 
+      {ph.k === 'checked' && ph.r.ok && ph.r.format === 'outgoing' && !!ph.r.rows?.length && <fieldset disabled={confirming} className="stack-8"><ImportStatusReview key={ph.r.reviewId} rows={ph.r.rows as RegOutRow[]} choices={choices} onChange={setChoices} /></fieldset>}
+
       {ph.k === 'checked' && ph.r.ok && (
         <div className={`imp-box stack-8 ${ph.r.rows!.length ? 'good' : ''}`}>
           {ph.r.rows!.length ? (
@@ -715,11 +743,12 @@ export function StockImport({ ctx, onDone }: { ctx: Ctx; onDone?: () => void }) 
                   : <>{n0(ph.r.counts.in)} incoming · {n0(ph.r.counts.out)} outgoing{ph.r.counts.newLots ? ` · ${n0(ph.r.counts.newLots)} new lots` : ''}</>}
               </span>
               <div className="imp-actions">
-                <button type="button" className="btn primary" onClick={start}>
+                <button type="button" className="btn primary" disabled={!!needsStatus || confirming} onClick={start}>
+                  {ph.r.format === 'outgoing' ? (confirming ? 'Confirming… ' : 'Confirm statuses and ') : ''}
                   {ph.r.skipCount ? `Import ${n0(ph.r.rows!.length)}, skip ${n0(ph.r.skipCount)}` : `Import ${n0(ph.r.rows!.length)} ${unit(ph.r, ph.r.rows!.length)}`}
                 </button>
                 {ph.r.fix && <button type="button" className="btn" disabled={fixBusy} onClick={() => fixFile(ph.name, ph.r)}><Icon name="download" size={14} />Rows to fix (.xlsx)</button>}
-                <button type="button" className="btn" onClick={again}>Cancel</button>
+                <button type="button" className="btn" disabled={confirming} onClick={again}>Cancel</button>
               </div>
             </>
           ) : (

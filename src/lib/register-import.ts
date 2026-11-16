@@ -17,7 +17,7 @@ import { LedgerError } from './ledger-error';
 import { DISPATCHED, assertLotOpen, closeLot, currentPlace, importRef, lockLot, lotAttrMemo, moveLot, nameMemo, piecesValue, srValue, staleOnce, type LedgerMemo } from './ledger';
 import { trimReservations } from './stock';
 import { challanCode, lotCode, metersValue, nameKey, nameValue } from './normalize';
-import { billPctValue, billedMetersValue, linkedSrValue, locCodeValue, lotStatusCodeValue, registerPctValue, statusFromLotS } from './registers';
+import { billPctValue, billedMetersValue, entryStatusValue, linkedSrValue, locCodeValue, lotStatusCodeValue, registerPctValue, statusFromLotS } from './registers';
 
 export type RegisterFormat = 'incoming' | 'outgoing';
 export const NO_DESIGN = 'No design'; // the registers have no design; lots need one
@@ -51,7 +51,7 @@ export const OUTGOING_COLUMNS: RegCol<OutKey>[] = [
   { key: 'item', header: 'ITEM', aliases: ['Quality', 'Item Name'], width: 24, note: 'Quality sold (checked against the lot’s quality).' },
   { key: 'l', header: 'L', aliases: [], width: 6, note: 'L (kept as given; NQTY = QTY × L ÷ 100). Optional.' },
   { key: 'lot', header: 'LOT', aliases: ['LOT NO', 'LOTNO'], width: 10, note: 'Lot number.' },
-  { key: 'lots', header: 'LOT S', aliases: ['LOTS', 'LOT ST', 'Lot Status'], width: 6, note: 'LOT S code (R / E / S / A), kept as given. Optional.' },
+  { key: 'lots', header: 'LOT S', aliases: ['LOTS', 'LOT ST', 'Lot Status'], width: 6, note: 'LOT S code, kept as given. S/R propose Running; E proposes End. Blank, A and unknown codes require a status choice in the import review.' },
   { key: 'qty', header: 'QTY', aliases: ['Quantity', 'MTR', 'Meters'], required: true, width: 10, note: 'Meters out of the lot.' },
   { key: 'nqty', header: 'NQTY', aliases: ['N QTY', 'Net Qty', 'Billed Qty'], width: 10, note: 'Billed meters (kept as given). Optional.' },
   { key: 'sr', header: 'SR.NO', aliases: ['SRNO', 'SR NO', 'SR'], width: 8, note: 'SRNO of the lot in the Incoming register — this is how the sale finds its lot.' },
@@ -142,7 +142,8 @@ export interface RegOutRow {
   fmt: 'reg_out'; row: number; ref: string;
   date: string; bill_no: string; quality: string | null; bill_pct: number | null; lot_raw: string | null; lot_id: string;
   lot_status_code: string | null; meters: number; billed_meters: number | null; linked_sr: string | null;
-  keep_open?: boolean; // E / A row with more sales of its lot later in the file: saved as Running, the lot stays open
+  keep_open?: boolean; // E row with more sales of its lot later in the file: proposed as Running
+  entry_status?: 'running' | 'end'; // populated only after the review is resolved
 }
 export interface RegProblem { row: number; field: string; message: string }
 export interface RegWarning extends RegProblem { skip: boolean }
@@ -366,8 +367,7 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
     const srNum = srText && /^\d{1,9}$/.test(srText) ? Number(srText) : null;
     if (!lotRaw && !srText) { errors.push({ row, field: 'LOT', message: 'Give the LOT or the SR.NO, so the sale can find its lot.' }); continue; }
     if (L != null && nqty != null && Math.abs(round2(qty * L / 100) - round2(nqty)) > 0.05) warnings.push({ row, field: 'NQTY', skip: false, message: `NQTY ${nqty} is not QTY × L ÷ 100 (${round2(qty * L / 100)}). Kept as given.` });
-    if (code === 'A' && statusFromLotS(code) == null) warnings.push({ row, field: 'LOT S', skip: false, message: 'LOT S "A" is not confirmed as End. Saved as data only; the entry stays without a status and the lot is not closed.' });
-    else if (code && !['R', 'E', 'S'].includes(code)) warnings.push({ row, field: 'LOT S', skip: false, message: `LOT S "${code}" is a new code (mapped codes: R, E, S). Kept as data only without a status.` });
+    if (!statusFromLotS(code)) warnings.push({ row, field: 'LOT S', skip: false, message: `LOT S ${code ? `"${code}" is unconfirmed` : 'is blank'}. Choose Running or End in the review before importing. The original code is kept.` });
     if (date > today) warnings.push({ row, field: 'DATE', skip: false, message: `Date ${fmtDate(date)} is in the future — check it. Saved as written.` });
     // Identity of a sale row: date, bill, lot, meters, SR.NO (+ how many identical rows came before it). L / NQTY / LOT S /
     // ITEM are left out, so fixing one of them in the file (or a copy saved without formula results) is not a new sale.
@@ -450,14 +450,13 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
     const { srNum: _s, combined: _c, content: _t, ...rest } = r; // eslint-disable-line @typescript-eslint/no-unused-vars
     rows.push({ ...rest, lot_id: lot.lot_id, ref });
   });
-  // LOT S E / A closes the lot on import. When more sales of the same lot come later in the file, closing there would
-  // refuse them: save that row as Running instead and say so (the last sale can still be marked End later).
+  // Propose Running for an early E so later sales remain possible. The review shows this before confirmation.
   const lastRow = new Map<string, number>();
   rows.forEach((x, i) => lastRow.set(x.lot_id, i));
   rows.forEach((x, i) => {
     if (statusFromLotS(x.lot_status_code) === 'end' && lastRow.get(x.lot_id) !== i) {
       x.keep_open = true;
-      warnings.push({ row: x.row, field: 'LOT S', skip: false, message: `LOT S ${x.lot_status_code} (End), but more sales of lot ${x.lot_id} come later in this file: saved as Running and the lot stays open.` });
+      warnings.push({ row: x.row, field: 'LOT S', skip: false, message: `LOT S ${x.lot_status_code} (End), but more sales of lot ${x.lot_id} come later in this file: proposed as Running. Review before importing.` });
     }
   });
   if (rows.length) notes.push(`${bySrCount} sale row(s) found their lot by SR.NO${byLotCount ? `, ${byLotCount} by lot number` : ''}.`);
@@ -535,8 +534,8 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
   const billed = billedMetersValue(r.billed_meters);
   const code = lotStatusCodeValue(r.lot_status_code);
   const linked = linkedSrValue(r.linked_sr);
-  const coded = statusFromLotS(code);
-  const status = coded === 'end' && r.keep_open === true ? 'running' : coded; // see checkOutgoing
+  const status = entryStatusValue(r.entry_status);
+  if (!status) throw new LedgerError('Review and choose the sale status before importing.');
   if (!(await lockLot(q, lotId))) throw new LedgerError(`Lot ${lotId} does not exist. Check the file again.`);
   await assertLotOpen(q, lotId);
   const b = Number((await q(`SELECT bal_m FROM lots WHERE lot_id = $1`, [lotId])).rows[0].bal_m);

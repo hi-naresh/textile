@@ -185,6 +185,7 @@ export function registerTemplate(wb: ExcelJS.Workbook, format: RegisterFormat, n
       'One row per lot on a bill (a bill with 3 lots = 3 rows). SR.NO = the lot’s SRNO in the Incoming register: that is how the sale finds its lot. Import the Incoming register first.',
       'Two lots in one row (172+173, SR 146+204) can’t be split by the app: write one row per lot.',
       'No party column: imported sales have no party. QTY (meters) comes out of the lot; L, NQTY and LOT S are kept as written.',
+      'Review all lot statuses before importing. S/R propose Running, E proposes End; blank, A and unknown LOT S need an explicit choice. Only the last sale of a lot in this file can close it.',
       'Importing the same file again does not add anything twice.',
     ];
   general.forEach((w, i) => help.addRow({ c: i === 0 ? 'Notes' : '', w }));
@@ -330,6 +331,7 @@ export const FORMAT_LABEL: Record<ImportFormat, string> = { template: 'app templ
 export interface FixFile { headers: string[]; rows: { row: number; values: unknown[]; reason: string }[] }
 export type AnyImportRow = ImportRow | RegInRow | RegOutRow;
 export interface ValidateResult {
+  reviewId?: string; // outgoing register: server-held file/row snapshot, confirmed before commit
   ok: boolean; // no column problems and no row errors (warnings are allowed)
   batch: string | null;
   sheet: string;

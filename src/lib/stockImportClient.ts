@@ -2,6 +2,7 @@
 
 // Browser side of the Excel import: check the file, then send the checked rows in chunks with progress.
 import type { AnyImportRow, FixFile, ValidateResult } from './stock-import';
+import type { StatusChoices } from './import-status-review';
 
 export type { AnyImportRow, FixFile, ValidateResult };
 export const CHUNK_SIZE = 500;
@@ -21,8 +22,19 @@ export interface ImportOutcome extends ImportProgress { ok: boolean; error?: str
 const MAX_RETRIES = 2;
 const MAX_RETRY_AFTER_MS = 30_000;
 
-async function postChunk(batch: string, rows: AnyImportRow[]) {
-  const res = await fetch('/api/stock/import/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch, rows }) });
+export async function confirmImportFile(file: File, reviewId: string, choices: StatusChoices): Promise<{ batch: string; rows: AnyImportRow[] }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('reviewId', reviewId);
+  fd.append('choices', JSON.stringify(choices));
+  const res = await fetch('/api/stock/import/review', { method: 'POST', body: fd });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || 'Could not confirm the file.');
+  return data;
+}
+
+async function postChunk(batch: string, rows: AnyImportRow[], reviewId?: string) {
+  const res = await fetch('/api/stock/import/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch, rows, reviewId }) });
   const data = await res.json().catch(() => ({}));
   // A proxy can truncate/replace even a 200 response after the commit succeeds.
   // Retry the same idempotent chunk instead of reporting NaN totals or skipping it.
@@ -54,7 +66,7 @@ function retryDelay(res: Response, retry: number) {
  * Network failures, 429s and server errors are retried twice (safe: the server skips rows it already saved).
  * Stops at the first non-retryable or exhausted chunk failure.
  */
-export async function commitImport(batch: string, rows: AnyImportRow[], onProgress: (p: ImportProgress) => void, shouldStop?: () => boolean): Promise<ImportOutcome> {
+export async function commitImport(batch: string, rows: AnyImportRow[], onProgress: (p: ImportProgress) => void, shouldStop?: () => boolean, reviewId?: string): Promise<ImportOutcome> {
   const p: ImportProgress = { done: 0, total: rows.length, saved: 0, skipped: 0, in: 0, out: 0 };
   onProgress({ ...p });
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
@@ -66,7 +78,7 @@ export async function commitImport(batch: string, rows: AnyImportRow[], onProgre
       if (shouldStop?.()) return { ...p, ok: false, error: 'Stopped. Rows already saved stay saved.', failedChunk: range };
       let response: Awaited<ReturnType<typeof postChunk>>;
       try {
-        response = await postChunk(batch, chunk);
+        response = await postChunk(batch, chunk, reviewId);
       } catch {
         if (retry >= MAX_RETRIES) return { ...p, ok: false, error: 'Network problem. Check the connection and import the same file again — rows already saved will not be added twice.', failedChunk: range };
         await new Promise((resolve) => setTimeout(resolve, 800 * 2 ** retry));

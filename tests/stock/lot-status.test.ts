@@ -24,6 +24,7 @@ import { POST as lotClose } from '../../src/app/api/lots/close/route';
 import { EditProblems } from '../../src/lib/ledger-edit';
 import { applyBackfill, backfillPlanFingerprint, planBackfill } from '../../src/lib/lot-status-backfill';
 import { checkOutgoing, commitOutgoingRow } from '../../src/lib/register-import';
+import { resolveReview } from '../../src/lib/import-status-review';
 import { newLedgerMemo } from '../../src/lib/ledger';
 import { search } from '../../src/lib/search';
 import { templateById, type Scope } from '../../src/lib/chat/templates';
@@ -515,22 +516,23 @@ test('#7 backfill: dry run lists what would close; apply maps confirmed codes an
 });
 
 test('#7 a new sales-register import sets the status from LOT S and closes the lot on E', async () => {
-  const row = (n: number, code: string | null, meters: number) => ({ ref: `${'cd'.repeat(10)}:${n}`, date: '2026-10-01', lot_id: lot(19), meters, bill_no: `${id}-R${n}`, lot_status_code: code });
+  const row = (n: number, code: string | null, meters: number) => ({ ref: `${'cd'.repeat(10)}:${n}`, date: '2026-10-01', lot_id: lot(19), meters, bill_no: `${id}-R${n}`, lot_status_code: code, entry_status: code === 'E' ? 'end' : 'running' });
   await withTransaction((q) => commitOutgoingRow(q, row(1, 'S', 300), id, newLedgerMemo()));
   await withTransaction((q) => commitOutgoingRow(q, row(2, null, 100), id, newLedgerMemo()));
   await withTransaction((q) => commitOutgoingRow(q, row(3, 'E', 500), id, newLedgerMemo()));
   const st = (await query("SELECT entry_status FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal' ORDER BY id", [lot(19)])).rows.map((x) => x.entry_status);
-  assert.deepEqual(st, ['running', null, 'end']);
+  assert.deepEqual(st, ['running', 'running', 'end']);
   assert.equal((await lotRow(lot(19))).close_reason, 'register');
   assert.equal(await balance(lot(19)), 0);
   await assert.rejects(withTransaction((q) => commitOutgoingRow(q, row(4, 'R', 10), id, newLedgerMemo())), /is closed/);
 });
 
-test('#7 a new A-coded sales-register row stays unmapped and does not close its lot', async () => {
+test('#28 an A-coded sales-register row needs a chosen status and preserves its original code', async () => {
   const row = { ref: `${'ef'.repeat(10)}:1`, date: '2026-10-01', lot_id: lot(21), meters: 100, bill_no: `${id}-A1`, lot_status_code: 'A' };
-  await withTransaction((q) => commitOutgoingRow(q, row, id, newLedgerMemo()));
+  await assert.rejects(withTransaction((q) => commitOutgoingRow(q, row, id, newLedgerMemo())), /choose the sale status/);
+  await withTransaction((q) => commitOutgoingRow(q, { ...row, entry_status: 'running' }, id, newLedgerMemo()));
   const movement = (await query("SELECT entry_status, lot_status_code FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' AND kind = 'normal'", [lot(21)])).rows[0];
-  assert.deepEqual(movement, { entry_status: null, lot_status_code: 'A' });
+  assert.deepEqual(movement, { entry_status: 'running', lot_status_code: 'A' });
   assert.equal((await lotRow(lot(21))).closed_at, null);
   assert.equal(await balance(lot(21)), 900);
 });
@@ -606,7 +608,7 @@ test('register import check: closed lots are skipped; an E row followed by more 
   const chk = await checkOutgoing(query, raw);
   assert.ok(chk.warnings.some((w) => w.row === 2 && w.skip && /is closed/.test(w.message)));
   assert.deepEqual(chk.rows.map((r) => [r.row, !!r.keep_open]), [[3, true], [4, false]]);
-  for (const r of chk.rows) await withTransaction((q) => commitOutgoingRow(q, r as unknown as Record<string, unknown>, id, newLedgerMemo()));
+  for (const r of resolveReview(chk.rows, {})) await withTransaction((q) => commitOutgoingRow(q, r as unknown as Record<string, unknown>, id, newLedgerMemo()));
   const st = (await query("SELECT entry_status FROM stock_movements WHERE lot_id = $1 AND direction = 'OUT' ORDER BY id", [lot(24)])).rows.map((x) => x.entry_status);
   assert.deepEqual(st, ['running', 'running']);
   assert.equal((await lotRow(lot(24))).closed_at, null);
