@@ -15,8 +15,11 @@ import type { StockEntry } from '@/lib/useTextileData';
 import { LotPicker } from '../LotPicker';
 import { useLotSearch, type PickLot } from '@/lib/useLots';
 import type { CaptureEvent, JobCard, Lot, LotLocationEntry } from '@/lib/types';
-import { ENTRY_STATUS_HINT, LOT_S_GUESS } from '@/lib/registers';
+import { calculatedBilledMeters, ENTRY_STATUS_HINT, LOT_S_GUESS } from '@/lib/registers';
 import { EntryStatusPicker, EntryStatusPill } from '../EntryStatus';
+import { EntryDateInput } from '../EntryDateInput';
+import { entryDateValue, entryDateError } from '@/lib/entry-date';
+import { LotClosureCard } from '../LotClosureCard';
 import { ImportStatusReview } from '../ImportStatusReview';
 import { reviewStatuses, type StatusChoices } from '@/lib/import-status-review';
 import type { RegOutRow } from '@/lib/register-import';
@@ -327,6 +330,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
   const { d, role } = ctx;
   const [f, setF] = useState<StockEntry>({ ...EMPTY_ENTRY, direction: initialDirection, date: todayDateIso() });
   const [sameAsMill, setSameAsMill] = useState(false);
+  const [billedAuto, setBilledAuto] = useState(true);
   const [busy, setBusy] = useState(false);
   const [srTouched, setSrTouched] = useState(false);
   const [sr, setSr] = useState<SrInfo | null>(null);
@@ -385,7 +389,8 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     : (!numOk(f.bill_pct, 0, 1000, true) ? 'L must be a number above 0.' : !numOk(f.billed_meters, 0, 10_000_000) ? 'NQTY must be a number, 0 or more.' : null);
   const lotQty = parseFloat(f.meters);
   const lPct = parseFloat(f.bill_pct ?? '');
-  const nqtyHint = !isIn && Number.isFinite(lotQty) && Number.isFinite(lPct) ? Math.round(lotQty * lPct) / 100 : null;
+  const nqtyHint = !isIn && Number.isFinite(lotQty) && Number.isFinite(lPct) ? calculatedBilledMeters(lotQty, lPct) : null;
+  const billedText = billedAuto ? (nqtyHint == null ? '' : String(nqtyHint)) : f.billed_meters ?? '';
 
   // Outgoing: End needs stock.end. Suggest End when the meters take everything left in a known lot.
   const canEnd = can(role, 'stock.end');
@@ -395,7 +400,8 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const entry = { ...f, lot_id: f.lot_id.trim(), weaver_name: sameAsMill ? f.mill_name : f.weaver_name, date: f.date?.trim() || todayDateIso() };
+    if (entryDateError(f.date || todayDateIso())) return d.showToast(entryDateError(f.date || todayDateIso())!, 'warning');
+    const entry = { ...f, billed_meters: billedText, lot_id: f.lot_id.trim(), weaver_name: sameAsMill ? f.mill_name : f.weaver_name, date: entryDateValue(f.date || todayDateIso()) };
     if (!entry.lot_id) return d.showToast('Lot number is required.', 'warning');
     if (srBad || entry.sr_no.trim() === '0') return d.showToast('SR no. must be a whole number above 0.', 'warning');
     if (srTaken) return d.showToast(`SR no. ${srText} is already used. Next free: ${sr?.next}.`, 'warning');
@@ -412,7 +418,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
     setBusy(true);
     const ok = await d.addStock(role, entry);
     setBusy(false);
-    if (ok) { setF({ ...EMPTY_ENTRY, direction: f.direction, date: f.date || todayDateIso() }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
+    if (ok) { setBilledAuto(true); setF({ ...EMPTY_ENTRY, direction: f.direction, date: f.date || todayDateIso() }); setSameAsMill(false); setSrTouched(false); setRound((r) => r + 1); onDone?.(); }
     else setRound((r) => r + (srTouched ? 0 : 1)); // e.g. someone else took the SR no. meanwhile: suggest a fresh one
   };
 
@@ -439,7 +445,8 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
       <div className="two-col sr-row">
         {srField}
         <label className="fld">Entry date
-          <input className="num" type="date" value={f.date || todayDateIso()} max={todayDateIso()} onChange={set('date')} aria-label="Date of entry" />
+          <EntryDateInput className="num" required value={f.date ?? ''} onChange={(date) => setF({ ...f, date })} aria-label="Date of entry" />
+          {f.date && entryDateError(f.date) && <span className="err small">{entryDateError(f.date)}</span>}
           <span className="sr-note">Back-date entry</span>
         </label>
       </div>
@@ -447,7 +454,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
         <input className="num" list="lot-list" value={f.lot_id} onChange={set('lot_id')} placeholder="e.g. LOT-5030" autoComplete="off" />
         <datalist id="lot-list">{lotMatches.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.quality}</option>)}</datalist>
       </label>
-      {known && <span className="muted small hint">{known.lot_id}: {known.quality} · balance {fmt(known.balance ?? 0, 1)} m{known.location ? ` · at ${known.location}` : ''}</span>}
+      {known && <span className="muted small hint">{known.lot_id}: {known.quality} · balance {fmt(known.balance ?? 0, 2)} m{known.location ? ` · at ${known.location}` : ''}</span>}
 
       {isIn ? (
         <>
@@ -509,7 +516,7 @@ export function StockForm({ ctx, onDone, initialDirection = 'IN' }: { ctx: Ctx; 
             <summary>More fields (optional)</summary>
             <div className="two-col">
               <label className="fld">L<input className="num" inputMode="decimal" value={f.bill_pct ?? ''} onChange={set('bill_pct')} placeholder="e.g. 100" /></label>
-              <label className="fld">NQTY (billed m)<input className="num" inputMode="decimal" value={f.billed_meters ?? ''} onChange={set('billed_meters')} placeholder={nqtyHint != null ? String(nqtyHint) : ''} /></label>
+              <label className="fld">NQTY (billed m)<input className="num" inputMode="decimal" value={billedText} onChange={(e) => { setBilledAuto(!e.target.value.trim()); setF({ ...f, billed_meters: e.target.value }); }} /></label>
             </div>
             <label className="fld">LOT S
               <select value={f.lot_status_code ?? ''} onChange={(e) => setF({ ...f, lot_status_code: e.target.value })}>
@@ -557,13 +564,18 @@ export function LotLocationPanel({ ctx, lotId, onDone }: { ctx: Ctx; lotId: stri
 
   return (
     <div className="stack-16">
+      {lot?.closed_at && <LotClosureCard key={lot.lot_id} lot={lot} canReopen={role === 'owner'} onError={(message) => d.showToast(message, 'danger')} onReopened={async () => {
+        d.showToast(`Lot ${lotId} reopened`);
+        await d.refreshStock();
+        const info = await d.lotInfo(lotId); setLot(info.lot); setHistory(info.history);
+      }} />}
       <div className="card pad stack-6 flat">
         <span className="muted small">Now at</span>
         <span className="loc-now"><LocationPill location={lot?.location} className="tall" />{lot?.location_ts && <span className="muted small">since {dayTime(lot.location_ts)}</span>}</span>
         {lot?.location && describeLocation(lot.location, markets()) && <span className="t2 small">{describeLocation(lot.location, markets())}</span>}
-        {lot && <span className="muted small">{lot.quality} · {fmt(lot.balance, 1)} m in stock</span>}
+        {lot && <span className="muted small">{lot.quality} · {fmt(lot.balance, 2)} m in stock</span>}
       </div>
-      {canMove && lot?.location !== 'Dispatched' && (
+      {canMove && lot && !lot.closed_at && lot.location !== 'Dispatched' && (
         <form className="stack-12" onSubmit={submit}>
           <span className="fld">Move to</span>
           <MarketLocationPicker ctx={ctx} value={loc} onChange={setLoc} exclude={lot?.location} />

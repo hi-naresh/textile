@@ -9,7 +9,7 @@ import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 import { catalogQuality } from './qualities';
 import { allowedLocation, canonicalLotAttr, canonicalName, challanCode, dateValue, lotCode, lotStatusValue, metersValue, nameKey, nameValue, SYSTEM_LOCATIONS, type Place } from './normalize';
-import { billedMetersValue, billPctValue, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
+import { resolveBilledMeters, billPctValue, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 
 export { LedgerError };
 import { afterOutgoing } from './agents/hooks';
@@ -305,7 +305,7 @@ export async function recordOutgoing(q: Q, input: OutgoingInput, opts: { memo?: 
   const party = await nameMemo(memo, q, 'party', nameValue(input.party, 'Party'));
   const challan = challanCode(input.source_doc);
   const billPct = billPctValue(input.bill_pct);
-  const billed = billedMetersValue(input.billed_meters);
+  const billed = resolveBilledMeters(meters, billPct, input.billed_meters);
   const statusCode = lotStatusCodeValue(input.lot_status_code);
   const explicitStatus = lotStatusValue(input.status);
   const entryStatus = entryStatusValue(input.entry_status) ?? 'running';

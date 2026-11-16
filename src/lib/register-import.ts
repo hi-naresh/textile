@@ -17,7 +17,7 @@ import { LedgerError } from './ledger-error';
 import { DISPATCHED, assertLotOpen, closeLot, currentPlace, importRef, lockLot, lotAttrMemo, moveLot, nameMemo, piecesValue, srValue, staleOnce, type LedgerMemo } from './ledger';
 import { trimReservations } from './stock';
 import { challanCode, lotCode, metersValue, nameKey, nameValue } from './normalize';
-import { billPctValue, billedMetersValue, entryStatusValue, linkedSrValue, locCodeValue, lotStatusCodeValue, registerPctValue, statusFromLotS } from './registers';
+import { billPctValue, resolveBilledMeters, entryStatusValue, linkedSrValue, locCodeValue, lotStatusCodeValue, registerPctValue, statusFromLotS } from './registers';
 
 export type RegisterFormat = 'incoming' | 'outgoing';
 export const NO_DESIGN = 'No design'; // the registers have no design; lots need one
@@ -53,7 +53,7 @@ export const OUTGOING_COLUMNS: RegCol<OutKey>[] = [
   { key: 'lot', header: 'LOT', aliases: ['LOT NO', 'LOTNO'], width: 10, note: 'Lot number.' },
   { key: 'lots', header: 'LOT S', aliases: ['LOTS', 'LOT ST', 'Lot Status'], width: 6, note: 'LOT S code, kept as given. S/R propose Running; E proposes End. Blank, A and unknown codes require a status choice in the import review.' },
   { key: 'qty', header: 'QTY', aliases: ['Quantity', 'MTR', 'Meters'], required: true, width: 10, note: 'Meters out of the lot.' },
-  { key: 'nqty', header: 'NQTY', aliases: ['N QTY', 'Net Qty', 'Billed Qty'], width: 10, note: 'Billed meters (kept as given). Optional.' },
+  { key: 'nqty', header: 'NQTY', aliases: ['N QTY', 'Net Qty', 'Billed Qty'], width: 10, note: 'Billed meters. Blank calculates QTY × L / 100 to 2 decimals when L is present; a typed value is kept.' },
   { key: 'sr', header: 'SR.NO', aliases: ['SRNO', 'SR NO', 'SR'], width: 8, note: 'SRNO of the lot in the Incoming register — this is how the sale finds its lot.' },
 ];
 
@@ -357,7 +357,7 @@ export async function checkOutgoing(q: Q, raw: RawRow<OutKey>[]): Promise<RegChe
     const item = tryField(row, 'ITEM', () => nameValue(v.item, 'ITEM (quality)'));
     const L = tryField(row, 'L', () => billPctValue(v.l));
     const qty = tryField(row, 'QTY', () => { const n = metersValue(v.qty, 'QTY'); if (n == null) throw new LedgerError('QTY (meters) is empty.'); return n; });
-    const nqty = tryField(row, 'NQTY', () => billedMetersValue(v.nqty));
+    const nqty = tryField(row, 'NQTY', () => resolveBilledMeters(qty, L, v.nqty));
     const code = tryField(row, 'LOT S', () => lotStatusCodeValue(v.lots));
     const srText = tryField(row, 'SR.NO', () => linkedSrValue(v.sr));
     const lotRaw = rawText(v.lot);
@@ -531,7 +531,7 @@ export async function commitOutgoingRow(q: Q, r: Record<string, unknown>, movedB
   if (meters == null) throw new LedgerError('QTY is empty.');
   const bill = challanCode(r.bill_no);
   const billPct = billPctValue(r.bill_pct);
-  const billed = billedMetersValue(r.billed_meters);
+  const billed = resolveBilledMeters(meters, billPct, r.billed_meters);
   const code = lotStatusCodeValue(r.lot_status_code);
   const linked = linkedSrValue(r.linked_sr);
   const status = entryStatusValue(r.entry_status);

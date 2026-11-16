@@ -62,6 +62,16 @@ export function billedMetersValue(v: unknown): number | null {
   return Math.round(n * 10000) / 10000;
 }
 
+/** Calculated NQTY uses two decimals; an explicit value (including zero) wins. */
+export function calculatedBilledMeters(meters: number | null, pct: number | null): number | null {
+  if (meters == null || pct == null) return null;
+  // Both source fields have at most two decimals. Integer scaling avoids binary half-cent rounding errors.
+  return Math.round(Math.round(meters * 100) * Math.round(pct * 100) / 10000) / 100;
+}
+export function resolveBilledMeters(meters: number | null, pct: number | null, explicit: unknown): number | null {
+  return billedMetersValue(explicit) ?? billedMetersValue(calculatedBilledMeters(meters, pct));
+}
+
 /** LOT S code: 1–5 letters / digits, stored upper-case, or null. */
 export function lotStatusCodeValue(v: unknown): string | null {
   if (blank(v)) return null;

@@ -44,7 +44,9 @@ END)`;
 
 export const LOT_COLS = `l.lot_id, l.quality, l.design, l.grade, l.status, l.bal_m AS balance,
   l.cur_location AS location, l.cur_location_stage AS location_stage, l.cur_location_ts AS location_ts, l.loc_code, l.reg_lot_no, l.closed_at,
-  ${STOCK_STATUS_SQL} AS stock_status`;
+  ${STOCK_STATUS_SQL} AS stock_status,
+  ARRAY(SELECT DISTINCT sm.sr_no FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.kind = 'normal' AND sm.sr_no IS NOT NULL ORDER BY sm.sr_no) AS sr_nos,
+  ARRAY(SELECT DISTINCT sm.weaver_name FROM stock_movements sm WHERE sm.lot_id = l.lot_id AND sm.direction = 'IN' AND sm.kind = 'normal' AND sm.weaver_name IS NOT NULL ORDER BY sm.weaver_name) AS weavers`;
 /** Closed lots view: how / when / who and what was written off (the latest close in lot_closures). */
 const CLOSED_COLS = `, l.close_reason, l.close_note, COALESCE(u.name, l.closed_by) AS closed_by_name, c.adjustment_m`;
 const CLOSED_JOIN = ` LEFT JOIN users u ON u.id = l.closed_by
@@ -54,6 +56,7 @@ const CLOSED_JOIN = ` LEFT JOIN users u ON u.id = l.closed_by
 export const COUNT_CAP = 10_000;
 
 export type LotRow = {
+  sr_nos?: number[]; weavers?: string[];
   lot_id: string; quality: string; design: string; grade: string; status: string; balance: number;
   stock_status: StockStatus; // Derived from hold status, open job cards and closure
   location: string | null; location_stage: string | null; location_ts: string | null;
@@ -74,6 +77,7 @@ export function toLot(r: Record<string, unknown>): LotRow {
     loc_code: (r.loc_code as string) ?? null, reg_lot_no: (r.reg_lot_no as string) ?? null,
     closed_at: iso(r.closed_at),
     stock_status: r.stock_status as StockStatus,
+    sr_nos: ((r.sr_nos as unknown[]) ?? []).map(Number), weavers: (r.weavers as string[]) ?? [],
     ...('close_reason' in r ? {
       close_reason: (r.close_reason as LotRow['close_reason']) ?? null, close_note: (r.close_note as string) ?? null,
       closed_by_name: (r.closed_by_name as string) ?? null, adjustment_m: r.adjustment_m == null ? 0 : Number(r.adjustment_m),
@@ -130,7 +134,9 @@ function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> 
   for (const word of f.q.toLowerCase().split(' ').filter(Boolean).slice(0, 6)) {
     const w = `${LOT_DOC} LIKE ${p(`%${likeEscape(word)}%`)}`;
     const mk = (alts.get(word) ?? []).map((x) => ` OR ${LOT_DOC} LIKE ${p(x)}`).join('');
-    parts.push(mk ? `(${w}${mk})` : w);
+    const sr = /^\d{1,10}$/.test(word) && Number(word) <= 2147483647 ? ` OR sm.sr_no = ${p(Number(word))}` : '';
+    const incoming = `l.lot_id IN (SELECT sm.lot_id FROM stock_movements sm WHERE sm.direction = 'IN' AND sm.kind = 'normal' AND (lower(sm.weaver_name) LIKE ${p(`%${likeEscape(word)}%`)}${sr}))`;
+    parts.push(`(${w}${mk} OR ${incoming})`);
   }
   return parts;
 }
@@ -231,7 +237,7 @@ export async function* lotExportRows(q: Q, f: LotFilters, pageSize = 500): Async
 
 export async function lotsByIds(q: Q, ids: string[]): Promise<LotRow[]> {
   if (!ids.length) return [];
-  const r = await q(`SELECT ${LOT_COLS} FROM lots l WHERE l.lot_id = ANY($1::text[]) ORDER BY l.lot_id`, [ids]);
+  const r = await q(`SELECT ${LOT_COLS}${CLOSED_COLS} FROM lots l${CLOSED_JOIN} WHERE l.lot_id = ANY($1::text[]) ORDER BY l.lot_id`, [ids]);
   return r.rows.map(toLot);
 }
 

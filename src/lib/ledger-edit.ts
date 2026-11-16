@@ -3,16 +3,17 @@
 // Each changed field writes one ledger_edits row (who, when, old → new). No-op changes are skipped.
 // Status of an outgoing entry (Running / End): changing it to End closes the lot (closeLot); taking End off
 // the entry that closed its lot reopens the lot (reopenLot). Both happen in the same transaction as the edit.
+import { entryDateValue } from './entry-date';
 import { catalogQuality } from './qualities';
 import type { Q } from './db';
 import { LedgerError } from './ledger-error';
 import { closeLot, piecesValue, reopenLot, srValue } from './ledger';
 import { canonicalLotAttr, canonicalName, challanCode, metersValue, nameValue } from './normalize';
-import { billedMetersValue, billPctValue, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
+import { billedMetersValue, billPctValue, calculatedBilledMeters, resolveBilledMeters, entryStatusValue, locCodeValue, lotStatusCodeValue, registerPctValue } from './registers';
 import { markAgentsStale } from './agents/stale';
 import { ledgerRowsByIds, type LedgerRow } from './ledger-query';
 
-export const MOVEMENT_FIELDS = ['meters', 'sr_no', 'pieces', 'source_doc_id', 'mill_name', 'weaver_name', 'party', 'quality', 'design',
+export const MOVEMENT_FIELDS = ['date', 'meters', 'sr_no', 'pieces', 'source_doc_id', 'mill_name', 'weaver_name', 'party', 'quality', 'design',
   'register_pct', 'loc_code', 'bill_pct', 'billed_meters', 'lot_status_code', 'entry_status'] as const;
 const IN_ONLY = ['mill_name', 'weaver_name', 'register_pct', 'loc_code'];
 const OUT_ONLY = ['party', 'bill_pct', 'billed_meters', 'lot_status_code', 'entry_status'];
@@ -40,7 +41,7 @@ export class EditProblems extends LedgerError {
 }
 
 const FIELD_LABEL: Record<string, string> = {
-  sr_no: 'SR no.', pieces: 'Pieces (taka)', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver',
+  date: 'Entry date', sr_no: 'SR no.', pieces: 'Pieces (taka)', source_doc_id: 'Challan no.', mill_name: 'Mill', weaver_name: 'Weaver',
   party: 'Party', quality: 'Quality', design: 'Design', grade: 'Grade', status: 'Status',
   register_pct: '%', loc_code: 'Location code', bill_pct: 'L', billed_meters: 'NQTY (billed meters)', lot_status_code: 'LOT S',
   entry_status: 'Status', meters: 'Meters', closing_adjustment: 'Closing adjustment',
@@ -71,6 +72,7 @@ export function parseChanges(body: Record<string, unknown>): EditChange[] {
 }
 
 interface MovementRow {
+  date: string;
   id: number; lot_id: string; direction: 'IN' | 'OUT'; kind: string; meters: number; sr_no: number | null; pieces: number | null; source_doc_id: string | null; mill_name: string | null; weaver_name: string | null; party: string | null;
   register_pct: number | null; loc_code: string | null; bill_pct: number | null; billed_meters: number | null; lot_status_code: string | null;
   entry_status: string | null;
@@ -123,7 +125,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     await q(`SELECT lot_id FROM lots WHERE lot_id = ANY($1::text[]) ORDER BY lot_id FOR UPDATE`, [lotIdsToLock]);
   }
   const mvRes = mvIds.length
-    ? await q(`SELECT id, lot_id, direction, kind, meters, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code, entry_status
+    ? await q(`SELECT id, lot_id, direction, kind, meters, to_char(ts, 'YYYY-MM-DD') AS date, sr_no, pieces, source_doc_id, mill_name, weaver_name, party, register_pct, loc_code, bill_pct, billed_meters, lot_status_code, entry_status
                  FROM stock_movements WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`, [mvIds])
     : { rows: [] };
   const n = (v: unknown) => (v == null ? null : Number(v));
@@ -156,7 +158,8 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     const { m, field } = c;
     let v: string | number | null;
     try {
-      if (field === 'meters') {
+      if (field === 'date') v = entryDateValue(String(c.value ?? ''));
+      else if (field === 'meters') {
         v = metersValue(c.value, 'Meters');
         if (v == null) throw new LedgerError('Meters are required.');
       }
@@ -189,6 +192,25 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     const prev = mvFinal.get(k);
     if (prev && !same(prev.value, v)) { problem(c.origin, `${FIELD_LABEL[field]} is changed twice in this batch with different values.`); continue; }
     mvFinal.set(k, { m, field, value: v, origin: c.origin });
+  }
+
+  // Recalculate untouched/default NQTY after all edits are normalized, independent of request order.
+  for (const m of movements.values()) {
+    if (m.direction !== 'OUT') continue;
+    const amount = mvFinal.get(`${m.id}:meters`);
+    const pct = mvFinal.get(`${m.id}:bill_pct`);
+    const billed = mvFinal.get(`${m.id}:billed_meters`);
+    if (!amount && !pct && !billed) continue;
+    const auto = m.billed_meters == null || m.billed_meters === calculatedBilledMeters(m.meters, m.bill_pct);
+    if (billed ? billed.value != null : !auto) continue;
+    try {
+      const value = resolveBilledMeters(amount ? Number(amount.value) : m.meters, pct ? pct.value as number | null : m.bill_pct, null);
+      mvFinal.set(`${m.id}:billed_meters`, { m, field: 'billed_meters', value,
+        origin: { target: 'movement', id: m.id, field: 'billed_meters', message: '' } });
+    } catch (e) {
+      if (e instanceof LedgerError) problem({ target: 'movement', id: m.id, field: 'billed_meters' }, e.message);
+      else throw e;
+    }
   }
 
   const lotFinal = new Map<string, { lot: LotRow; field: LotField; value: string; origin: LotChange['origin'] }>();
@@ -253,6 +275,12 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     endingLots.add(x.m.lot_id);
   }
 
+  const dates = [...mvFinal.values()].filter((x) => x.field === 'date' && !same(x.m.date, x.value));
+  if (dates.length) {
+    const closed = await q('SELECT lot_id FROM lots WHERE lot_id = ANY($1::text[]) AND closed_at IS NOT NULL', [dates.map((x) => x.m.lot_id)]);
+    const ids = new Set(closed.rows.map((r) => r.lot_id));
+    for (const x of dates) if (ids.has(x.m.lot_id)) problem(x.origin, 'Reopen the lot before changing an entry date.');
+  }
   if (problems.length) throw new EditProblems(problems);
 
   // 4. Apply (skipping no-ops) and log every changed field.
@@ -281,7 +309,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
     if (freeing.length) await q(`UPDATE stock_movements SET sr_no = NULL WHERE id = ANY($1::int[])`, [freeing]);
     for (const [id, { sets }] of mvSet) {
       // Column names come from the MOVEMENT_FIELDS whitelist, never from the request text.
-      const cols = sets.map(([f], i) => `${f} = $${i + 2}`).join(', ');
+      const cols = sets.map(([f], i) => f === 'date' ? `ts = ($${i + 2}::date + ts::time)` : `${f} = $${i + 2}`).join(', ');
       await q(`UPDATE stock_movements SET ${cols} WHERE id = $1`, [id, ...sets.map(([, v]) => v)]);
       // The lot keeps the location code of its incoming entry (Lots & balance shows it).
       const loc = sets.find(([f]) => f === 'loc_code');
@@ -299,7 +327,7 @@ export async function applyLedgerEdits(q: Q, changes: EditChange[], by: string |
   }
 
   // 5. Lots that close or reopen because of a status change (reopen first: an End can move to another entry).
-  let reload = false;
+  let reload = dates.length > 0;
   const reopened = new Set<string>();
   for (const x of unending) {
     const st = lotState.get(x.m.lot_id)!;

@@ -102,7 +102,7 @@ export function whereFor(f: LedgerFilters, alts: Map<string, string[]> = new Map
 
 /** Columns for a ledger row (no ₹: this feed is shared with supervisors). `loc`: where the movement put the lot. */
 const COLS = `sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.finished_meters, sm.mill_name, sm.weaver_name, sm.party,
-  sm.source_doc_id, sm.capture_event_id, sm.sr_no, sm.pieces, sm.ts, (sm.import_ref IS NOT NULL) AS imported,
+  sm.source_doc_id, sm.capture_event_id, sm.sr_no, sm.pieces, sm.ts, to_char(sm.ts, 'YYYY-MM-DD') AS entry_date, (sm.import_ref IS NOT NULL) AS imported,
   to_char(sm.ts, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS ts_key, l.quality, l.design, (sm.ts::date = CURRENT_DATE) AS is_today,
   (SELECT ll.location FROM lot_locations ll WHERE ll.lot_id = sm.lot_id AND ll.stock_movement_id = sm.id ORDER BY ll.id DESC LIMIT 1) AS location,
   EXISTS (SELECT 1 FROM ledger_edits le WHERE le.target = 'movement' AND le.target_id = sm.id::text) AS edited,
@@ -112,6 +112,7 @@ const COLS = `sm.id, sm.lot_id, sm.direction, sm.meters, sm.grey_meters, sm.fini
   (l.closed_at IS NOT NULL) AS lot_closed`;
 
 export interface LedgerRow {
+  entry_date?: string;
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
   mill_name: string | null; weaver_name: string | null; party: string | null; source_doc_id: string | null; capture_event_id: number | null;
   sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;
@@ -129,6 +130,7 @@ export interface LedgerRow {
 const num = (v: unknown) => (v == null ? null : Number(v));
 function toRow(r: Record<string, unknown>): LedgerRow {
   return {
+    entry_date: r.entry_date as string | undefined,
     id: Number(r.id), lot_id: String(r.lot_id), direction: r.direction as 'IN' | 'OUT', meters: Number(r.meters),
     grey_meters: num(r.grey_meters), finished_meters: num(r.finished_meters),
     mill_name: (r.mill_name as string) ?? null, weaver_name: (r.weaver_name as string) ?? null, party: (r.party as string) ?? null,

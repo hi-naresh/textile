@@ -11,7 +11,7 @@ import { newLedgerMemo, piecesValue, recordIncoming, recordOutgoing, srValue } f
 import { describePlace, marketList } from './location';
 import { challanCode, lotCode, marketRows, metersValue, nameValue, readPlace } from './normalize';
 import type { LedgerRow } from './ledger-query';
-import { CLOSING_LABEL, ENTRY_STATUS_LABEL } from './registers';
+import { billPctValue, resolveBilledMeters, CLOSING_LABEL, ENTRY_STATUS_LABEL } from './registers';
 import {
   checkIncoming, checkOutgoing, commitIncomingRow, commitOutgoingRow, detectRegister, INCOMING_COLUMNS, OUTGOING_COLUMNS,
   type HeaderCell, type RawRow, type RegCheck, type RegCol, type RegInRow, type RegOutRow, type RegWarning, type RegisterFormat,
@@ -23,7 +23,7 @@ export const MAX_IMPORT_ROWS = 20_000;
 export const CHUNK_MAX = 1000;
 
 type Key = 'direction' | 'sr_no' | 'lot_id' | 'challan' | 'quality' | 'design' | 'grey_meters' | 'finished_meters' | 'pieces'
-  | 'mill_name' | 'weaver_name' | 'location' | 'meters' | 'party';
+  | 'mill_name' | 'weaver_name' | 'location' | 'meters' | 'party' | 'bill_pct' | 'billed_meters';
 
 /** Template columns, in order. `aliases`: other headings accepted as the same column (older templates, common words). */
 export const TEMPLATE_COLUMNS: { key: Key; header: string; width: number; aliases: string[] }[] = [
@@ -41,6 +41,8 @@ export const TEMPLATE_COLUMNS: { key: Key; header: string; width: number; aliase
   { key: 'location', header: 'Location (IN)', width: 18, aliases: [] },
   { key: 'meters', header: 'Meters (OUT)', width: 14, aliases: ['Mts', 'Meter'] },
   { key: 'party', header: 'Party (OUT)', width: 24, aliases: ['Party Name', 'Client', 'Customer'] },
+  { key: 'bill_pct', header: 'L (OUT)', width: 12, aliases: [] },
+  { key: 'billed_meters', header: 'NQTY (OUT)', width: 16, aliases: ['Billed meters'] },
 ];
 const LABEL = Object.fromEntries(TEMPLATE_COLUMNS.map((c) => [c.key, c.header])) as Record<Key, string>;
 
@@ -307,6 +309,8 @@ export async function streamChallanWorkbook(firmName: string, output: Writable, 
 
 // ---------- validation ----------
 export interface ImportRow {
+  bill_pct?: number | null;
+  billed_meters?: number | null;
   row: number; // Excel row number
   direction: 'IN' | 'OUT';
   sr_no: number | null;
@@ -618,6 +622,8 @@ async function validateTemplate(q: Q, ws: ExcelJS.Worksheet, batch: string): Pro
     } else if (direction === 'OUT') {
       x.meters = tryField(row, 'meters', () => metersValue(v.meters, 'Meters'));
       x.party = tryField(row, 'party', () => nameValue(v.party, 'Party'));
+      x.bill_pct = tryField(row, 'bill_pct', () => billPctValue(v.bill_pct));
+      x.billed_meters = tryField(row, 'billed_meters', () => resolveBilledMeters(x.meters, x.bill_pct ?? null, v.billed_meters));
       if ((v.meters == null || v.meters === '') && has('meters')) add(row, 'meters', 'Meters are required for OUT.');
       if (!x.party && (v.party == null || v.party === '') && has('party')) add(row, 'party', 'Party (the client receiving the goods) is required for OUT.');
     }
@@ -752,7 +758,7 @@ export async function commitChunk(q: Q, batch: string, rows: unknown[], movedBy:
         inCount++;
       } else if (r.direction === 'OUT') {
         await recordOutgoing(q, {
-          lot_id: r.lot_id, meters: r.meters, party: r.party, source_doc: r.challan,
+          lot_id: r.lot_id, meters: r.meters, party: r.party, source_doc: r.challan, bill_pct: r.bill_pct, billed_meters: r.billed_meters,
           sr_no: r.sr_no, pieces: r.pieces, import_ref: ref, capture_event_id: null, moved_by: movedBy,
         }, { memo });
         outCount++;

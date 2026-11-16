@@ -21,6 +21,7 @@ export interface LedgerFilterState {
 export const EMPTY_FILTERS: LedgerFilterState = { q: '', direction: '', status: '', quality: '', design: '', lot: '', party: '', from: '', to: '', market: '', shop: '' };
 
 export interface LedgerRow {
+  entry_date?: string;
   id: number; lot_id: string; direction: 'IN' | 'OUT'; meters: number; grey_meters: number | null; finished_meters: number | null;
   mill_name: string | null; weaver_name: string | null; party: string | null; source_doc_id: string | null; capture_event_id: number | null;
   sr_no: number | null; pieces: number | null; ts: string; imported: boolean; quality: string; design: string; is_today: boolean; location: string | null;

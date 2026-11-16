@@ -14,3 +14,22 @@ DATABASE_URL=postgresql://localhost/textile_stock_test npm run test:stock
 ```
 
 `scripts/migrate.js` reads `.env`, where `MIGRATION_DATABASE_URL` wins over `DATABASE_URL`. Unset it (or set it to the same local URL) before migrating a test database.
+
+
+Five-issue batch (#18, #21, #23, #29, #30): `entry-batches.test.ts` covers automatic/custom NQTY across writes/imports/edits, a reviewed and audited backfill, incoming SR/weaver search, closure history plus owner-only reopening, keyboard dates and rejected invalid dates. It uses a fresh disposable database, applies all migrations, and drops it afterwards.
+
+Existing NQTY corrections use an explicit database target and default to a dry run:
+
+```sh
+DATABASE_URL=<intended-database-url> npx tsx scripts/backfill-billed-meters.ts
+# After reviewing the exact list and its fingerprint:
+DATABASE_URL=<same-database-url> npx tsx scripts/backfill-billed-meters.ts --apply --confirm-reviewed <fingerprint> --by <owner-user-id>
+```
+
+The correction writes only missing NQTY on normal outgoing rows with L, uses two decimals, and logs each change. Typed values remain unchanged. Editing QTY/L treats an existing NQTY equal to the old formula result as calculated; an explicitly typed value equal to that result cannot be distinguished without a provenance flag.
+
+Browser acceptance for the same batch is in `tests/blackbox/entry-batches.mjs`. It runs the production build in an isolated local server on port 3157, creates/drops its own database, uses the installed macOS Chrome with `en-IN`/Asia-Kolkata, and checks laptop (1366×768) and phone (390×844) layouts. Set `PLAYWRIGHT_PACKAGE_JSON` to a package.json whose node_modules contains Playwright if it is installed outside this repository. It does not emulate the Windows OS.
+
+```sh
+DATABASE_URL=postgresql://localhost/textile_stock_test PLAYWRIGHT_PACKAGE_JSON=/tmp/textile-browser-check/package.json node --import tsx tests/blackbox/entry-batches.mjs
+```

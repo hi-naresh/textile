@@ -93,7 +93,7 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
     const status = l.status ? lotStatusValue(l.status) : null;
     const entry_status = entryStatusValue(l.entry_status);
     if (entry_status === 'end' && !opts.endAllowed) throw new LedgerError(`Line ${i + 1}: you can’t mark an entry End. Choose Running.`, 403);
-    return { lot_id: lot, meters, status, entry_status };
+    return { lot_id: lot, meters, status, entry_status, bill_pct: l.bill_pct, billed_meters: l.billed_meters };
   });
 
   let order: { id: number; party_id: number; party_name: string; status: string } | null = null;
@@ -156,7 +156,7 @@ export async function createDispatch(q: Q, b: DispatchInput, actorRaw: string | 
   for (const l of lines) {
     await recordOutgoing(q, {
       lot_id: l.lot_id,
-      meters: l.meters,
+      meters: l.meters, bill_pct: l.bill_pct, billed_meters: l.billed_meters,
       party: party.name,
       source_doc: challan,
       order_id: order?.id ?? null,

@@ -1,6 +1,8 @@
 // Shared client-side types for API responses
 
 export interface Lot {
+  sr_nos?: number[];
+  weavers?: string[];
   lot_id: string;
   quality: string;
   design: string;
@@ -60,6 +62,7 @@ export interface KnownNames {
 }
 
 export interface LedgerEntry {
+  entry_date?: string;
   id: number;
   lot_id: string;
   direction: 'IN' | 'OUT';
