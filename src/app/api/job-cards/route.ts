@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readObject, requireCap, requireUser } from '@/lib/apiAuth';
 import { query, withTransaction } from '@/lib/db';
 import { closeJobCard, createJobCard, errorResponseBody } from '@/lib/ledger';
+import { can } from '@/lib/access';
 import { readRules } from '@/lib/settings';
 
 
-// GET: Fetch job cards and allotments. Owner / supervisors: all (screens scope supervisors by section);
+// GET: Fetch job cards and allotments. Owner / supervisors: all permitted lots;
 // a worker: only their own.
 export async function GET(req: NextRequest) {
   try {
@@ -29,10 +30,10 @@ export async function GET(req: NextRequest) {
       FROM job_cards jc
       JOIN workers w ON jc.worker_id = w.id
       JOIN lots l ON jc.lot_id = l.lot_id
-      WHERE $1::varchar IS NULL OR jc.worker_id = $1
+      WHERE ($1::varchar IS NULL OR jc.worker_id = $1) AND ($2::boolean OR l.closed_at IS NULL)
       ORDER BY jc.id DESC
     `;
-    const jobCardsRes = await query(jobCardsQuery, [own]);
+    const jobCardsRes = await query(jobCardsQuery, [own, can(a.role, 'stock.closed')]);
 
     const allotmentsQuery = `
       SELECT a.*, to_char(a.date, 'YYYY-MM-DD') as date_str, (a.date = CURRENT_DATE) as is_today,
@@ -40,10 +41,11 @@ export async function GET(req: NextRequest) {
       FROM allotments a
       JOIN workers w ON a.worker_id = w.id
       JOIN job_cards jc ON a.job_card_id = jc.id
-      WHERE $1::varchar IS NULL OR a.worker_id = $1
+      JOIN lots l ON l.lot_id = jc.lot_id
+      WHERE ($1::varchar IS NULL OR a.worker_id = $1) AND ($2::boolean OR l.closed_at IS NULL)
       ORDER BY a.date DESC, a.id DESC
     `;
-    const allotmentsRes = await query(allotmentsQuery, [own]);
+    const allotmentsRes = await query(allotmentsQuery, [own, can(a.role, 'stock.closed')]);
 
     const { shortageLimitPct: SHORTAGE_THRESHOLD_PCT } = await readRules();
     const formattedJobCards = jobCardsRes.rows.map(row => {
@@ -72,7 +74,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST (owner / supervisor): Create a job card, allot it to the worker, and move the lot to the floor.
+// POST (owner): Create a job card, allot it to the worker, and move the lot to the floor.
 export async function POST(request: NextRequest) {
   try {
     const a = await requireCap(request, 'jobs.manage');
@@ -85,7 +87,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH (owner / supervisor): Close a job card with meters_out (updates worker efficiency; lot goes back to its place before the floor when its last card closes).
+// PATCH (owner): Close a job card with meters_out (updates worker efficiency; lot goes back to its place before the floor when its last card closes).
 export async function PATCH(request: NextRequest) {
   try {
     const a = await requireCap(request, 'jobs.manage');

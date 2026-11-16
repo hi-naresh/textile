@@ -456,7 +456,7 @@ function OrdersList({ ctx, status, setStatus, created, onOpen, party, onClearPar
             {party.name}<Icon name="x" size={13} strokeWidth={2.4} />
           </button>
         )}
-        {status === 'open' && rows.length > 0 && <span className="muted small">{rows.length} open · {m(pending)} to send{late ? ` · ${late} late` : ''}</span>}
+        {owner && status === 'open' && rows.length > 0 && <span className="muted small">{rows.length} open · {m(pending)} to send{late ? ` · ${late} late` : ''}</span>}
       </div>
       {error && <div className="alert bad">{error}</div>}
       <section className="card flush">

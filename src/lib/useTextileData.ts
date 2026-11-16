@@ -88,7 +88,7 @@ export function actorId(role: Role) {
 
 /** GET /api/stock: a small, fixed-size snapshot (no lot list; lots come paged from /api/lots and /api/lots/search). */
 interface StockSnapshot {
-  stockSummary: StockSummary | null; ledger: LedgerEntry[]; flow?: FlowDay[]; today?: TodayStock; names?: KnownNames; qualities?: string[]; rev?: string;
+  stockSummary?: StockSummary | null; ledger: LedgerEntry[]; flow?: FlowDay[]; today?: TodayStock; names?: KnownNames; qualities?: string[]; rev?: string;
 }
 
 export function useTextileData() {

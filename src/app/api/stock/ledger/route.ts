@@ -21,12 +21,12 @@ export async function GET(req: NextRequest) {
     const a = await requireUser(req);
     if (!can(a.role, 'stock.quantity')) return NextResponse.json({ rows: [], next: null, total: 0, total_capped: false });
     const owner = can(a.role, 'stock.closed');
-    const scopeUserId = a.role === 'supervisor' ? a.userId : null;
     const [page, facets] = await Promise.all([
-      ledgerPage(run, { ...filtersFrom(sp), hideClosed: !owner, scopeUserId }, { limit, cursor }),
-      sp.get('facets') === '1' ? ledgerFacets(run, scopeUserId) : Promise.resolve(undefined),
+      ledgerPage(run, { ...filtersFrom(sp), hideClosed: !owner }, { limit, cursor }),
+      sp.get('facets') === '1' ? ledgerFacets(run, !owner) : Promise.resolve(undefined),
     ]);
-    return NextResponse.json({ ...page, ...(facets ? { facets } : {}) }, { headers: { 'Cache-Control': 'no-store' } });
+    const data = can(a.role, 'stock.summary') ? page : { rows: page.rows, next: page.next };
+    return NextResponse.json({ ...data, ...(facets ? { facets } : {}) }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const { status, body } = errorResponseBody(error);
     return NextResponse.json(body, { status });

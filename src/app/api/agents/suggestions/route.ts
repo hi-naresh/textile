@@ -7,17 +7,17 @@ import { agentSettings } from '@/lib/agents/settings';
 import { quietDaysFor } from '@/lib/agents/catalog';
 import { markAgentsStale } from '@/lib/agents/stale';
 import type { AgentKey, Suggestion } from '@/lib/agents/types';
-import { readObject, requireUser } from '@/lib/apiAuth';
+import { readObject, requireRole, requireUser } from '@/lib/apiAuth';
 
 // GET → open alerts + suggested actions, read straight from agent_suggestions (fast: no scan on the request path).
 // When a scan is due (5 min, or data changed) it starts in the background and the answer says `refreshing: true`,
 // so the app asks again a few seconds later. Cards of switched-off agents are never listed, and each agent shows at
 // most its "max open" (developer console → Agents), most urgent first.
-// Supervisors never see money-related (owner_only) items; workers get none.
+// Only owners receive suggestion cards or act on them.
 export async function GET(req: NextRequest) {
   try {
     const { role } = await requireUser(req);
-    if (role === 'worker') return NextResponse.json({ suggestions: [] });
+    if (role !== 'owner') return NextResponse.json({ suggestions: [] });
     let refreshing = false;
     if (await agentsDue()) {
       refreshing = true;
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
 // `choice` picks one of the card's alternatives (payload.choices[].value), e.g. another order to count a dispatch against.
 export async function POST(req: NextRequest) {
   try {
-    const { role, by: actor } = await requireUser(req);
+    const { role, by: actor } = await requireRole(req, 'owner');
     const b = await readObject(req);
     const id = Number(b.id);
     if (!Number.isInteger(id) || id <= 0) throw new LedgerError('A valid suggestion id is required.');

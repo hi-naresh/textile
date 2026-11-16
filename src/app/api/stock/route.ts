@@ -4,7 +4,8 @@ import { can, canAddShops } from '@/lib/access';
 import { query, withTransaction } from '@/lib/db';
 import { errorResponseBody, recordIncoming, recordOutgoing } from '@/lib/ledger';
 
-// GET (owner / supervisor; workers get nothing): the small, fixed-size stock snapshot every screen shares.
+// GET: owners receive the stock snapshot below. Supervisors receive only the revision
+// and an empty movement feed; their read-only stock screen pages through /api/lots.
 //   stockSummary { on_hand_m, active_lots, packed_m / packed_lots, running_m / running_lots,
 //                  on_hold_m / on_hold_lots, low_lots (20 lowest) },
 //   today totals, 7-day flow, today's latest movements (≤ 100, for the live feed), known names (≤ 1000 each),
@@ -20,14 +21,6 @@ const SNAPSHOT_SQL = `
            COUNT(*)    FILTER (WHERE direction = 'OUT' AND kind = 'normal') AS out_count
       FROM stock_movements
      WHERE ts >= CURRENT_DATE - 6 AND ts < CURRENT_DATE + 1
-       AND ($2::text IS NULL OR EXISTS (
-         SELECT 1 FROM job_cards scoped_jc
-         JOIN supervisor_sections ss ON ss.user_id = $2
-         JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
-         WHERE scoped_jc.lot_id = stock_movements.lot_id
-           AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
-             = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
-       ))
      GROUP BY 1
   )
   SELECT
@@ -49,26 +42,10 @@ const SNAPSHOT_SQL = `
                        ELSE 'packed' END AS stock_status
              FROM lots l
             WHERE l.closed_at IS NULL AND l.bal_m > 0
-              AND ($2::text IS NULL OR EXISTS (
-                SELECT 1 FROM job_cards scoped_jc
-                JOIN supervisor_sections ss ON ss.user_id = $2
-                JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
-                WHERE scoped_jc.lot_id = l.lot_id
-                  AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
-                    = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
-              ))
          ) current_stock) END AS summary,
     (SELECT COALESCE(json_agg(json_build_object('lot_id', x.lot_id, 'quality', x.quality, 'balance', x.bal_m) ORDER BY x.bal_m, x.lot_id), '[]')
        FROM (SELECT lot_id, quality, bal_m FROM lots
               WHERE closed_at IS NULL AND bal_m > 0 AND bal_m < COALESCE((SELECT low_stock_m FROM app_settings WHERE id = 1), 200)
-                AND ($2::text IS NULL OR EXISTS (
-                  SELECT 1 FROM job_cards scoped_jc
-                  JOIN supervisor_sections ss ON ss.user_id = $2
-                  JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
-                  WHERE scoped_jc.lot_id = lots.lot_id
-                    AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
-                      = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
-                ))
               ORDER BY bal_m, lot_id LIMIT 20) x) AS low_lots,
     (SELECT json_agg(json_build_object('day', to_char(d, 'YYYY-MM-DD'), 'in_m', COALESCE(f.in_m, 0), 'out_m', COALESCE(f.out_m, 0),
                                        'in_count', COALESCE(f.in_count, 0), 'out_count', COALESCE(f.out_count, 0)) ORDER BY d)
@@ -89,14 +66,6 @@ const TODAY_ROWS_SQL = `
     FROM stock_movements sm
     JOIN lots l ON sm.lot_id = l.lot_id
    WHERE sm.ts >= CURRENT_DATE AND sm.ts < CURRENT_DATE + 1 AND sm.kind <> 'closing' -- closing adjustments are owner-only records
-     AND ($1::text IS NULL OR EXISTS (
-       SELECT 1 FROM job_cards scoped_jc
-       JOIN supervisor_sections ss ON ss.user_id = $1
-       JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
-       WHERE scoped_jc.lot_id = l.lot_id
-         AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
-           = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
-     ))
    ORDER BY sm.ts DESC, sm.id DESC
    LIMIT 100`;
 
@@ -106,13 +75,12 @@ const num = (v: unknown) => (v == null ? null : Number(v));
 // so a total read in that instant could miss its change; it is recomputed within SUMMARY_TTL_MS at the latest.
 type CachedSummary = Pick<import('@/lib/types').StockSummary,
   'on_hand_m' | 'active_lots' | 'packed_m' | 'packed_lots' | 'running_m' | 'running_lots' | 'on_hold_m' | 'on_hold_lots'>;
-let summaryCache: { rev: string; scope: string; at: number; value: CachedSummary } | null = null;
+let summaryCache: { rev: string; at: number; value: CachedSummary } | null = null;
 const SUMMARY_TTL_MS = 10_000;
 
-async function snapshot(scopeUserId: string | null) {
-  const scope = scopeUserId ?? '';
-  const cached = summaryCache && summaryCache.scope === scope && Date.now() - summaryCache.at < SUMMARY_TTL_MS ? summaryCache : null;
-  const [s, t] = await Promise.all([query(SNAPSHOT_SQL, [cached?.rev ?? '', scopeUserId]), query(TODAY_ROWS_SQL, [scopeUserId])]);
+async function snapshot() {
+  const cached = summaryCache && Date.now() - summaryCache.at < SUMMARY_TTL_MS ? summaryCache : null;
+  const [s, t] = await Promise.all([query(SNAPSHOT_SQL, [cached?.rev ?? '']), query(TODAY_ROWS_SQL)]);
   const x = s.rows[0];
   const rev = String(x.rev ?? '0');
   let summary = cached?.value ?? { on_hand_m: 0, active_lots: 0, packed_m: 0, packed_lots: 0, running_m: 0, running_lots: 0, on_hold_m: 0, on_hold_lots: 0 };
@@ -123,7 +91,7 @@ async function snapshot(scopeUserId: string | null) {
       running_m: Number(x.summary.running_m ?? 0), running_lots: Number(x.summary.running_lots ?? 0),
       on_hold_m: Number(x.summary.on_hold_m ?? 0), on_hold_lots: Number(x.summary.on_hold_lots ?? 0),
     };
-    summaryCache = { rev, scope, at: Date.now(), value: summary };
+    summaryCache = { rev, at: Date.now(), value: summary };
   }
   const flow = (x.flow ?? []) as { day: string; in_m: number; out_m: number; in_count: number; out_count: number }[];
   const last = flow[flow.length - 1] ?? { in_m: 0, in_count: 0, out_m: 0, out_count: 0 };
@@ -156,7 +124,11 @@ export async function GET(request: NextRequest) {
     if (!can(a.role, 'stock.quantity')) {
       return NextResponse.json({ stockSummary: null, ledger: [], names: { mills: [], weavers: [], parties: [] }, flow: [], qualities: [], rev: '0' });
     }
-    const snap = await snapshot(a.role === 'supervisor' ? a.userId : null);
+    if (!can(a.role, 'stock.summary')) {
+      const rev = (await query('SELECT last_value::text AS rev FROM stock_rev')).rows[0].rev;
+      return NextResponse.json({ ledger: [], rev }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    const snap = await snapshot();
     // Entries of closed lots are the owner's records (stock.closed): left out of everyone else's live feed.
     const owner = can(a.role, 'stock.closed');
     const ledger = snap.ledger.filter((r) => owner || !r.lot_closed).map(({ lot_closed: _c, ...r }) => { void _c; return r; });

@@ -95,7 +95,6 @@ export interface LotFilters {
   quality: string;
   closed?: boolean;
   stockStatus?: StockStatus | '';
-  scopeUserId?: string | null;
   market?: string;
   shop?: string;
 } // closed: the owner's Closed lots view
@@ -111,7 +110,6 @@ export function lotFiltersFrom(sp: URLSearchParams): LotFilters {
     quality: clip(sp.get('quality')),
     closed: sp.get('closed') === '1',
     stockStatus: STOCK_STATUSES.includes(sp.get('stock_status') as StockStatus) ? sp.get('stock_status') as StockStatus : '',
-    scopeUserId: null,
     market: clip(sp.get('market'), 12),
     shop: clip(sp.get('shop'), 10),
   };
@@ -126,17 +124,6 @@ function lotWhere(f: LotFilters, params: unknown[], alts: Map<string, string[]> 
   if (f.inStock) parts.push('l.bal_m > 0');
   if (f.status) parts.push(`l.status = ${p(f.status)}`);
   if (f.stockStatus) parts.push(`${STOCK_STATUS_SQL} = ${p(f.stockStatus)}`);
-  if (f.scopeUserId) {
-    const user = p(f.scopeUserId);
-    parts.push(`EXISTS (
-      SELECT 1 FROM job_cards scoped_jc
-      JOIN supervisor_sections ss ON ss.user_id = ${user}
-      JOIN sections scoped_s ON scoped_s.id = ss.section_id AND scoped_s.active
-      WHERE scoped_jc.lot_id = l.lot_id
-        AND lower(btrim(regexp_replace(scoped_jc.process, '\\s*section\\s*$', '', 'i')))
-          = lower(btrim(regexp_replace(scoped_s.name, '\\s*section\\s*$', '', 'i')))
-    )`);
-  }
   if (f.quality) parts.push(`lower(l.quality) = lower(${p(f.quality)})`);
   const lc = locationCondition(f.market, f.shop, p);
   if (lc) parts.push(lc);

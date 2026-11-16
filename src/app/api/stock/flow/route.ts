@@ -24,7 +24,7 @@ type Range = keyof typeof RANGES;
 
 export async function GET(req: NextRequest) {
   try {
-    await requireCap(req, 'stock.quantity');
+    await requireCap(req, 'stock.summary');
     const sp = req.nextUrl.searchParams;
     const range = (sp.get('range') ?? 'week') as Range;
     if (!(range in RANGES)) return NextResponse.json({ error: 'range must be day, week, month, year or all.' }, { status: 400 });

@@ -20,7 +20,8 @@ export async function GET(request: NextRequest) {
 // PUT (owner): update firm profile and rules. Send only the fields you change.
 // { firm_name?, firm_city?, shortage_limit_pct?, efficiency_target_pct?, ai_auto_confirm_pct?, manual_challan_min?, manual_job_card_min?,
 //   supervisor_can_end? }
-// supervisor_can_end (true / false): may supervisors mark outgoing entries End (capability stock.end)? It is the one
+// supervisor_can_end is a legacy setting: false remains accepted; true is refused by the view-only policy.
+// Previously it was the one
 // capability the owner switches here; every other switch stays in the Developer console (Access & roles). Both write
 // app_settings.access_overrides, so the two screens always agree.
 // Markets and shops have their own routes (/api/markets, /api/markets/shops); fixed places (location_presets) are gone.
@@ -42,7 +43,8 @@ export async function PUT(request: NextRequest) {
     let endOn: boolean | null = null;
     if ('supervisor_can_end' in b) {
       if (typeof b.supervisor_can_end !== 'boolean') throw new LedgerError('Send supervisor_can_end: true or false.');
-      endOn = b.supervisor_can_end;
+      if (b.supervisor_can_end) throw new LedgerError('Supervisors have view-only stock access and cannot mark entries End.', 403);
+      endOn = false;
     }
     if (!sets.length && endOn == null) throw new LedgerError('Nothing to update.');
 

@@ -4,14 +4,14 @@ import { LedgerError, applyCaptureRead, errorResponseBody } from '@/lib/ledger';
 import { readRules } from '@/lib/settings';
 import { extractDataFromPhoto } from '@/lib/ai';
 import { compressForAudit, photoUrlForClient, savePhoto } from '@/lib/photos';
-import { canCapture } from '@/lib/access';
-import { requireUser } from '@/lib/apiAuth';
+import { can, canCapture } from '@/lib/access';
+import { requireCap, requireUser } from '@/lib/apiAuth';
 import { logError } from '@/lib/errors';
 
 export async function GET(request: NextRequest) {
   // GET: Fetch all capture events (e.g. for the confirm queue)
   try {
-    // Workers see only their own photos; owner / supervisors see the whole queue.
+    // Owners see the review queue; other roles see only their own captures.
     const a = await requireUser(request);
     const res = await query(
       `SELECT ce.*, (ce.ts::date = CURRENT_DATE) AS is_today, u.name as confirmed_by_name
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN users u ON ce.confirmed_by = u.id
        WHERE $1::varchar IS NULL OR ce.captured_by = $1
        ORDER BY ce.ts DESC`,
-      [a.role === 'worker' ? a.userId : null]
+      [a.role === 'owner' ? null : a.userId]
     );
     return NextResponse.json({
       events: res.rows.map(row => ({
@@ -40,7 +40,7 @@ type Kind = (typeof TYPES)[number];
 export async function POST(request: NextRequest) {
   try {
     // Who captured it (and who an auto-confirm is attributed to) is the signed-in user.
-    const a = await requireUser(request);
+    const a = await requireCap(request, 'capture.create');
     const role = a.role;
     const capturedBy = a.by;
     const formData = await request.formData();
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
     let autoCommitted = false;
     let commitError: string | null = null;
     const { aiAutoConfirmPct } = await readRules();
-    if (confidence * 100 >= aiAutoConfirmPct) {
+    if (can(role, 'capture.confirm') && confidence * 100 >= aiAutoConfirmPct) {
       try {
         await withTransaction(async (q) => {
           const saved = await applyCaptureRead(q, type, aiData as Record<string, unknown>, event.id, capturedBy);

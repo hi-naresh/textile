@@ -7,7 +7,7 @@ import { inventorySnapshot } from '@/lib/reports/inventory';
 // GET /api/inventory
 //   → InventorySnapshot: per quality balance / reserved / free / avg daily dispatch (30 d) / days of cover /
 //     open-order meters / status (ok | low | short); ageing lots; lots without location; mill loss (90 d).
-// Meters only (no ₹), so owner and supervisor get the same answer. Workers: 403.
+// Owner only: inventory aggregates are hidden from supervisors and workers.
 export async function GET(req: NextRequest) {
   try {
     await requireCap(req, 'reports.view');

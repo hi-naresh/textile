@@ -127,7 +127,7 @@ test('#3 dispatch lines carry a status; End is refused without permission', asyn
   assert.deepEqual(r.rows.map((x) => x.entry_status), ['running']);
 });
 
-test('#3 owner switches "supervisors can mark End" in settings; supervisors cannot', async () => {
+test('#27 legacy owner settings cannot re-enable supervisor End permission', async () => {
   const off = await putSettings(req(ownerCookie, { supervisor_can_end: false }));
   assert.equal(off.status, 200);
   await getFirmConfig(true);
@@ -137,9 +137,9 @@ test('#3 owner switches "supervisors can mark End" in settings; supervisors cann
   assert.deepEqual(audit.rows[0].detail, { role: 'supervisor', cap: 'stock.end', on: false, via: 'owner settings' });
 
   const on = await putSettings(req(ownerCookie, { supervisor_can_end: true }));
-  assert.equal(on.status, 200);
+  assert.equal(on.status, 403);
   await getFirmConfig(true);
-  assert.equal(can('supervisor', 'stock.end'), true);
+  assert.equal(can('supervisor', 'stock.end'), false);
 
   const sup = await putSettings(req(supCookie, { supervisor_can_end: false }));
   assert.equal(sup.status, 403);
@@ -670,25 +670,25 @@ test('opening adjustments do not start a lot; old sales show Running as entries 
   await assert.rejects(withTransaction((q) => applyLedgerEdits(q, [edit(sales.rows[0].id, 'packed')], id)), /Packed is for incoming/);
 });
 
-test('stock status totals add up and supervisors only see their section lots', async () => {
+test('owner stock status totals follow job cards and closed lots stay hidden from supervisors', async () => {
   const section = (await query(`SELECT id, name FROM sections WHERE active ORDER BY sort_order, name LIMIT 1`)).rows[0];
   assert.ok(section, 'test database should have an active section');
   await query(
     `INSERT INTO supervisor_sections (user_id, section_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
     [`${id}-s`, section.id],
   );
-  const normalizedSection = String(section.name).replace(/\s*section\s*$/i, '').trim().toLowerCase();
-  const snapshot = async () => (await (await getStock(get(supCookie, '/api/stock'))).json()).stockSummary;
+  const snapshot = async () => (await (await getStock(get(ownerCookie, '/api/stock'))).json()).stockSummary;
   const before = await snapshot();
   const summaryTemplate = templateById('stock_summary')!;
-  const chatBefore = await summaryTemplate.run({}, { role: 'supervisor', sections: [normalizedSection] });
+  const chatBefore = await summaryTemplate.run({}, { role: 'owner', sections: [] });
   await withTransaction((q) => createJobCard(q, { lot_id: lot(30), process: section.name, worker_id: id, meters_in: 500 }));
 
   const scoped = await snapshot();
-  assert.equal(scoped.on_hand_m, before.on_hand_m + 1000);
+  assert.equal(scoped.on_hand_m, before.on_hand_m);
+  assert.equal(scoped.packed_m, before.packed_m - 1000);
   assert.equal(scoped.running_m, before.running_m + 1000);
   assert.equal(scoped.packed_m + scoped.running_m + scoped.on_hold_m, scoped.on_hand_m);
-  const chatAfter = await summaryTemplate.run({}, { role: 'supervisor', sections: [normalizedSection] });
+  const chatAfter = await summaryTemplate.run({}, { role: 'owner', sections: [] });
   const runningBefore = Number(chatBefore.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
   const runningAfter = Number(chatAfter.rows.find((row) => row.group_name === 'running')?.meters ?? 0);
   assert.equal(runningAfter - runningBefore, 1000);
@@ -705,7 +705,7 @@ test('stock status totals add up and supervisors only see their section lots', a
   const cardId = Number((await query(`SELECT id FROM job_cards WHERE lot_id = $1 ORDER BY id DESC LIMIT 1`, [lot(30)])).rows[0].id);
   await withTransaction((q) => closeJobCard(q, { id: cardId, meters_out: 490 }));
   const afterClose = await snapshot();
-  assert.equal(afterClose.packed_m, before.packed_m + 1000);
+  assert.equal(afterClose.packed_m, before.packed_m);
   assert.equal(afterClose.running_m, before.running_m);
   assert.equal(afterClose.packed_m + afterClose.running_m + afterClose.on_hold_m, afterClose.on_hand_m);
 });

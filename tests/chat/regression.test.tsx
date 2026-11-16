@@ -187,7 +187,7 @@ test('users, role changes, section changes and capability changes isolate histor
   assert.notEqual(conversationScope({ ...actor, role: 'supervisor' }, supervisor), conversationScope({ ...actor, role: 'supervisor' }, { ...supervisor, sections: ['packing'] }));
   const scopedActor = { ...actor, role: 'supervisor' as const };
   const previousScope = conversationScope(scopedActor, supervisor);
-  setAccessOff({ supervisor: ['jobs.manage'] });
+  setAccessOff({ supervisor: ['jobs.view'] });
   assert.notEqual(previousScope, conversationScope(scopedActor, supervisor));
   setAccessOff({});
   const a = await getConversation(id, 'private');
